@@ -23,9 +23,7 @@ https://github.com/user-attachments/assets/b45fa983-16b4-48b5-ac5b-a267836b9ad9
 ## 3 Tools in 1 Platform
 
 ### 1. Clip Generator
-Turn long YouTube videos or local uploads into viral-ready 9:16 shorts for TikTok, Instagram Reels, and YouTube Shorts.
-
-![Clip Generator](screenshots/clip-generator.png)
+Turn your long-form videos — podcasts, webinars, livestreams, vlogs, interviews — into viral-ready 9:16 shorts for TikTok, Instagram Reels, and YouTube Shorts.
 
 ![Clip Results](screenshots/clip-results.png)
 
@@ -172,7 +170,7 @@ OpenShorts is free. You only pay for the AI APIs you use — and most have gener
 - **Google Gemini API Key** ([Free — get it here](https://aistudio.google.com/app/apikey)) — required for all AI features
 - **fal.ai API Key** ([Pay-per-use](https://fal.ai)) — required for AI Shorts (actor generation, video, lip-sync)
 - **ElevenLabs API Key** ([Free tier](https://elevenlabs.io)) — required for voiceover/dubbing
-- **Upload-Post API Key** (Optional, [free tier](https://upload-post.com)) — for direct social posting
+- **Upload-Post API Key** ([free tier](https://upload-post.com)) — required for direct social posting
 
 ---
 
@@ -199,7 +197,7 @@ docker compose up --build
 Navigate to **`http://localhost:5175`**
 
 1. Go to **Settings** and enter your API keys (Gemini, fal.ai, ElevenLabs, Upload-Post)
-2. **Clip Generator**: Paste a YouTube URL or upload a video to generate viral shorts
+2. **Clip Generator**: Upload a long-form video to generate viral shorts
 3. **AI Shorts**: Describe your product or paste a URL to generate UGC marketing videos
 4. **YouTube Studio**: Generate thumbnails, titles, and descriptions for YouTube
 5. **UGC Gallery**: Browse all generated videos and avatars
@@ -209,7 +207,7 @@ Navigate to **`http://localhost:5175`**
 ## Technical Pipeline
 
 ### Clip Generator
-1. **Ingest** — YouTube download (yt-dlp) or local upload
+1. **Ingest** — Local video upload (or self-hosted URL ingest via yt-dlp)
 2. **Transcribe** — faster-whisper with word-level timestamps
 3. **Detect** — PySceneDetect for scene boundaries
 4. **Analyze** — Gemini identifies 3-15 viral moments (15-60s each)
@@ -261,7 +259,7 @@ Navigate to **`http://localhost:5175`**
 | `GEMINI_API_KEY` | Google Gemini — required |
 | `FAL_KEY` | fal.ai — required for AI Shorts |
 | `ELEVENLABS_API_KEY` | ElevenLabs — required for voiceover/dubbing |
-| `UPLOAD_POST_API_KEY` | Upload-Post — optional, for social posting |
+| `UPLOAD_POST_API_KEY` | Upload-Post — required, for social posting |
 
 ---
 

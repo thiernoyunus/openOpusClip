@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, FileVideo, Sparkles, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar } from 'lucide-react';
+import { Upload, FileVideo, Sparkles, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2 } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
@@ -321,7 +321,7 @@ function App() {
   };
 
   const handleProcess = async (data) => {
-    if (!apiKey) {
+    if (!apiKey || !uploadPostKey) {
       setShowKeyModal(true);
       return;
     }
@@ -336,10 +336,11 @@ function App() {
 
       if (data.type === 'url') {
         headers['Content-Type'] = 'application/json';
-        body = JSON.stringify({ url: data.payload });
+        body = JSON.stringify({ url: data.payload, acknowledged: !!data.acknowledged });
       } else {
         const formData = new FormData();
         formData.append('file', data.payload);
+        formData.append('acknowledged', data.acknowledged ? 'true' : 'false');
         body = formData;
       }
 
@@ -394,6 +395,14 @@ function App() {
         >
           <Sparkles size={20} />
           <span className="font-medium hidden lg:block">AI Shorts</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('ai-agent')}
+          className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${activeTab === 'ai-agent' ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
+        >
+          <Bot size={20} />
+          <span className="font-medium hidden lg:block">AI Agent</span>
         </button>
 
         <button
@@ -494,13 +503,47 @@ function App() {
               />
             )}
 
-            {!apiKey && (
-              <span className="text-xs text-amber-500 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
-                API Key Missing
-              </span>
+            {(!apiKey || !uploadPostKey) && (
+              <button
+                onClick={() => setActiveTab('settings')}
+                className="text-xs text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1 rounded-full border border-amber-500/30 transition-colors flex items-center gap-1.5"
+                title="Click to configure your API keys"
+              >
+                <AlertTriangle size={12} />
+                {!apiKey && !uploadPostKey
+                  ? 'Gemini & Upload-Post keys missing'
+                  : !apiKey
+                    ? 'Gemini API Key Missing'
+                    : 'Upload-Post API Key Missing'}
+              </button>
             )}
           </div>
         </header>
+
+        {/* Persistent Missing Keys Banner — visible on every screen */}
+        {(!apiKey || !uploadPostKey) && activeTab !== 'settings' && (
+          <div className="mx-6 mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center justify-between gap-4 shrink-0 animate-[fadeIn_0.3s_ease-out]">
+            <div className="flex items-center gap-3 text-sm text-amber-200">
+              <KeyRound size={16} className="shrink-0 text-amber-400" />
+              <div>
+                <span className="font-semibold">Required API keys missing.</span>{' '}
+                <span className="text-amber-200/80">
+                  {!apiKey && !uploadPostKey
+                    ? 'Set your Gemini and Upload-Post API keys to use OpenShorts.'
+                    : !apiKey
+                      ? 'Set your Gemini API key to use OpenShorts.'
+                      : 'Set your Upload-Post API key to use OpenShorts.'}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black transition-colors"
+            >
+              Go to Settings
+            </button>
+          </div>
+        )}
 
         {/* Session Recovery Banner */}
         {sessionRecovered && (
@@ -530,15 +573,14 @@ function App() {
               </div>
               <KeyInput onKeySet={setApiKey} savedKey={apiKey} />
 
-              <div className="glass-panel p-6 mt-8">
+              <div className={`glass-panel p-6 mt-8 ${!uploadPostKey ? 'border-amber-500/30 ring-1 ring-amber-500/20' : ''}`}>
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-semibold">Social Integration</h2>
-                  <span className="text-[10px] bg-white/5 border border-white/5 px-2 py-0.5 rounded text-zinc-500 uppercase tracking-wider">Optional</span>
+                  <span className="text-[10px] bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded text-amber-400 uppercase tracking-wider">Required</span>
                 </div>
                 <p className="text-xs text-zinc-500 mb-6 leading-relaxed">
-                  Automatically publish your clips to TikTok, Instagram Reels, and YouTube Shorts via <strong>Upload-Post</strong>.
+                  Required to publish your clips to TikTok, Instagram Reels, and YouTube Shorts via <strong>Upload-Post</strong>.
                   Includes a <strong>free tier</strong> (no credit card required).
-                  If you prefer, you can skip this and manually download/upload your videos.
                 </p>
                 <div className="space-y-4">
                   <label className="block text-sm text-zinc-400">Upload-Post API Key</label>
@@ -687,6 +729,122 @@ function App() {
             <SaaShortsTab geminiApiKey={apiKey} elevenLabsKey={elevenLabsKey} falKey={falKey} uploadPostKey={uploadPostKey} uploadUserId={uploadUserId} />
           )}
 
+          {/* View: AI Agent */}
+          {activeTab === 'ai-agent' && (
+            <div className="h-full overflow-y-auto custom-scrollbar p-6 md:p-10 animate-[fadeIn_0.3s_ease-out]">
+              <div className="max-w-4xl mx-auto space-y-8">
+
+                {/* Header */}
+                <div className="space-y-3">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-[11px] uppercase tracking-wider text-emerald-400 font-semibold">
+                    <Bot size={12} /> Autonomous Skill
+                  </div>
+                  <h1 className="text-3xl md:text-4xl font-black bg-gradient-to-b from-white to-white/60 bg-clip-text text-transparent">
+                    Your Personal Clipping Team
+                  </h1>
+                  <p className="text-zinc-400 text-base md:text-lg leading-relaxed max-w-2xl">
+                    Drop your videos in a folder and a team of AI clippers picks the viral moments, edits them, and queues them for your approval — like having a 24/7 short-form editing crew on autopilot.
+                  </p>
+                </div>
+
+                {/* Mobile-format warning */}
+                <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 flex items-start gap-3">
+                  <Smartphone size={20} className="text-amber-400 shrink-0 mt-0.5" />
+                  <div className="text-sm text-amber-100">
+                    <p className="font-semibold text-amber-300 mb-1">Upload videos already in vertical (9:16) mobile format.</p>
+                    <p className="text-amber-100/80 leading-relaxed">
+                      The agent does not reframe horizontal footage. Make sure every source video is shot or pre-cropped to mobile/portrait format before dropping it into the input folder.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Workflow */}
+                <div className="grid md:grid-cols-3 gap-4">
+                  <div className="glass-panel p-5 space-y-2">
+                    <div className="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                      <Upload size={18} />
+                    </div>
+                    <h3 className="font-semibold text-white">1. Drop your videos</h3>
+                    <p className="text-xs text-zinc-400 leading-relaxed">
+                      Put your long-form vertical footage in the watched folder. The skill picks one video per run.
+                    </p>
+                  </div>
+
+                  <div className="glass-panel p-5 space-y-2">
+                    <div className="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                      <Users size={18} />
+                    </div>
+                    <h3 className="font-semibold text-white">2. AI clippers work</h3>
+                    <p className="text-xs text-zinc-400 leading-relaxed">
+                      Whisper transcribes, Gemini 3 Flash spots viral beats, FFmpeg cuts each clip and adds a hook overlay.
+                    </p>
+                  </div>
+
+                  <div className="glass-panel p-5 space-y-2">
+                    <div className="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
+                      <CheckCircle2 size={18} />
+                    </div>
+                    <h3 className="font-semibold text-white">3. You validate, it ships</h3>
+                    <p className="text-xs text-zinc-400 leading-relaxed">
+                      Approve the candidates you like and the skill auto-publishes them to TikTok, Reels and YouTube Shorts via Upload-Post.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Repo CTA */}
+                <div className="glass-panel p-6 md:p-8 space-y-5">
+                  <div className="flex items-start justify-between gap-4 flex-wrap">
+                    <div>
+                      <h2 className="text-xl font-bold text-white mb-1">skill-autoshorts</h2>
+                      <p className="text-sm text-zinc-400">
+                        The Claude Code skill that powers this workflow. Install it once and trigger it whenever you want a fresh batch of clips.
+                      </p>
+                    </div>
+                    <a
+                      href="https://github.com/mutonby/skill-autoshorts"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn-primary py-2 px-4 text-sm flex items-center gap-2 shrink-0"
+                    >
+                      View on GitHub <ExternalLink size={14} />
+                    </a>
+                  </div>
+
+                  <div className="bg-[#0c0c0e] border border-white/10 rounded-lg p-4 font-mono text-xs text-zinc-300 flex items-center justify-between gap-3">
+                    <span className="truncate">git clone https://github.com/mutonby/skill-autoshorts</span>
+                    <button
+                      onClick={() => navigator.clipboard.writeText('git clone https://github.com/mutonby/skill-autoshorts')}
+                      className="text-zinc-500 hover:text-white transition-colors shrink-0"
+                      title="Copy"
+                    >
+                      <Copy size={14} />
+                    </button>
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-3 text-sm">
+                    <div className="flex items-start gap-2 text-zinc-300">
+                      <Check size={16} className="text-emerald-400 shrink-0 mt-0.5" />
+                      <span>Daily batch — picks one long video per run</span>
+                    </div>
+                    <div className="flex items-start gap-2 text-zinc-300">
+                      <Check size={16} className="text-emerald-400 shrink-0 mt-0.5" />
+                      <span>Whisper transcription with word-level timing</span>
+                    </div>
+                    <div className="flex items-start gap-2 text-zinc-300">
+                      <Check size={16} className="text-emerald-400 shrink-0 mt-0.5" />
+                      <span>Gemini 3 Flash multimodal moment detection</span>
+                    </div>
+                    <div className="flex items-start gap-2 text-zinc-300">
+                      <Check size={16} className="text-emerald-400 shrink-0 mt-0.5" />
+                      <span>Auto-publish to TikTok, Reels & YouTube Shorts</span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          )}
+
           {/* View: UGC Gallery */}
           {activeTab === 'ugc-gallery' && (
             <UGCGallery />
@@ -711,7 +869,7 @@ function App() {
                     Create Viral Shorts
                   </h1>
                   <p className="text-zinc-400 text-lg">
-                    Drop your long-form video URL or file below to instantly generate viral clips with AI.
+                    Drop your long-form video below to instantly generate viral clips with AI.
                   </p>
                 </div>
 
@@ -846,53 +1004,80 @@ function App() {
 
         </div>
 
-        {/* Footer */}
-        <div className="h-8 border-t border-white/5 flex items-center justify-center shrink-0">
-          <span className="text-[10px] text-zinc-600">Made with ❤️ by <a href="https://www.upload-post.com" target="_blank" rel="noopener noreferrer" className="text-zinc-500 hover:text-white transition-colors">Upload-Post</a></span>
-        </div>
       </main>
 
       {/* Missing API Key Modal */}
       {showKeyModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowKeyModal(false)}>
           <div className="bg-[#18181b] border border-white/10 rounded-2xl p-6 max-w-md w-full mx-4 space-y-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-lg font-bold text-white">Gemini API Key Required</h2>
+            <h2 className="text-lg font-bold text-white">
+              {!apiKey && !uploadPostKey
+                ? 'Required API Keys Missing'
+                : !apiKey
+                  ? 'Gemini API Key Required'
+                  : 'Upload-Post API Key Required'}
+            </h2>
             <p className="text-sm text-zinc-400">
-              You need a Google Gemini API key to use the Clip Generator. It's free and takes 30 seconds to get.
+              OpenShorts needs both a <strong className="text-zinc-200">Gemini</strong> API key and an <strong className="text-zinc-200">Upload-Post</strong> API key. Both have free tiers.
             </p>
-            <div className="bg-white/5 border border-white/10 rounded-lg p-4 space-y-2">
-              <p className="text-xs font-semibold text-zinc-300">How to get your free key:</p>
-              <ol className="text-xs text-zinc-400 space-y-1 list-decimal list-inside">
-                <li>Go to <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline">aistudio.google.com/app/apikey</a></li>
-                <li>Sign in with your Google account</li>
-                <li>Click "Create API Key"</li>
-                <li>Copy the key and paste it below</li>
-              </ol>
-            </div>
-            <input
-              type="text"
-              placeholder="Paste your Gemini API key here..."
-              className="w-full bg-black/50 border border-white/20 rounded-lg px-4 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-blue-500"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && e.target.value.trim()) {
-                  setApiKey(e.target.value.trim());
-                  setShowKeyModal(false);
-                }
-              }}
-            />
 
-            {/* Upload-Post info */}
-            <div className="bg-violet-500/5 border border-violet-500/20 rounded-lg p-4 space-y-2">
-              <p className="text-xs font-semibold text-violet-300">Optional: Auto-publish to social media</p>
-              <p className="text-xs text-zinc-400">
-                With an <strong className="text-zinc-300">Upload-Post</strong> API key you can publish your clips directly to TikTok, Instagram Reels, and YouTube Shorts — or schedule them for later. Free tier available, no credit card needed.
+            {/* Gemini block */}
+            <div className={`rounded-lg p-4 space-y-2 border ${!apiKey ? 'bg-blue-500/5 border-blue-500/30' : 'bg-white/5 border-white/10 opacity-70'}`}>
+              <p className="text-xs font-semibold text-zinc-200 flex items-center gap-2">
+                {apiKey ? <Check size={12} className="text-green-400" /> : <AlertTriangle size={12} className="text-amber-400" />}
+                Gemini API Key {apiKey && <span className="text-green-400">— set</span>}
               </p>
-              <ol className="text-xs text-zinc-400 space-y-1 list-decimal list-inside">
-                <li>Register at <a href="https://app.upload-post.com/login" target="_blank" rel="noopener noreferrer" className="text-violet-400 underline">app.upload-post.com</a></li>
-                <li>Connect your TikTok, Instagram, or YouTube accounts</li>
-                <li>Go to API Keys and generate one</li>
-                <li>Paste it in Settings — done!</li>
-              </ol>
+              {!apiKey && (
+                <>
+                  <ol className="text-xs text-zinc-400 space-y-1 list-decimal list-inside">
+                    <li>Go to <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline">aistudio.google.com/app/apikey</a></li>
+                    <li>Sign in with your Google account</li>
+                    <li>Click "Create API Key"</li>
+                    <li>Copy the key and paste it below</li>
+                  </ol>
+                  <input
+                    type="text"
+                    placeholder="Paste your Gemini API key here..."
+                    className="w-full bg-black/50 border border-white/20 rounded-lg px-4 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-blue-500"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && e.target.value.trim()) {
+                        setApiKey(e.target.value.trim());
+                      }
+                    }}
+                  />
+                </>
+              )}
+            </div>
+
+            {/* Upload-Post block */}
+            <div className={`rounded-lg p-4 space-y-2 border ${!uploadPostKey ? 'bg-violet-500/5 border-violet-500/30' : 'bg-white/5 border-white/10 opacity-70'}`}>
+              <p className="text-xs font-semibold text-zinc-200 flex items-center gap-2">
+                {uploadPostKey ? <Check size={12} className="text-green-400" /> : <AlertTriangle size={12} className="text-amber-400" />}
+                Upload-Post API Key {uploadPostKey && <span className="text-green-400">— set</span>}
+              </p>
+              {!uploadPostKey && (
+                <>
+                  <p className="text-xs text-zinc-400">
+                    Required to publish your clips to TikTok, Instagram Reels, and YouTube Shorts. Free tier available, no credit card needed.
+                  </p>
+                  <ol className="text-xs text-zinc-400 space-y-1 list-decimal list-inside">
+                    <li>Register at <a href="https://app.upload-post.com/login" target="_blank" rel="noopener noreferrer" className="text-violet-400 underline">app.upload-post.com</a></li>
+                    <li>Connect your TikTok, Instagram, or YouTube accounts</li>
+                    <li>Go to <a href="https://app.upload-post.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-violet-400 underline">API Keys</a> and generate one</li>
+                    <li>Paste it below</li>
+                  </ol>
+                  <input
+                    type="text"
+                    placeholder="Paste your Upload-Post API key here..."
+                    className="w-full bg-black/50 border border-white/20 rounded-lg px-4 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-violet-500"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && e.target.value.trim()) {
+                        setUploadPostKey(e.target.value.trim());
+                      }
+                    }}
+                  />
+                </>
+              )}
             </div>
 
             <div className="flex gap-3">
