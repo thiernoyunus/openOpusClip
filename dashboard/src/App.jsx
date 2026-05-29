@@ -307,12 +307,14 @@ function App() {
       const data = await res.json();
       if (data.profiles && data.profiles.length > 0) {
         setUserProfiles(data.profiles);
-        // Auto select first if none selected
-        if (!uploadUserId) {
+        const selectedProfileExists = data.profiles.some((profile) => profile.username === uploadUserId);
+        if (!selectedProfileExists) {
           setUploadUserId(data.profiles[0].username);
         }
       } else {
         console.warn("No Upload-Post profiles found for this API key.");
+        setUserProfiles([]);
+        setUploadUserId('');
       }
     } catch (e) {
       console.warn("Upload-Post profile fetch failed. Posting will stay disabled until the key is fixed.", e);
@@ -503,36 +505,28 @@ function App() {
               />
             )}
 
-            {(!apiKey || !uploadPostKey) && (
+            {!apiKey && (
               <button
                 onClick={() => setActiveTab('settings')}
                 className="text-xs text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1 rounded-full border border-amber-500/30 transition-colors flex items-center gap-1.5"
                 title="Click to configure your API keys"
               >
                 <AlertTriangle size={12} />
-                {!apiKey && !uploadPostKey
-                  ? 'Gemini key missing'
-                  : !apiKey
-                    ? 'Gemini API Key Missing'
-                    : 'Posting key optional'}
+                Gemini API Key Missing
               </button>
             )}
           </div>
         </header>
 
         {/* Persistent Missing Keys Banner — visible on every screen */}
-        {(!apiKey || !uploadPostKey) && activeTab !== 'settings' && (
+        {!apiKey && activeTab !== 'settings' && (
           <div className="mx-6 mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center justify-between gap-4 shrink-0 animate-[fadeIn_0.3s_ease-out]">
             <div className="flex items-center gap-3 text-sm text-amber-200">
               <KeyRound size={16} className="shrink-0 text-amber-400" />
               <div>
-                <span className="font-semibold">{!apiKey ? 'Gemini API key required.' : 'Posting is optional.'}</span>{' '}
+                <span className="font-semibold">Gemini API key required.</span>{' '}
                 <span className="text-amber-200/80">
-                  {!apiKey && !uploadPostKey
-                    ? 'Set Gemini to generate clips. Upload-Post is only needed for social publishing.'
-                    : !apiKey
-                      ? 'Set your Gemini API key to generate clips.'
-                      : 'Add an Upload-Post key only if you want to publish clips directly.'}
+                  Set your Gemini API key to generate clips. Upload-Post is only needed for social publishing.
                 </span>
               </div>
             </div>
