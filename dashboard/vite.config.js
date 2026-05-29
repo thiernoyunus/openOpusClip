@@ -1,5 +1,4 @@
 import { defineConfig, loadEnv } from 'vite'
-import react from '@vitejs/plugin-react'
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
@@ -8,7 +7,6 @@ export default defineConfig(({ mode }) => {
   const rendererTarget = env.VITE_PROXY_RENDERER || 'http://localhost:3100'
 
   return {
-    plugins: [react()],
     server: {
       allowedHosts: [
         'openshorts.app',

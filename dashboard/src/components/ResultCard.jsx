@@ -4,7 +4,11 @@ import { getApiUrl } from '../config';
 import SubtitleModal from './SubtitleModal';
 import HookModal from './HookModal';
 import TranslateModal from './TranslateModal';
-import { renderInBrowser } from '../lib/renderInBrowser';
+
+const renderInBrowserLazy = async (options) => {
+    const { renderInBrowser } = await import('../lib/renderInBrowser');
+    return renderInBrowser(options);
+};
 
 export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUserId, geminiApiKey, elevenLabsKey, onPlay, onPause }) {
     const [showModal, setShowModal] = useState(false);
@@ -90,7 +94,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                 if (data.effects && data.effects.segments) {
                     const newLayers = { ...activeLayers, effects: data.effects };
                     setActiveLayers(newLayers);
-                    const blobUrl = await renderInBrowser({
+                    const blobUrl = await renderInBrowserLazy({
                         videoUrl: originalVideoUrl,
                         durationInSeconds: clipDuration,
                         subtitles: newLayers.subtitles,
@@ -151,7 +155,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                 // Accumulate layer and render all layers together
                 const newLayers = { ...activeLayers, subtitles: options.remotion };
                 setActiveLayers(newLayers);
-                const blobUrl = await renderInBrowser({
+                const blobUrl = await renderInBrowserLazy({
                     videoUrl: originalVideoUrl,
                     durationInSeconds: clipDuration,
                     subtitles: newLayers.subtitles,
@@ -206,7 +210,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                 // Accumulate layer and render all layers together
                 const newLayers = { ...activeLayers, hook: hookData.remotion };
                 setActiveLayers(newLayers);
-                const blobUrl = await renderInBrowser({
+                const blobUrl = await renderInBrowserLazy({
                     videoUrl: originalVideoUrl,
                     durationInSeconds: clipDuration,
                     subtitles: newLayers.subtitles,
