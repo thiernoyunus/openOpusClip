@@ -11,6 +11,7 @@ from ultralytics import YOLO
 import torch
 import os
 import shutil
+import tempfile
 import numpy as np
 from tqdm import tqdm
 import yt_dlp
@@ -456,7 +457,7 @@ def download_youtube_video(url, output_dir="."):
     print("📥 Downloading video from YouTube...")
     step_start_time = time.time()
 
-    cookies_path = os.path.join(output_dir, "youtube_cookies.txt")
+    cookies_path = os.path.join(tempfile.gettempdir(), f"openshorts_youtube_cookies_{os.getpid()}_{int(time.time())}.txt")
     cookies_env = os.environ.get("YOUTUBE_COOKIES")
     if cookies_env:
         print("🍪 Found YOUTUBE_COOKIES env var, creating cookies file...")
@@ -465,9 +466,6 @@ def download_youtube_video(url, output_dir="."):
                 f.write(cookies_env)
             if os.path.exists(cookies_path):
                  print(f"   Debug: Cookies file created. Size: {os.path.getsize(cookies_path)} bytes")
-                 with open(cookies_path, 'r') as f:
-                     content = f.read(100)
-                     print(f"   Debug: First 100 chars of cookie file: {content}")
         except Exception as e:
             print(f"⚠️ Failed to write cookies file: {e}")
             cookies_path = None
@@ -572,17 +570,21 @@ Technical Details: {str(e)}
         'overwrites': True,
     }
     
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        requested = info.get("requested_downloads") or info.get("requested_formats") or []
-        if requested:
-            selected = ", ".join(
-                f"{fmt.get('format_id', '?')} {fmt.get('resolution') or fmt.get('height') or 'audio'} {fmt.get('ext', '')}"
-                for fmt in requested
-            )
-            print(f"🎞️  Selected YouTube formats: {selected}")
-        else:
-            print(f"🎞️  Selected YouTube format: {info.get('format_id', 'unknown')} {info.get('resolution', '')}")
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            requested = info.get("requested_downloads") or info.get("requested_formats") or []
+            if requested:
+                selected = ", ".join(
+                    f"{fmt.get('format_id', '?')} {fmt.get('resolution') or fmt.get('height') or 'audio'} {fmt.get('ext', '')}"
+                    for fmt in requested
+                )
+                print(f"🎞️  Selected YouTube formats: {selected}")
+            else:
+                print(f"🎞️  Selected YouTube format: {info.get('format_id', 'unknown')} {info.get('resolution', '')}")
+    finally:
+        if cookies_env and cookies_path and os.path.exists(cookies_path):
+            os.remove(cookies_path)
     
     downloaded_file = os.path.join(output_dir, f'{sanitized_title}.mp4')
     
@@ -919,9 +921,11 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3):
             # ------------------------
 
             # Clean response if it contains markdown code blocks
-            text = response.text
+            text = response.text.strip()
             if text.startswith("```json"):
                 text = text[7:]
+            elif text.startswith("```"):
+                text = text[3:]
             if text.endswith("```"):
                 text = text[:-3]
             text = text.strip()
