@@ -747,12 +747,18 @@ def process_video_to_vertical(input_video, final_output_video):
     
     return True
 
-def transcribe_video(video_path):
-    print("🎙️  Transcribing video with Faster-Whisper (CPU Optimized)...")
+WHISPER_MODELS = {"tiny", "base", "small", "medium", "large-v3"}
+
+def transcribe_video(video_path, whisper_model="base"):
+    if whisper_model not in WHISPER_MODELS:
+        print(f"⚠️  Unknown Whisper model '{whisper_model}', falling back to 'base'.")
+        whisper_model = "base"
+
+    print(f"🎙️  Transcribing video with Faster-Whisper model '{whisper_model}' (CPU Optimized)...")
     from faster_whisper import WhisperModel
     
     # Run on CPU with INT8 quantization for speed
-    model = WhisperModel("base", device="cpu", compute_type="int8")
+    model = WhisperModel(whisper_model, device="cpu", compute_type="int8")
     
     segments, info = model.transcribe(video_path, word_timestamps=True)
     
@@ -893,6 +899,7 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--output', type=str, help="Output directory or file (if processing whole video).")
     parser.add_argument('--keep-original', action='store_true', help="Keep the downloaded YouTube video.")
     parser.add_argument('--skip-analysis', action='store_true', help="Skip AI analysis and convert the whole video.")
+    parser.add_argument('--whisper-model', choices=sorted(WHISPER_MODELS), default='base', help="Faster-Whisper model to use for transcription.")
     
     args = parser.parse_args()
 
@@ -947,7 +954,7 @@ if __name__ == '__main__':
         process_video_to_vertical(input_video, output_file)
     else:
         # 3. Transcribe
-        transcript = transcribe_video(input_video)
+        transcript = transcribe_video(input_video, args.whisper_model)
         
         # Get duration
         cap = cv2.VideoCapture(input_video)

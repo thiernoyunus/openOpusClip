@@ -2,12 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { Youtube, Upload, FileVideo, X } from 'lucide-react';
 import { getApiUrl } from '../config';
 
+const WHISPER_MODELS = [
+    { value: 'tiny', label: 'Tiny', help: 'Fastest, lowest accuracy' },
+    { value: 'base', label: 'Base', help: 'Current default' },
+    { value: 'small', label: 'Small', help: 'Better accuracy, slower' },
+    { value: 'medium', label: 'Medium', help: 'Strong accuracy, much slower' },
+    { value: 'large-v3', label: 'Large v3', help: 'Best accuracy, slowest' },
+];
+
 export default function MediaInput({ onProcess, isProcessing }) {
     const [youtubeUrlEnabled, setYoutubeUrlEnabled] = useState(true);
     const [mode, setMode] = useState('url'); // 'url' | 'file'
     const [url, setUrl] = useState('');
     const [file, setFile] = useState(null);
     const [acknowledged, setAcknowledged] = useState(false);
+    const [whisperModel, setWhisperModel] = useState('base');
 
     useEffect(() => {
         fetch(getApiUrl('/api/config'))
@@ -25,9 +34,9 @@ export default function MediaInput({ onProcess, isProcessing }) {
         e.preventDefault();
         if (!acknowledged) return;
         if (mode === 'url' && url) {
-            onProcess({ type: 'url', payload: url, acknowledged: true });
+            onProcess({ type: 'url', payload: url, acknowledged: true, whisperModel });
         } else if (mode === 'file' && file) {
-            onProcess({ type: 'file', payload: file, acknowledged: true });
+            onProcess({ type: 'file', payload: file, acknowledged: true, whisperModel });
         }
     };
 
@@ -112,6 +121,21 @@ export default function MediaInput({ onProcess, isProcessing }) {
                         )}
                     </div>
                 )}
+
+                <label className="block mt-5">
+                    <span className="block text-xs font-medium text-zinc-400 mb-2">Whisper model</span>
+                    <select
+                        value={whisperModel}
+                        onChange={(e) => setWhisperModel(e.target.value)}
+                        className="input-field cursor-pointer"
+                    >
+                        {WHISPER_MODELS.map((model) => (
+                            <option key={model.value} value={model.value}>
+                                {model.label} - {model.help}
+                            </option>
+                        ))}
+                    </select>
+                </label>
 
                 <label className="flex items-start gap-2 mt-5 text-xs text-zinc-400 cursor-pointer select-none">
                     <input

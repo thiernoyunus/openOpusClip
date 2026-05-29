@@ -336,11 +336,12 @@ function App() {
 
       if (data.type === 'url') {
         headers['Content-Type'] = 'application/json';
-        body = JSON.stringify({ url: data.payload, acknowledged: !!data.acknowledged });
+        body = JSON.stringify({ url: data.payload, acknowledged: !!data.acknowledged, whisper_model: data.whisperModel });
       } else {
         const formData = new FormData();
         formData.append('file', data.payload);
         formData.append('acknowledged', data.acknowledged ? 'true' : 'false');
+        formData.append('whisper_model', data.whisperModel);
         body = formData;
       }
 

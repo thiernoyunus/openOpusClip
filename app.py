@@ -318,7 +318,8 @@ async def process_endpoint(
     request: Request,
     file: Optional[UploadFile] = File(None),
     url: Optional[str] = Form(None),
-    acknowledged: Optional[str] = Form(None)
+    acknowledged: Optional[str] = Form(None),
+    whisper_model: Optional[str] = Form("base")
 ):
     api_key = request.headers.get("X-Gemini-Key")
     if not api_key:
@@ -332,6 +333,11 @@ async def process_endpoint(
         body = await request.json()
         url = body.get("url")
         ack_flag = bool(body.get("acknowledged"))
+        whisper_model = body.get("whisper_model", whisper_model)
+
+    allowed_whisper_models = {"tiny", "base", "small", "medium", "large-v3"}
+    if whisper_model not in allowed_whisper_models:
+        raise HTTPException(status_code=400, detail="Invalid Whisper model")
 
     if not url and not file:
         raise HTTPException(status_code=400, detail="Must provide URL or File")
@@ -386,6 +392,7 @@ async def process_endpoint(
 
         cmd.extend(["-i", input_path])
 
+    cmd.extend(["--whisper-model", whisper_model])
     cmd.extend(["-o", job_output_dir])
 
     print(f"[attestation] job={job_id} ip={attestation['ip']} source={attestation['source']} ack=true")
