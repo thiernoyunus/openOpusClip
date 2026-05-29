@@ -10,6 +10,8 @@ from scenedetect.detectors import ContentDetector
 from ultralytics import YOLO
 import torch
 import os
+import shutil
+import tempfile
 import numpy as np
 from tqdm import tqdm
 import yt_dlp
@@ -455,44 +457,48 @@ def download_youtube_video(url, output_dir="."):
     print("📥 Downloading video from YouTube...")
     step_start_time = time.time()
 
-    cookies_path = '/app/cookies.txt'
+    cookies_path = os.path.join(tempfile.gettempdir(), f"openshorts_youtube_cookies_{os.getpid()}_{int(time.time())}.txt")
     cookies_env = os.environ.get("YOUTUBE_COOKIES")
     if cookies_env:
-        print("🍪 Found YOUTUBE_COOKIES env var, creating cookies file inside container...")
+        print("🍪 Found YOUTUBE_COOKIES env var, creating cookies file...")
         try:
             with open(cookies_path, 'w') as f:
                 f.write(cookies_env)
             if os.path.exists(cookies_path):
                  print(f"   Debug: Cookies file created. Size: {os.path.getsize(cookies_path)} bytes")
-                 with open(cookies_path, 'r') as f:
-                     content = f.read(100)
-                     print(f"   Debug: First 100 chars of cookie file: {content}")
         except Exception as e:
             print(f"⚠️ Failed to write cookies file: {e}")
             cookies_path = None
     else:
         cookies_path = None
         print("⚠️ YOUTUBE_COOKIES env var not found.")
+
+    cookies_from_browser = os.environ.get("YOUTUBE_COOKIES_FROM_BROWSER")
+    if cookies_from_browser and cookies_path:
+        print("⚠️ Both YOUTUBE_COOKIES and YOUTUBE_COOKIES_FROM_BROWSER are set. Using YOUTUBE_COOKIES.")
+
+    node_path = shutil.which("node")
+    js_runtimes = {"deno": {}}
+    if node_path:
+        js_runtimes["node"] = {"path": node_path}
+        print(f"🧩 yt-dlp JavaScript runtime enabled: node ({node_path})")
+    else:
+        print("⚠️ Node.js was not found on PATH. YouTube may hide some high-quality formats.")
     
-    # Common yt-dlp options to work around YouTube bot detection.
-    # extractor_args tries multiple player clients in order; tv_embed / android
-    # avoid the OAuth/PO-token checks that block server IPs.
+    # Let yt-dlp use its current default YouTube clients. Forcing older clients
+    # can hide high-quality formats and fall back to 360p format 18.
     _COMMON_YDL_OPTS = {
         'quiet': False,
         'verbose': True,
         'no_warnings': False,
         'cookiefile': cookies_path if cookies_path else None,
+        'cookiesfrombrowser': (cookies_from_browser,) if cookies_from_browser and not cookies_path else None,
         'socket_timeout': 30,
         'retries': 10,
         'fragment_retries': 10,
         'nocheckcertificate': True,
         'cachedir': False,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['ios', 'android', 'mweb', 'web'],
-                'player_skip': ['webpage', 'configs'],
-            }
-        },
+        'js_runtimes': js_runtimes,
         'http_headers': {
             'User-Agent': (
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -553,14 +559,32 @@ Technical Details: {str(e)}
     
     ydl_opts = {
         **_COMMON_YDL_OPTS,
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
+        'format': (
+            'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/'
+            'bestvideo[height<=1080]+bestaudio/'
+            'best[height<=1080]/best'
+        ),
+        'format_sort': ['res:1080', 'fps', 'vcodec', 'acodec'],
         'outtmpl': output_template,
         'merge_output_format': 'mp4',
         'overwrites': True,
     }
     
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            requested = info.get("requested_downloads") or info.get("requested_formats") or []
+            if requested:
+                selected = ", ".join(
+                    f"{fmt.get('format_id', '?')} {fmt.get('resolution') or fmt.get('height') or 'audio'} {fmt.get('ext', '')}"
+                    for fmt in requested
+                )
+                print(f"🎞️  Selected YouTube formats: {selected}")
+            else:
+                print(f"🎞️  Selected YouTube format: {info.get('format_id', 'unknown')} {info.get('resolution', '')}")
+    finally:
+        if cookies_env and cookies_path and os.path.exists(cookies_path):
+            os.remove(cookies_path)
     
     downloaded_file = os.path.join(output_dir, f'{sanitized_title}.mp4')
     
@@ -797,13 +821,30 @@ def transcribe_video(video_path, whisper_model="base"):
         'language': info.language
     }
 
-def get_viral_clips(transcript_result, video_duration):
+class ClipAnalysisError(Exception):
+    """Raised when Gemini cannot produce viral clip selections."""
+
+def is_retryable_gemini_error(error):
+    error_text = str(error).lower()
+    retryable_markers = [
+        "503",
+        "unavailable",
+        "high demand",
+        "429",
+        "resource_exhausted",
+        "rate limit",
+        "temporarily",
+        "timeout",
+    ]
+    return any(marker in error_text for marker in retryable_markers)
+
+def get_viral_clips(transcript_result, video_duration, max_retries=3):
     print("🤖  Analyzing with Gemini...")
     
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         print("❌ Error: GEMINI_API_KEY not found in environment variables.")
-        return None
+        raise ClipAnalysisError("GEMINI_API_KEY is missing.")
 
 
     client = genai.Client(api_key=api_key)
@@ -829,65 +870,81 @@ def get_viral_clips(transcript_result, video_duration):
         words_json=json.dumps(words)
     )
 
-    try:
-        response = client.models.generate_content(
-            model=model_name,
-            contents=prompt
-        )
-        
-        # --- Cost Calculation ---
+    last_error = None
+    for attempt in range(1, max_retries + 1):
         try:
-            usage = response.usage_metadata
-            if usage:
-                # Gemini 2.5 Flash Pricing (Dec 2025)
-                # Input: $0.10 per 1M tokens
-                # Output: $0.40 per 1M tokens
-                
-                input_price_per_million = 0.10
-                output_price_per_million = 0.40
-                
-                prompt_tokens = usage.prompt_token_count
-                output_tokens = usage.candidates_token_count
-                
-                input_cost = (prompt_tokens / 1_000_000) * input_price_per_million
-                output_cost = (output_tokens / 1_000_000) * output_price_per_million
-                total_cost = input_cost + output_cost
-                
-                cost_analysis = {
-                    "input_tokens": prompt_tokens,
-                    "output_tokens": output_tokens,
-                    "input_cost": input_cost,
-                    "output_cost": output_cost,
-                    "total_cost": total_cost,
-                    "model": model_name
-                }
+            if attempt > 1:
+                wait_seconds = min(60, 5 * (2 ** (attempt - 2)))
+                print(f"⏳ Gemini retry {attempt}/{max_retries} in {wait_seconds}s...")
+                time.sleep(wait_seconds)
 
-                print(f"💰 Token Usage ({model_name}):")
-                print(f"   - Input Tokens: {prompt_tokens} (${input_cost:.6f})")
-                print(f"   - Output Tokens: {output_tokens} (${output_cost:.6f})")
-                print(f"   - Total Estimated Cost: ${total_cost:.6f}")
-                
-        except Exception as e:
-            print(f"⚠️ Could not calculate cost: {e}")
-            cost_analysis = None
-        # ------------------------
-
-        # Clean response if it contains markdown code blocks
-        text = response.text
-        if text.startswith("```json"):
-            text = text[7:]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt
+            )
         
-        result_json = json.loads(text)
-        if cost_analysis:
-            result_json['cost_analysis'] = cost_analysis
-            
-        return result_json
-    except Exception as e:
-        print(f"❌ Gemini Error: {e}")
-        return None
+            # --- Cost Calculation ---
+            try:
+                usage = response.usage_metadata
+                if usage:
+                    # Gemini 2.5 Flash Pricing (Dec 2025)
+                    # Input: $0.10 per 1M tokens
+                    # Output: $0.40 per 1M tokens
+
+                    input_price_per_million = 0.10
+                    output_price_per_million = 0.40
+
+                    prompt_tokens = usage.prompt_token_count
+                    output_tokens = usage.candidates_token_count
+
+                    input_cost = (prompt_tokens / 1_000_000) * input_price_per_million
+                    output_cost = (output_tokens / 1_000_000) * output_price_per_million
+                    total_cost = input_cost + output_cost
+
+                    cost_analysis = {
+                        "input_tokens": prompt_tokens,
+                        "output_tokens": output_tokens,
+                        "input_cost": input_cost,
+                        "output_cost": output_cost,
+                        "total_cost": total_cost,
+                        "model": model_name
+                    }
+
+                    print(f"💰 Token Usage ({model_name}):")
+                    print(f"   - Input Tokens: {prompt_tokens} (${input_cost:.6f})")
+                    print(f"   - Output Tokens: {output_tokens} (${output_cost:.6f})")
+                    print(f"   - Total Estimated Cost: ${total_cost:.6f}")
+
+            except Exception as e:
+                print(f"⚠️ Could not calculate cost: {e}")
+                cost_analysis = None
+            # ------------------------
+
+            # Clean response if it contains markdown code blocks
+            text = response.text.strip()
+            if text.startswith("```json"):
+                text = text[7:]
+            elif text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+
+            result_json = json.loads(text)
+            if cost_analysis:
+                result_json['cost_analysis'] = cost_analysis
+
+            return result_json
+        except Exception as e:
+            last_error = e
+            print(f"❌ Gemini attempt {attempt}/{max_retries} failed: {e}")
+            if not is_retryable_gemini_error(e):
+                break
+
+    raise ClipAnalysisError(
+        "Gemini could not identify clips after retrying. "
+        f"Last error: {last_error}"
+    )
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="AutoCrop-Vertical with Viral Clip Detection.")
@@ -964,12 +1021,17 @@ if __name__ == '__main__':
         cap.release()
 
         # 4. Gemini Analysis
-        clips_data = get_viral_clips(transcript, duration)
-        
+        try:
+            clips_data = get_viral_clips(transcript, duration)
+        except ClipAnalysisError as e:
+            print(f"❌ Clip detection failed: {e}")
+            print("🛑 Stopping job. Not converting the whole video as a fallback.")
+            sys.exit(2)
+
         if not clips_data or 'shorts' not in clips_data:
-            print("❌ Failed to identify clips. Converting whole video as fallback.")
-            output_file = os.path.join(output_dir, f"{video_title}_vertical.mp4")
-            process_video_to_vertical(input_video, output_file)
+            print("❌ Gemini response did not include any shorts.")
+            print("🛑 Stopping job. Not converting the whole video as a fallback.")
+            sys.exit(2)
         else:
             print(f"🔥 Found {len(clips_data['shorts'])} viral clips!")
             
