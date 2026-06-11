@@ -43,8 +43,7 @@ stop_port 5175
 echo "Starting backend on http://localhost:8000"
 (
   cd "$ROOT_DIR"
-  source .venv/bin/activate
-  RENDER_SERVICE_URL=http://localhost:3100 exec uvicorn app:app --host 0.0.0.0 --port 8000
+  RENDER_SERVICE_URL=http://localhost:3100 exec "$ROOT_DIR/.venv/bin/python" -m uvicorn app:app --host 0.0.0.0 --port 8000
 ) &
 PIDS+=("$!")
 
