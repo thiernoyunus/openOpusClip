@@ -1660,17 +1660,6 @@ async def thumbnail_publish_status(publish_id: str):
 # SaaSShorts: AI UGC Video Generator for SaaS Products
 # ═══════════════════════════════════════════════════════════════════════
 
-from saasshorts import (
-    scrape_website,
-    research_saas_online,
-    analyze_saas,
-    generate_scripts,
-    generate_full_video,
-    generate_actor_images,
-    get_elevenlabs_voices,
-    DEFAULT_VOICES,
-)
-
 # State for SaaSShorts jobs (separate from video processing jobs)
 saas_jobs: Dict[str, Dict] = {}
 
@@ -1701,6 +1690,8 @@ async def saasshorts_analyze(
         loop = asyncio.get_event_loop()
 
         def run_analysis():
+            from saasshorts import scrape_website, research_saas_online, analyze_saas, generate_scripts
+
             web_research = None
 
             if req.url and req.url.strip():
@@ -1781,6 +1772,8 @@ async def saasshorts_actor_options(
         raise HTTPException(status_code=400, detail="Missing fal.ai API Key")
 
     try:
+        from saasshorts import generate_actor_images
+
         job_id = str(uuid.uuid4())
         out_dir = os.path.join(OUTPUT_DIR, f"saas_actors_{job_id}")
         os.makedirs(out_dir, exist_ok=True)
@@ -2174,6 +2167,7 @@ async def saasshorts_generate(
                     saas_jobs[job_id]["logs"].append(msg)
 
             def run():
+                from saasshorts import generate_full_video
                 return generate_full_video(req.script, config, job_output_dir, log_msg)
 
             result = await loop.run_in_executor(None, run)
@@ -2254,6 +2248,8 @@ async def saasshorts_voices(
     """List available ElevenLabs voices."""
     if x_elevenlabs_key:
         try:
+            from saasshorts import get_elevenlabs_voices
+
             loop = asyncio.get_event_loop()
             voices = await loop.run_in_executor(
                 None, get_elevenlabs_voices, x_elevenlabs_key
@@ -2264,6 +2260,7 @@ async def saasshorts_voices(
             pass
 
     # Fallback to default voices
+    from saasshorts import DEFAULT_VOICES
     return {
         "voices": [
             {"voice_id": vid, "name": name, "category": "default"}
