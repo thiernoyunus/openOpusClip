@@ -427,8 +427,6 @@ async def get_status(job_id: str):
 from editor import VideoEditor
 from subtitles import generate_srt, burn_subtitles, generate_srt_from_video
 from hooks import add_hook_to_video
-from translate import translate_video, get_supported_languages
-from thumbnail import analyze_video_for_titles, refine_titles, generate_thumbnail, generate_youtube_description
 
 class EditRequest(BaseModel):
     job_id: str
@@ -963,6 +961,7 @@ class TranslateRequest(BaseModel):
 @app.get("/api/translate/languages")
 async def get_languages():
     """Return supported languages for translation."""
+    from translate import get_supported_languages
     return {"languages": get_supported_languages()}
 
 @app.post("/api/translate")
@@ -1012,6 +1011,8 @@ async def translate_clip(
     output_path = os.path.join(output_dir, output_filename)
 
     try:
+        from translate import translate_video
+
         # Run translation in thread pool (blocking API calls)
         def run_translate():
             return translate_video(
@@ -1326,6 +1327,8 @@ async def thumbnail_analyze(
                 buffer.write(content)
 
     try:
+        from thumbnail import analyze_video_for_titles
+
         # Run analysis in thread pool (skips Whisper if pre_transcript is available)
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, analyze_video_for_titles, api_key, video_path, pre_transcript)
@@ -1397,6 +1400,8 @@ async def thumbnail_titles(
     session["conversation"].append({"role": "user", "content": req.message})
 
     try:
+        from thumbnail import refine_titles
+
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             None,
@@ -1444,6 +1449,8 @@ async def thumbnail_generate(
     os.makedirs(thumb_upload_dir, exist_ok=True)
 
     try:
+        from thumbnail import generate_thumbnail
+
         if face and face.filename:
             face_path = os.path.join(thumb_upload_dir, f"face_{face.filename}")
             with open(face_path, "wb") as f:
@@ -1509,6 +1516,8 @@ async def thumbnail_describe(
         raise HTTPException(status_code=400, detail="No transcript segments available. Please analyze a video first.")
 
     try:
+        from thumbnail import generate_youtube_description
+
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             None,
