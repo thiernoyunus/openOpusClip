@@ -166,11 +166,12 @@ OpenShorts is free. You only pay for the AI APIs you use — and most have gener
 
 ## Requirements
 
-- **Docker & Docker Compose**
+- **For local development:** Python 3.11, Node.js/npm, and FFmpeg
+- **For Docker:** Docker & Docker Compose
 - **Google Gemini API Key** ([Free — get it here](https://aistudio.google.com/app/apikey)) — required for all AI features
-- **fal.ai API Key** ([Pay-per-use](https://fal.ai)) — required for AI Shorts (actor generation, video, lip-sync)
-- **ElevenLabs API Key** ([Free tier](https://elevenlabs.io)) — required for voiceover/dubbing
-- **Upload-Post API Key** ([free tier](https://upload-post.com)) — required for direct social posting
+- **fal.ai API Key** ([Pay-per-use](https://fal.ai)) — required only for AI Shorts actor generation/video/lip-sync
+- **ElevenLabs API Key** ([Free tier](https://elevenlabs.io)) — required only for voiceover/dubbing
+- **Upload-Post API Key** ([free tier](https://upload-post.com)) — optional, required only for direct social posting
 
 ---
 
@@ -182,25 +183,54 @@ git clone https://github.com/your-username/OpenShorts.git
 cd OpenShorts
 ```
 
-### 2. Configure (optional)
+### 2. Install local dependencies
 ```bash
-cp .env.example .env
-# Edit .env with your AWS keys for S3 backup
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+cd dashboard && npm install && cd ..
+cd render-service && npm install && cd ..
 ```
 
-### 3. Launch
+### 3. Configure optional server settings
+```bash
+cp .env.example .env
+# Edit .env if you want S3 backup or YouTube cookies
+```
+
+API keys for Gemini, fal.ai, ElevenLabs, and Upload-Post are entered in the app Settings screen. The Clip Generator only needs a Gemini key. Upload-Post is not required unless you want to publish directly to TikTok, Instagram, or YouTube.
+
+### 4. Launch locally
+```bash
+./start-local.sh
+```
+
+This starts all three local services:
+
+| Service | URL |
+|---------|-----|
+| Backend API | `http://localhost:8000` |
+| Render service | `http://localhost:3100` |
+| Dashboard | `http://localhost:5175/#app` |
+
+Press `Ctrl+C` in the terminal running `./start-local.sh` to stop everything.
+
+### 5. Open Dashboard
+Navigate to **`http://localhost:5175/#app`**
+
+1. Go to **Settings** and enter the API keys for the features you want to use
+2. **Clip Generator**: Upload a long-form video or paste a YouTube URL to generate viral shorts
+3. **AI Shorts**: Describe your product or paste a URL to generate UGC marketing videos
+4. **YouTube Studio**: Generate thumbnails, titles, and descriptions for YouTube
+5. **UGC Gallery**: Browse all generated videos and avatars
+
+### Docker
 ```bash
 docker compose up --build
 ```
 
-### 4. Open Dashboard
-Navigate to **`http://localhost:5175`**
-
-1. Go to **Settings** and enter your API keys (Gemini, fal.ai, ElevenLabs, Upload-Post)
-2. **Clip Generator**: Upload a long-form video to generate viral shorts
-3. **AI Shorts**: Describe your product or paste a URL to generate UGC marketing videos
-4. **YouTube Studio**: Generate thumbnails, titles, and descriptions for YouTube
-5. **UGC Gallery**: Browse all generated videos and avatars
+Docker also serves the dashboard at **`http://localhost:5175/#app`**.
 
 ---
 
@@ -259,7 +289,7 @@ Navigate to **`http://localhost:5175`**
 | `GEMINI_API_KEY` | Google Gemini — required |
 | `FAL_KEY` | fal.ai — required for AI Shorts |
 | `ELEVENLABS_API_KEY` | ElevenLabs — required for voiceover/dubbing |
-| `UPLOAD_POST_API_KEY` | Upload-Post — required, for social posting |
+| `UPLOAD_POST_API_KEY` | Upload-Post — optional, required only for social posting |
 
 ---
 
