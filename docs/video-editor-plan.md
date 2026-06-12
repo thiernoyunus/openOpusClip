@@ -1,7 +1,9 @@
 # OpenShorts Video Editor — Execution Plan
 
-> Status: **PHASES 1–5 EXECUTED + undo/redo from Phase 6** (2026-06-12, commits e6663a5..5b1a3c4 on `dev`).
-> Remaining work = the rest of the Phase 6 backlog below. Notable deviations from plan:
+> Status: **PHASES 1–6 EXECUTED** (2026-06-12, commits e6663a5..96d133d on `dev`).
+> Phase 6 delivered: undo/redo + shortcuts, transcript panel (click-to-seek, live word highlight, word editing), captions tab (presets/position/size/animation/highlight, persisted at framing.subtitles, burned into export), timeline filmstrip + waveform + draggable segment boundaries, and canvas click-to-track with live face markers (trackerMapping.js inverts the layout geometry).
+> Still-open backlog: trim/extend clip content (EDL-style source ranges), AI B-roll, music, transitions, text overlay tracks, screenshare/gameplay layouts, auto-three, snap editing, shared composition package, brand templates.
+> Notable deviations from plan:
 > - Phase 4 manual reframe is a modal over the 16:9 source (Opus's own pattern) instead of canvas drag — avoids inverse-crop math entirely.
 > - Click-to-track became per-panel person dropdowns; canvas click-to-track is still open backlog.
 > - Phase 5 implemented auto-SPLIT (2 people) only; auto-three is backlog. Kill switch: `AUTO_SPLIT_LAYOUT=false`.
