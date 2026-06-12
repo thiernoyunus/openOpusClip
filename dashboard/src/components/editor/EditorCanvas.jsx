@@ -9,7 +9,7 @@ export const EDITOR_FPS = 30;
  * composition the export uses, fed the live (possibly edited) framing config.
  */
 const EditorCanvas = forwardRef(function EditorCanvas(
-    { sourceUrl, framing, durationInFrames },
+    { sourceUrl, framing, subtitles = null, durationInFrames },
     playerRef
 ) {
     const inputProps = useMemo(
@@ -21,11 +21,11 @@ const EditorCanvas = forwardRef(function EditorCanvas(
             fps: EDITOR_FPS,
             width: 1080,
             height: 1920,
-            subtitles: null,
+            subtitles,
             hook: null,
             effects: null,
         }),
-        [sourceUrl, framing, durationInFrames]
+        [sourceUrl, framing, subtitles, durationInFrames]
     );
 
     return (

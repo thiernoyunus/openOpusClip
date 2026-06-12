@@ -65,6 +65,43 @@ export const editorReducer = (state, action) => {
             );
             return withHistory({ ...state.framing, segments });
         }
+        case 'SET_SUBTITLES': {
+            // Caption config lives on the framing object (optional key) so it
+            // rides the existing save/export paths. null disables captions.
+            return withHistory({ ...state.framing, subtitles: action.subtitles });
+        }
+        case 'EDIT_CAPTION_WORD': {
+            const subs = state.framing.subtitles;
+            if (!subs) return state;
+            const captions = subs.captions.map((w, i) =>
+                i === action.index ? { ...w, text: action.text } : w
+            );
+            return withHistory({
+                ...state.framing,
+                subtitles: { ...subs, captions },
+            });
+        }
+        case 'SET_BOUNDARY': {
+            // Move the shared boundary between segment[i] and segment[i+1];
+            // contiguity is preserved by construction
+            const { boundaryIndex, frame } = action;
+            const segs = state.framing.segments;
+            const left = segs[boundaryIndex];
+            const right = segs[boundaryIndex + 1];
+            if (!left || !right) return state;
+            const MIN_LEN = 10; // frames
+            const clamped = Math.max(
+                left.startFrame + MIN_LEN,
+                Math.min(frame, right.endFrame - MIN_LEN)
+            );
+            if (clamped === left.endFrame) return state;
+            const segments = segs.map((s, i) => {
+                if (i === boundaryIndex) return { ...s, endFrame: clamped };
+                if (i === boundaryIndex + 1) return { ...s, startFrame: clamped };
+                return s;
+            });
+            return withHistory({ ...state.framing, segments });
+        }
         case 'UNDO': {
             if (state.past.length === 0) return state;
             const previous = state.past[state.past.length - 1];
@@ -150,6 +187,44 @@ export function buildFillKeyframes(framing, segment, trackId) {
     }
     return keyframes;
 }
+
+/** Default caption styling for newly enabled captions (Opus-like pop style). */
+export function defaultSubtitleConfig(captions) {
+    return {
+        captions,
+        position: 'bottom',
+        style: {
+            fontFamily: 'Inter',
+            fontSize: 52,
+            fontColor: '#FFFFFF',
+            highlightColor: '#FFDD00',
+            borderColor: '#000000',
+            borderWidth: 3,
+            bgColor: '#000000',
+            bgOpacity: 0,
+            animation: 'pop',
+        },
+    };
+}
+
+/** Caption style presets surfaced in the Captions tab. */
+export const CAPTION_PRESETS = [
+    {
+        id: 'clean',
+        label: 'Clean',
+        style: { fontFamily: 'Inter', fontSize: 52, fontColor: '#FFFFFF', highlightColor: '#FFDD00', borderColor: '#000000', borderWidth: 3, bgColor: '#000000', bgOpacity: 0, animation: 'pop' },
+    },
+    {
+        id: 'bold',
+        label: 'Bold',
+        style: { fontFamily: 'Inter', fontSize: 62, fontColor: '#FFFFFF', highlightColor: '#3dd68c', borderColor: '#000000', borderWidth: 5, bgColor: '#000000', bgOpacity: 0, animation: 'karaoke' },
+    },
+    {
+        id: 'bar',
+        label: 'Bar',
+        style: { fontFamily: 'Inter', fontSize: 48, fontColor: '#FFFFFF', highlightColor: '#FFFFFF', borderColor: '#000000', borderWidth: 0, bgColor: '#000000', bgOpacity: 0.65, animation: 'word-highlight' },
+    },
+];
 
 /** Center crop with a given pixel aspect, in normalized coords. */
 export function centerCropRect(panelAspect, srcW, srcH) {

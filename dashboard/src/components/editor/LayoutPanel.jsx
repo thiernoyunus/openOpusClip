@@ -80,7 +80,7 @@ export default function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl 
     };
 
     return (
-        <div className="w-[250px] shrink-0 border-l border-edge bg-surface overflow-y-auto custom-scrollbar">
+        <div>
             <div className="p-4">
                 <h3 className="text-xs font-semibold text-fg uppercase tracking-wide mb-1">Layout</h3>
                 {!primary ? (

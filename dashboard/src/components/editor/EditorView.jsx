@@ -1,16 +1,19 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Loader2, AlertCircle } from 'lucide-react';
+import { Loader2, AlertCircle, LayoutGrid, Captions } from 'lucide-react';
 import { getApiUrl } from '../../config';
-import useEditorState from './useEditorState';
+import useEditorState, { defaultSubtitleConfig } from './useEditorState';
 import EditorTopBar from './EditorTopBar';
 import EditorCanvas, { EDITOR_FPS } from './EditorCanvas';
 import EditorTimeline from './EditorTimeline';
 import LayoutPanel from './LayoutPanel';
+import TranscriptPanel from './TranscriptPanel';
+import CaptionsPanel from './CaptionsPanel';
 
 /**
- * Full-screen clip editor (docs/video-editor-plan.md Phase 3+4).
- * Loads the clip's framing.json and 16:9 source, previews the reframe live in
- * a Remotion Player, and lets the user change per-segment layout.
+ * Full-screen clip editor (docs/video-editor-plan.md Phases 3-6).
+ * Loads the clip's framing.json, transcript, and 16:9 source; previews the
+ * reframe + captions live in a Remotion Player; per-segment layout editing,
+ * caption styling, transcript-based seeking and word editing.
  */
 export default function EditorView({ clip, index, jobId, onClose, onExported }) {
     const [state, dispatch] = useEditorState();
@@ -19,6 +22,8 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     const [saving, setSaving] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [exportProgress, setExportProgress] = useState(0);
+    const [captions, setCaptions] = useState([]);
+    const [activeTab, setActiveTab] = useState('layout'); // layout | captions
     const playerRef = useRef(null);
 
     const framingUrl = clip.framing_url ? getApiUrl(clip.framing_url) : null;
@@ -49,6 +54,35 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
             cancelled = true;
         };
     }, [framingUrl, dispatch]);
+
+    // Word-level transcript for the transcript panel and captions
+    useEffect(() => {
+        if (jobId == null || index == null) return;
+        let cancelled = false;
+        fetch(getApiUrl(`/api/clip/${jobId}/${index}/transcript`))
+            .then((res) => (res.ok ? res.json() : null))
+            .then((data) => {
+                if (!cancelled && data?.captions) setCaptions(data.captions);
+            })
+            .catch(() => {}); // transcript is optional — editor works without it
+        return () => {
+            cancelled = true;
+        };
+    }, [jobId, index]);
+
+    const handleEditWord = useCallback(
+        (wordIndex, text) => {
+            setCaptions((prev) => prev.map((w, i) => (i === wordIndex ? { ...w, text } : w)));
+            if (state.framing?.subtitles) {
+                dispatch({ type: 'EDIT_CAPTION_WORD', index: wordIndex, text });
+            } else if (state.framing) {
+                // Editing a caption implies wanting captions: enable with the edit applied
+                const edited = captions.map((w, i) => (i === wordIndex ? { ...w, text } : w));
+                dispatch({ type: 'SET_SUBTITLES', subtitles: defaultSubtitleConfig(edited) });
+            }
+        },
+        [state.framing, captions, dispatch]
+    );
 
     const handleBack = useCallback(() => {
         if (state.dirty && !window.confirm('You have unsaved changes. Leave the editor anyway?')) {
@@ -115,7 +149,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                         fps: EDITOR_FPS,
                         width: 1080,
                         height: 1920,
-                        subtitles: null,
+                        subtitles: state.framing.subtitles ?? null,
                         hook: null,
                         effects: null,
                     },
@@ -236,23 +270,62 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
             ) : (
                 <>
                     <div className="flex-1 flex min-h-0">
+                        {/* Transcript column */}
+                        <TranscriptPanel
+                            captions={captions}
+                            framing={framing}
+                            playerRef={playerRef}
+                            onEditWord={handleEditWord}
+                        />
+
                         {/* Canvas */}
                         <div className="flex-1 min-w-0 bg-canvas flex items-center justify-center p-6">
                             <EditorCanvas
                                 ref={playerRef}
                                 sourceUrl={sourceUrl}
                                 framing={framing}
+                                subtitles={framing.subtitles || null}
                                 durationInFrames={durationInFrames}
                             />
                         </div>
 
-                        {/* Tool rail */}
-                        <LayoutPanel
-                            framing={framing}
-                            selectedIds={state.selectedIds}
-                            dispatch={dispatch}
-                            sourceUrl={sourceUrl}
-                        />
+                        {/* Tool rail with tabs */}
+                        <div className="w-[250px] shrink-0 border-l border-edge bg-surface flex flex-col min-h-0">
+                            <div className="flex border-b border-edge shrink-0">
+                                {[
+                                    { id: 'layout', label: 'Layout', icon: LayoutGrid },
+                                    { id: 'captions', label: 'Captions', icon: Captions },
+                                ].map((tab) => (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => setActiveTab(tab.id)}
+                                        className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[11px] font-medium transition-colors ${
+                                            activeTab === tab.id
+                                                ? 'text-fg border-b-2 border-fg -mb-px'
+                                                : 'text-muted hover:text-fg'
+                                        }`}
+                                    >
+                                        <tab.icon size={13} /> {tab.label}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="flex-1 overflow-y-auto custom-scrollbar">
+                                {activeTab === 'layout' ? (
+                                    <LayoutPanel
+                                        framing={framing}
+                                        selectedIds={state.selectedIds}
+                                        dispatch={dispatch}
+                                        sourceUrl={sourceUrl}
+                                    />
+                                ) : (
+                                    <CaptionsPanel
+                                        framing={framing}
+                                        captions={captions}
+                                        dispatch={dispatch}
+                                    />
+                                )}
+                            </div>
+                        </div>
                     </div>
 
                     <EditorTimeline

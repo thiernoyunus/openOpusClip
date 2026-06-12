@@ -103,7 +103,8 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           display: "flex",
           flexWrap: "wrap",
           justifyContent: "center",
-          gap: "6px 8px",
+          // Word gap must scale with the font or words visually run together
+          gap: `${Math.round(style.fontSize * 0.12)}px ${Math.round(style.fontSize * 0.3)}px`,
           maxWidth: "85%",
           ...bgStyle,
         }}
