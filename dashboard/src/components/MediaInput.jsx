@@ -49,28 +49,28 @@ export default function MediaInput({ onProcess, isProcessing }) {
     };
 
     return (
-        <div className="bg-surface border border-white/5 rounded-2xl p-6 animate-[fadeIn_0.6s_ease-out]">
-            <div className="flex gap-4 mb-6 border-b border-white/5 pb-4">
+        <div className="bg-surface border border-edge rounded-xl p-5 animate-[fadeIn_0.6s_ease-out]">
+            <div className="flex gap-5 mb-5 border-b border-edge pb-3 text-sm">
                 {youtubeUrlEnabled && (
                     <button
                         onClick={() => setMode('url')}
-                        className={`flex items-center gap-2 pb-2 px-2 transition-all ${mode === 'url'
-                            ? 'text-primary border-b-2 border-primary -mb-[17px]'
-                            : 'text-zinc-400 hover:text-white'
+                        className={`flex items-center gap-2 pb-2 transition-all ${mode === 'url'
+                            ? 'text-fg border-b-2 border-fg -mb-[14px]'
+                            : 'text-muted hover:text-fg'
                             }`}
                     >
-                        <Youtube size={18} />
+                        <Youtube size={17} />
                         YouTube URL
                     </button>
                 )}
                 <button
                     onClick={() => setMode('file')}
-                    className={`flex items-center gap-2 pb-2 px-2 transition-all ${mode === 'file'
-                        ? 'text-primary border-b-2 border-primary -mb-[17px]'
-                        : 'text-zinc-400 hover:text-white'
+                    className={`flex items-center gap-2 pb-2 transition-all ${mode === 'file'
+                        ? 'text-fg border-b-2 border-fg -mb-[14px]'
+                        : 'text-muted hover:text-fg'
                         }`}
                 >
-                    <Upload size={18} />
+                    <Upload size={17} />
                     Upload File
                 </button>
             </div>
@@ -152,16 +152,16 @@ export default function MediaInput({ onProcess, isProcessing }) {
                 <button
                     type="submit"
                     disabled={isProcessing || !acknowledged || (mode === 'url' && !url) || (mode === 'file' && !file)}
-                    className="w-full btn-primary mt-4 flex items-center justify-center gap-2"
+                    className="w-full mt-4 py-3 rounded-lg bg-fg text-[#18181b] font-medium text-sm hover:bg-white active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                     {isProcessing ? (
                         <>
-                            <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                            Processing Video...
+                            <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                            Processing video...
                         </>
                     ) : (
                         <>
-                            Generate Clips
+                            Generate clips
                         </>
                     )}
                 </button>

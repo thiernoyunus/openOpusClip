@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, FileVideo, Sparkles, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2 } from 'lucide-react';
+import { Upload, FileVideo, Sparkles, Scissors, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2 } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
-import ProcessingAnimation from './components/ProcessingAnimation';
 // import Gallery from './components/Gallery';
 import ThumbnailStudio from './components/ThumbnailStudio';
 import SaaShortsTab from './components/SaaShortsTab';
 import UGCGallery from './components/UGCGallery';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
+import ProcessingModal from './components/ProcessingModal';
+import { getProjects, addProject, updateProject, phaseFromLogs, titleFromPayload, thumbFromPayload, coverFromString, fetchVideoTitle, captureVideoFrame } from './lib/projectHistory';
 import { getApiUrl } from './config';
 
 // Enhanced "Encryption" using XOR + Base64 with a Salt
@@ -162,12 +163,14 @@ function App() {
   const [status, setStatus] = useState('idle'); // idle, processing, complete, error
   const [results, setResults] = useState(null);
   const [logs, setLogs] = useState([]);
-  const [logsVisible, setLogsVisible] = useState(true);
   const [processingMedia, setProcessingMedia] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard'); // dashboard, settings
 
   const [sessionRecovered, setSessionRecovered] = useState(false);
   const [showScheduleWeek, setShowScheduleWeek] = useState(false);
+  const [projects, setProjects] = useState(() => getProjects());
+  const [showProcessingModal, setShowProcessingModal] = useState(false);
+  const [viewingResults, setViewingResults] = useState(false);
 
   // Sync state for original video playback
   const [syncedTime, setSyncedTime] = useState(0);
@@ -230,6 +233,18 @@ function App() {
     }
   }, [jobId, status, results, activeTab]);
 
+  // Backfill real video titles for projects whose title is still a raw URL
+  // (e.g. created before title-resolution existed, or the active job).
+  useEffect(() => {
+    getProjects().forEach((p) => {
+      const looksLikeUrl = /youtu\.?be|\/watch|\/shorts\//.test(p.title || '') || p.src;
+      if (!looksLikeUrl) return;
+      fetchVideoTitle({ type: 'url', payload: p.src || p.title }).then((t) => {
+        if (t && t !== p.title) setProjects(updateProject(p.id, { title: t }));
+      });
+    });
+  }, []);
+
   useEffect(() => {
     // Encrypt Gemini Key too for consistency if desired, but user asked specifically about Social integration not saving well.
     // For now keeping gemini plain for compatibility unless requested.
@@ -278,11 +293,17 @@ function App() {
 
           if (data.status === 'completed') {
             setStatus('complete');
+            setProjects(updateProject(jobId, {
+              status: 'complete',
+              clipCount: data.result?.clips?.length || 0,
+              cost: data.result?.cost_analysis?.total_cost ?? null,
+            }));
             clearInterval(interval);
           } else if (data.status === 'failed') {
             setStatus('error');
             const errorMsg = data.error || (data.logs && data.logs.length > 0 ? data.logs[data.logs.length - 1] : "Process failed");
             setLogs(prev => [...prev, "Error: " + errorMsg]);
+            setProjects(updateProject(jobId, { status: 'failed' }));
             clearInterval(interval);
           } else {
             // Update logs if available
@@ -331,6 +352,7 @@ function App() {
     setLogs(["Starting process..."]);
     setResults(null);
     setProcessingMedia(data);
+    setViewingResults(false);
 
     try {
       let body;
@@ -355,7 +377,23 @@ function App() {
 
       if (!res.ok) throw new Error(await res.text());
       const resData = await res.json();
-      setJobId(resData.job_id);
+      const newId = resData.job_id;
+      setJobId(newId);
+      setProjects(addProject({
+        id: newId,
+        title: titleFromPayload(data),
+        type: data.type,
+        model: data.whisperModel,
+        thumb: thumbFromPayload(data),
+        src: data.type === 'url' ? data.payload : null,
+      }));
+      setShowProcessingModal(true);
+
+      // Enrich asynchronously: real video title + (for files) a cover frame.
+      fetchVideoTitle(data).then((t) => { if (t) setProjects(updateProject(newId, { title: t })); });
+      if (data.type === 'file') {
+        captureVideoFrame(data.payload).then((th) => { if (th) setProjects(updateProject(newId, { thumb: th })); });
+      }
 
     } catch (e) {
       setStatus('error');
@@ -369,122 +407,147 @@ function App() {
     setResults(null);
     setLogs([]);
     setProcessingMedia(null);
+    setViewingResults(false);
+    setShowProcessingModal(false);
     localStorage.removeItem(SESSION_KEY);
+  };
+
+  // Open a project from the grid: resume the active job, or restore a past one
+  // from the backend (jobs live ~1h server-side).
+  const openProject = async (p) => {
+    if (p.id === jobId) {
+      if (status === 'complete') { setViewingResults(true); setShowProcessingModal(false); }
+      else { setShowProcessingModal(true); }
+      return;
+    }
+    try {
+      const data = await pollJob(p.id);
+      setJobId(p.id);
+      if (data.status === 'completed' && data.result) {
+        setResults(data.result);
+        setStatus('complete');
+        setProcessingMedia(null);
+        setViewingResults(true);
+        setShowProcessingModal(false);
+      } else if (data.status === 'processing' || data.status === 'queued') {
+        setStatus('processing');
+        setLogs(data.logs || []);
+        setViewingResults(false);
+        setShowProcessingModal(true);
+      } else {
+        setResults(data.result || null);
+        setStatus('complete');
+        setViewingResults(true);
+      }
+    } catch {
+      alert('This project has expired. Jobs are kept on the server for about an hour after processing.');
+    }
   };
 
   // --- UI Components ---
 
+  const RailItem = ({ icon: Icon, label, active, onClick }) => (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      className={`relative group w-10 h-10 mx-auto rounded-lg flex items-center justify-center transition-colors ${active ? 'bg-white/10 text-fg' : 'text-muted hover:text-fg hover:bg-white/5'}`}
+    >
+      <Icon size={20} />
+      <span className="pointer-events-none absolute left-full ml-3 px-2 py-1 rounded-md bg-surface2 border border-edge text-fg text-xs whitespace-nowrap opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-150 z-50 shadow-lg">
+        {label}
+      </span>
+    </button>
+  );
+
   const Sidebar = () => (
-    <div className="w-20 lg:w-64 bg-surface border-r border-white/5 flex flex-col h-full shrink-0 transition-all duration-300">
-      <div className="p-6 flex items-center gap-3">
-        <div className="w-8 h-8 bg-white/5 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-white/5">
-          <img src="/logo-openshorts.png" alt="Logo" className="w-full h-full object-cover" />
-        </div>
-        <span className="font-bold text-lg text-white hidden lg:block tracking-tight">OpenShorts</span>
+    <div className="w-[60px] bg-background border-r border-edge flex flex-col items-center py-4 shrink-0">
+      <div className="w-9 h-9 rounded-lg overflow-hidden border border-edge mb-5 shrink-0">
+        <img src="/logo-openshorts.png" alt="OpenShorts" className="w-full h-full object-cover" />
       </div>
 
-      <nav className="flex-1 px-4 py-4 space-y-2">
-        <button
-          onClick={() => setActiveTab('dashboard')}
-          className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${activeTab === 'dashboard' ? 'bg-primary/10 text-primary' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-        >
-          <LayoutDashboard size={20} />
-          <span className="font-medium hidden lg:block">Clip Generator</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('saasshorts')}
-          className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${activeTab === 'saasshorts' ? 'bg-violet-500/10 text-violet-400' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-        >
-          <Sparkles size={20} />
-          <span className="font-medium hidden lg:block">AI Shorts</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('ai-agent')}
-          className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${activeTab === 'ai-agent' ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-        >
-          <Bot size={20} />
-          <span className="font-medium hidden lg:block">AI Agent</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('ugc-gallery')}
-          className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${activeTab === 'ugc-gallery' ? 'bg-violet-500/10 text-violet-400' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-        >
-          <LayoutGrid size={20} />
-          <span className="font-medium hidden lg:block">UGC Gallery</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('thumbnails')}
-          className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${activeTab === 'thumbnails' ? 'bg-primary/10 text-primary' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-        >
-          <Image size={20} />
-          <span className="font-medium hidden lg:block">YouTube Studio</span>
-        </button>
-
-        {/* <button
-          onClick={() => setActiveTab('gallery')}
-          className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${activeTab === 'gallery' ? 'bg-primary/10 text-primary' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-        >
-          <LayoutGrid size={20} />
-          <span className="font-medium hidden lg:block">Gallery</span>
-        </button> */}
-
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${activeTab === 'settings' ? 'bg-primary/10 text-primary' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-        >
-          <Settings size={20} />
-          <span className="font-medium hidden lg:block">Settings</span>
-        </button>
+      <nav className="flex-1 flex flex-col gap-1.5 w-full">
+        <RailItem icon={Scissors} label="Clip Generator" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
+        <RailItem icon={Sparkles} label="AI Shorts" active={activeTab === 'saasshorts'} onClick={() => setActiveTab('saasshorts')} />
+        <RailItem icon={Bot} label="AI Agent" active={activeTab === 'ai-agent'} onClick={() => setActiveTab('ai-agent')} />
+        <RailItem icon={Youtube} label="YouTube Studio" active={activeTab === 'thumbnails'} onClick={() => setActiveTab('thumbnails')} />
       </nav>
 
-      <div className="p-4 border-t border-white/5 space-y-2">
-        <a
-          href="#"
-          onClick={(e) => { e.preventDefault(); localStorage.removeItem('openshorts_skip_landing'); window.location.hash = ''; window.location.reload(); }}
-          className="flex items-center gap-2 p-3 bg-white/5 hover:bg-white/10 rounded-xl transition-colors group"
-        >
-          <div className="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center shrink-0">
-            <Globe size={16} />
-          </div>
-          <div className="hidden lg:block overflow-hidden">
-            <p className="text-sm font-bold text-white leading-none mb-0.5">Landing Page</p>
-            <p className="text-[10px] text-zinc-400 group-hover:text-zinc-300 transition-colors truncate">View website</p>
-          </div>
-        </a>
+      <div className="flex flex-col gap-1.5 w-full">
+        <RailItem icon={Settings} label="Settings" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
+        <RailItem icon={Globe} label="Landing page" active={false} onClick={() => { localStorage.removeItem('openshorts_skip_landing'); window.location.hash = ''; window.location.reload(); }} />
         <a
           href="https://github.com/mutonby/openshorts"
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-2 p-3 bg-white/5 hover:bg-white/10 rounded-xl transition-colors group"
+          aria-label="GitHub"
+          className="relative group w-10 h-10 mx-auto rounded-lg flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors"
         >
-          <div className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center shrink-0">
-            <svg height="20" viewBox="0 0 16 16" version="1.1" width="20" aria-hidden="true"><path fillRule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
-          </div>
-          <div className="hidden lg:block overflow-hidden">
-            <p className="text-sm font-bold text-white leading-none mb-0.5">Open Source</p>
-            <p className="text-[10px] text-zinc-400 group-hover:text-zinc-300 transition-colors truncate">Free & Community Driven</p>
-          </div>
+          <svg height="20" viewBox="0 0 16 16" version="1.1" width="20" aria-hidden="true" fill="currentColor"><path fillRule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+          <span className="pointer-events-none absolute left-full ml-3 px-2 py-1 rounded-md bg-surface2 border border-edge text-fg text-xs whitespace-nowrap opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-150 z-50 shadow-lg">GitHub</span>
         </a>
       </div>
     </div>
   );
+
+  const ShortcutItem = ({ icon: Icon, color, label, onClick }) => (
+    <button onClick={onClick} className="group flex flex-col items-center gap-2.5 text-muted hover:text-fg transition-colors">
+      <span className={`w-14 h-14 rounded-full bg-surface border border-edge flex items-center justify-center ${color} group-hover:border-white/20 transition-colors`}>
+        <Icon size={22} />
+      </span>
+      <span className="text-xs">{label}</span>
+    </button>
+  );
+
+  const ProjectCard = ({ p }) => {
+    const isActive = p.id === jobId;
+    const proc = p.status === 'processing';
+    const failed = p.status === 'failed';
+    const phase = isActive ? phaseFromLogs(logs) : 'Processing';
+    const cover = p.thumb || coverFromString(p.src || p.title);
+    return (
+      <button onClick={() => openProject(p)} className="text-left group">
+        <div className="relative aspect-video rounded-lg overflow-hidden bg-black border border-edge flex items-center justify-center">
+          {cover ? (
+            <img src={cover} alt="" className="absolute inset-0 w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+          ) : (
+            <Scissors size={20} className="text-zinc-700" />
+          )}
+          {proc && (
+            <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
+              <span className="flex items-center gap-2 bg-black/60 border border-viral/50 text-viral text-xs px-2.5 py-1.5 rounded-lg">
+                <span className="w-3 h-3 rounded-full border-2 border-viral/30 border-t-viral animate-spin" />
+                {phase}…
+              </span>
+            </div>
+          )}
+          {failed && (
+            <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
+              <span className="flex items-center gap-1.5 text-red-400 text-xs"><AlertTriangle size={13} /> Failed</span>
+            </div>
+          )}
+        </div>
+        <div className="mt-2">
+          <div className="text-xs text-fg truncate group-hover:text-white transition-colors">{p.title}</div>
+          <div className="flex items-center justify-between mt-1">
+            <span className="text-[11px] text-muted">
+              {proc ? 'Processing' : failed ? 'Failed' : `${p.clipCount} clip${p.clipCount === 1 ? '' : 's'}`}
+            </span>
+            {p.cost != null && (
+              <span className="text-[10px] text-muted bg-surface2 px-1.5 py-0.5 rounded">${p.cost.toFixed(3)}</span>
+            )}
+          </div>
+        </div>
+      </button>
+    );
+  };
 
   return (
     <div className="flex h-screen bg-background overflow-hidden selection:bg-primary/30">
       <Sidebar />
 
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-        {/* Background Gradients */}
-        <div className="absolute inset-0 overflow-hidden -z-10 pointer-events-none">
-          <div className="absolute -top-[10%] -right-[10%] w-[50%] h-[50%] bg-primary/5 rounded-full blur-[120px]" />
-        </div>
-
         {/* Top Header */}
-        <header className="h-16 border-b border-white/5 bg-background/50 backdrop-blur-md flex items-center justify-between px-6 shrink-0 z-10">
+        <header className="h-14 border-b border-edge bg-background flex items-center justify-between px-6 shrink-0 z-10">
           <div className="flex items-center gap-4">
             {status !== 'idle' && (
               <button
@@ -855,145 +918,109 @@ function App() {
             <Gallery />
           )} */}
 
-          {/* View: Dashboard (Idle) */}
-          {activeTab === 'dashboard' && status === 'idle' && (
-            <div className="h-full flex flex-col items-center justify-center p-6 animate-[fadeIn_0.3s_ease-out]">
-              <div className="max-w-xl w-full text-center space-y-8">
-                <div className="space-y-4">
-                  <h1 className="text-4xl md:text-5xl font-black bg-gradient-to-b from-white to-white/60 bg-clip-text text-transparent">
-                    Create Viral Shorts
-                  </h1>
-                  <p className="text-zinc-400 text-lg">
-                    Drop your long-form video below to instantly generate viral clips with AI.
-                  </p>
+          {/* View: Dashboard homepage (idle / processing / error) — Opus-style */}
+          {activeTab === 'dashboard' && !(viewingResults && results) && (
+            <div className="h-full overflow-y-auto custom-scrollbar animate-[fadeIn_0.3s_ease-out]">
+              {/* Hero: submit card over faint wordmark */}
+              <div className="relative px-6 pt-20 pb-10">
+                <div className="pointer-events-none absolute inset-x-0 top-12 flex justify-center overflow-hidden">
+                  <span className="font-display font-semibold text-[120px] leading-none text-white/[0.035] tracking-tighter select-none whitespace-nowrap">
+                    OpenShorts
+                  </span>
                 </div>
 
-                <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'} />
-
-                <div className="flex items-center justify-center gap-8 text-zinc-500 text-sm">
-                  <span className="flex items-center gap-2"><Youtube size={16} /> YouTube</span>
-                  <span className="flex items-center gap-2"><Instagram size={16} /> Instagram</span>
-                  <span className="flex items-center gap-2"><TikTokIcon size={16} /> TikTok</span>
+                <div className="relative max-w-lg mx-auto">
+                  <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'} />
                 </div>
+
+                {/* 3-tool shortcut row */}
+                <div className="relative flex items-center justify-center gap-10 mt-12">
+                  <ShortcutItem icon={Scissors} color="text-viral" label="Clip Generator" onClick={() => setActiveTab('dashboard')} />
+                  <ShortcutItem icon={Sparkles} color="text-violet-300" label="AI Shorts" onClick={() => setActiveTab('saasshorts')} />
+                  <ShortcutItem icon={Youtube} color="text-red-300" label="YouTube Studio" onClick={() => setActiveTab('thumbnails')} />
+                </div>
+              </div>
+
+              {/* Recent projects */}
+              <div className="max-w-5xl mx-auto px-6 pb-14">
+                <div className="flex items-center gap-4 mb-3">
+                  <span className="text-sm text-fg">Recent projects {projects.length > 0 && <span className="text-muted">({projects.length})</span>}</span>
+                </div>
+                {projects.length === 0 ? (
+                  <div className="border border-edge rounded-lg py-12 text-center">
+                    <p className="text-sm text-muted">Your generated clips will appear here.</p>
+                    <p className="text-xs text-muted/60 mt-1">Drop a YouTube link or upload a video to get started.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                    {projects.map((p) => <ProjectCard key={p.id} p={p} />)}
+                  </div>
+                )}
               </div>
             </div>
           )}
 
-          {/* View: Processing / Results (Split View) */}
-          {activeTab === 'dashboard' && (status === 'processing' || status === 'complete' || status === 'error') && (
-            <div className="h-full flex flex-col md:flex-row animate-[fadeIn_0.3s_ease-out]">
-
-              {/* Left Panel: Preview & Status */}
-              <div className={`${status === 'complete' ? 'w-full md:w-[30%] lg:w-[25%]' : 'w-full md:w-[55%] lg:w-[60%]'} h-full flex flex-col border-r border-white/5 bg-black/20 p-6 overflow-y-auto custom-scrollbar transition-all duration-700 ease-in-out`}>
-                <div className="mb-6 flex items-center justify-between">
-                  <h2 className="text-lg font-semibold flex items-center gap-2">
-                    <Activity className={`text-primary ${status === 'processing' ? 'animate-pulse' : ''}`} size={20} />
-                    Live Analysis
-                  </h2>
-                  <span className={`text-xs px-2 py-1 rounded-full border ${status === 'processing' ? 'bg-primary/10 border-primary/20 text-primary' :
-                    status === 'complete' ? 'bg-green-500/10 border-green-500/20 text-green-400' :
-                      'bg-red-500/10 border-red-500/20 text-red-400'
-                    }`}>
-                    {status.toUpperCase()}
-                  </span>
-                </div>
-
-                {/* Video Preview */}
-                {processingMedia && (
-                  <ProcessingAnimation
-                    media={processingMedia}
-                    isComplete={status === 'complete'}
-                    syncedTime={syncedTime}
-                    isSyncedPlaying={isSyncedPlaying}
-                    syncTrigger={syncTrigger}
-                  />
+          {/* View: Results (clips) — shown when a completed project is opened */}
+          {activeTab === 'dashboard' && viewingResults && results && (
+            <div className="h-full flex flex-col animate-[fadeIn_0.3s_ease-out]">
+              <div className="flex items-center gap-3 px-6 py-3.5 border-b border-edge shrink-0">
+                <button onClick={handleReset} className="flex items-center gap-1.5 text-sm text-muted hover:text-fg transition-colors">
+                  <PlusCircle size={16} /> New project
+                </button>
+                <span className="w-px h-4 bg-edge" />
+                <h2 className="text-sm font-medium text-fg flex items-center gap-2">
+                  <Sparkles size={16} className="text-viral" /> Generated shorts
+                </h2>
+                {results?.clips?.length > 0 && (
+                  <span className="text-xs bg-surface2 text-muted px-2 py-0.5 rounded-full">{results.clips.length}</span>
                 )}
-
-                {/* Logs Terminal */}
-                <div className={`bg-[#0c0c0e] rounded-xl border border-white/10 overflow-hidden flex flex-col transition-all duration-500 ${status === 'complete' ? 'h-32 min-h-0 opacity-50 hover:opacity-100' : 'flex-1 min-h-[200px]'}`}>
-                  <div className="px-4 py-2 border-b border-white/5 flex items-center justify-between bg-white/5 shrink-0">
-                    <span className="text-xs font-mono text-zinc-400 flex items-center gap-2">
-                      <Terminal size={12} /> System Logs
-                    </span>
-                    <button onClick={() => setLogsVisible(!logsVisible)} className="text-zinc-500 hover:text-white transition-colors">
-                      {logsVisible ? <ChevronDown size={14} /> : <ChevronDown size={14} className="rotate-180" />}
-                    </button>
-                  </div>
-                  {logsVisible && (
-                    <div className="flex-1 p-4 overflow-y-auto font-mono text-xs space-y-1.5 custom-scrollbar text-zinc-400">
-                      {logs.map((log, i) => (
-                        <div key={i} className={`flex gap-2 ${log.toLowerCase().includes('error') ? 'text-red-400' : 'text-zinc-400'}`}>
-                          <span className="text-zinc-700 shrink-0">{new Date().toLocaleTimeString()}</span>
-                          <span>{log}</span>
-                        </div>
-                      ))}
-                      {status === 'processing' && (
-                        <div className="animate-pulse text-primary/70">_</div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Right Panel: Results Grid */}
-              <div className={`${status === 'complete' ? 'w-full md:w-[70%] lg:w-[75%]' : 'w-full md:w-[45%] lg:w-[40%]'} h-full flex flex-col bg-background p-6 transition-all duration-700 ease-in-out`}>
-                <h2 className="text-lg font-semibold mb-6 flex items-center gap-2 shrink-0">
-                  <Sparkles className="text-yellow-400" size={20} />
-                  Generated Shorts
-                  {results?.clips?.length > 0 && (
-                    <span className="text-xs bg-white/10 text-white px-2 py-0.5 rounded-full ml-auto">
-                      {results.clips.length} Clips
-                    </span>
-                  )}
-                  {results?.cost_analysis && (
-                    <span className="text-xs bg-green-500/10 border border-green-500/20 text-green-400 px-2 py-0.5 rounded-full ml-2" title={`Input: ${results.cost_analysis.input_tokens} | Output: ${results.cost_analysis.output_tokens}`}>
-                      ${results.cost_analysis.total_cost.toFixed(5)}
-                    </span>
-                  )}
-                  {results?.clips?.length > 1 && status === 'complete' && (
+                {results?.cost_analysis && (
+                  <span className="text-xs bg-viral/10 border border-viral/20 text-viral px-2 py-0.5 rounded-full" title={`Input: ${results.cost_analysis.input_tokens} | Output: ${results.cost_analysis.output_tokens}`}>
+                    ${results.cost_analysis.total_cost.toFixed(4)}
+                  </span>
+                )}
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    onClick={() => setShowProcessingModal(true)}
+                    className="flex items-center gap-1.5 text-xs text-muted hover:text-fg border border-edge hover:bg-white/5 px-2.5 py-1.5 rounded-lg transition-colors"
+                  >
+                    <Terminal size={14} /> Logs
+                  </button>
+                  {results?.clips?.length > 1 && (
                     <button
                       onClick={() => setShowScheduleWeek(true)}
-                      className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-500/20 to-indigo-500/20 hover:from-purple-500/30 hover:to-indigo-500/30 border border-purple-500/30 text-purple-300 hover:text-purple-200 rounded-full text-xs font-bold transition-all"
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface2 hover:bg-white/10 border border-edge text-fg rounded-lg text-xs font-medium transition-colors"
                     >
-                      <Calendar size={14} />
-                      Programar Semana
+                      <Calendar size={14} /> Schedule week
                     </button>
-                  )}
-                </h2>
-
-                <div className="flex-1 overflow-y-auto custom-scrollbar p-1">
-                  {results && results.clips && results.clips.length > 0 ? (
-                    <div className={`grid gap-4 pb-10 ${status === 'complete' ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1'}`}>
-                      {results.clips.map((clip, i) => (
-                        <ResultCard
-                          key={i}
-                          clip={clip}
-                          index={i}
-                          jobId={jobId}
-                          uploadPostKey={uploadPostKey}
-                          uploadUserId={uploadUserId}
-                          geminiApiKey={apiKey}
-                          elevenLabsKey={elevenLabsKey}
-                          onPlay={(time) => handleClipPlay(time)}
-                          onPause={handleClipPause}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    status === 'processing' ? (
-                      <div className="h-full flex flex-col items-center justify-center text-zinc-500 space-y-4 opacity-50">
-                        <div className="w-12 h-12 rounded-full border-2 border-zinc-800 border-t-primary animate-spin" />
-                        <p className="text-sm">Waiting for clips...</p>
-                      </div>
-                    ) : status === 'error' ? (
-                      <div className="h-full flex flex-col items-center justify-center text-red-400 space-y-2">
-                        <p>Generation failed.</p>
-                      </div>
-                    ) : null
                   )}
                 </div>
               </div>
 
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                {results.clips && results.clips.length > 0 ? (
+                  <div className="grid gap-4 pb-10 grid-cols-1 xl:grid-cols-2">
+                    {results.clips.map((clip, i) => (
+                      <ResultCard
+                        key={i}
+                        clip={clip}
+                        index={i}
+                        jobId={jobId}
+                        uploadPostKey={uploadPostKey}
+                        uploadUserId={uploadUserId}
+                        geminiApiKey={apiKey}
+                        elevenLabsKey={elevenLabsKey}
+                        onPlay={(time) => handleClipPlay(time)}
+                        onPause={handleClipPause}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-muted">
+                    <p className="text-sm">No clips were generated for this project.</p>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -1094,6 +1121,16 @@ function App() {
         jobId={jobId}
         uploadPostKey={uploadPostKey}
         uploadUserId={uploadUserId}
+      />
+
+      <ProcessingModal
+        open={showProcessingModal}
+        onClose={() => setShowProcessingModal(false)}
+        title={processingMedia ? titleFromPayload(processingMedia) : 'Processing'}
+        logs={logs}
+        status={status}
+        phase={phaseFromLogs(logs)}
+        onViewClips={() => { setShowProcessingModal(false); setViewingResults(true); }}
       />
     </div>
   );
