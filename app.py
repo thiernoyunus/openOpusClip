@@ -71,6 +71,13 @@ def _relocate_root_job_artifacts(job_id: str, job_output_dir: str) -> bool:
             if os.path.abspath(clip_path) != os.path.abspath(dest_clip):
                 shutil.move(clip_path, dest_clip)
 
+        # Move framing metadata (editor re-frame data) alongside the clips
+        framing_pattern = os.path.join(root, f"{base_name}_clip_*.framing.json")
+        for framing_path in glob.glob(framing_pattern):
+            dest_framing = os.path.join(job_output_dir, os.path.basename(framing_path))
+            if os.path.abspath(framing_path) != os.path.abspath(dest_framing):
+                shutil.move(framing_path, dest_framing)
+
         # Also move any temp_ clips that might remain
         temp_clip_pattern = os.path.join(root, f"temp_{base_name}_clip_*.mp4")
         for clip_path in glob.glob(temp_clip_pattern):
@@ -81,6 +88,19 @@ def _relocate_root_job_artifacts(job_id: str, job_output_dir: str) -> bool:
         return True
     except Exception:
         return False
+
+def _attach_editor_urls(clip: dict, job_id: str, output_dir: str, base_name: str, clip_number: int) -> None:
+    """
+    Attach source_url + framing_url to a clip dict when the non-destructive
+    editor artifacts exist on disk (new jobs). Old jobs simply don't get the
+    keys, and the frontend hides the Edit button.
+    """
+    source_filename = f"{base_name}_clip_{clip_number}_source.mp4"
+    framing_filename = f"{base_name}_clip_{clip_number}.framing.json"
+    if os.path.exists(os.path.join(output_dir, source_filename)):
+        clip['source_url'] = f"/videos/{job_id}/{source_filename}"
+    if os.path.exists(os.path.join(output_dir, framing_filename)):
+        clip['framing_url'] = f"/videos/{job_id}/{framing_filename}"
 
 async def cleanup_jobs():
     """Background task to remove old jobs and files."""
@@ -260,6 +280,7 @@ async def run_job(job_id, job_data):
                                  # Checking if file is growing? For now assume if it exists and main.py moves it there, it's done.
                                  # main.py writes to temp_... then moves to final name. So presence means ready!
                                  clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
+                                 _attach_editor_urls(clip, job_id, output_dir, base_name, i + 1)
                                  ready_clips.append(clip)
                         
                         if ready_clips:
@@ -297,7 +318,8 @@ async def run_job(job_id, job_data):
                 for i, clip in enumerate(clips):
                      clip_filename = f"{base_name}_clip_{i+1}.mp4"
                      clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
-                
+                     _attach_editor_urls(clip, job_id, output_dir, base_name, i + 1)
+
                 jobs[job_id]['result'] = {'clips': clips, 'cost_analysis': cost_analysis}
             else:
                  jobs[job_id]['status'] = 'failed'

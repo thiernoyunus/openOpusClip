@@ -282,6 +282,75 @@ class SpeakerTracker:
             
         return None
 
+class FaceTrackRecorder:
+    """
+    Records normalized face tracks across the whole clip so the editor can
+    re-frame later (framing.json). Independent of SpeakerTracker: it tracks
+    EVERY face in EVERY scene (including GENERAL scenes, which SpeakerTracker
+    never sees) and assigns its own stable ids via greedy nearest-center
+    matching. Purely observational — never influences the baked output.
+    """
+    def __init__(self, video_width, video_height, max_gap_frames=30):
+        self.video_width = video_width
+        self.video_height = video_height
+        self.max_gap_frames = max_gap_frames
+        self.tracks = {}  # id -> {'samples': [...], 'last_frame': int, 'last_cx': float, 'last_cy': float}
+        self.next_id = 0
+
+    def add(self, frame_number, candidates):
+        """
+        Match candidates to open tracks and record a sample for each.
+        Returns recorder track ids aligned 1:1 with `candidates`.
+        """
+        ids = []
+        claimed = set()
+        for cand in candidates:
+            x, y, w, h = cand['box']
+            cx = x + w / 2
+            cy = y + h / 2
+
+            best_id = None
+            best_dist = self.video_width * 0.15  # same matching radius as SpeakerTracker
+            for tid, tr in self.tracks.items():
+                if tid in claimed:
+                    continue
+                if frame_number - tr['last_frame'] > self.max_gap_frames:
+                    continue
+                dist = ((cx - tr['last_cx']) ** 2 + (cy - tr['last_cy']) ** 2) ** 0.5
+                if dist < best_dist:
+                    best_dist = dist
+                    best_id = tid
+
+            if best_id is None:
+                best_id = self.next_id
+                self.next_id += 1
+                self.tracks[best_id] = {'samples': [], 'last_frame': frame_number, 'last_cx': cx, 'last_cy': cy}
+
+            claimed.add(best_id)
+            tr = self.tracks[best_id]
+            tr['last_frame'] = frame_number
+            tr['last_cx'] = cx
+            tr['last_cy'] = cy
+            tr['samples'].append({
+                'frame': frame_number,
+                'x': round(max(0.0, x / self.video_width), 4),
+                'y': round(max(0.0, y / self.video_height), 4),
+                'w': round(min(1.0, w / self.video_width), 4),
+                'h': round(min(1.0, h / self.video_height), 4),
+            })
+            ids.append(best_id)
+        return ids
+
+    def to_face_tracks(self):
+        """Serializable faceTracks list for framing.json (drops single-sample noise tracks)."""
+        out = []
+        for tid in sorted(self.tracks.keys()):
+            samples = self.tracks[tid]['samples']
+            if len(samples) < 2:
+                continue
+            out.append({'id': tid, 'samples': samples})
+        return out
+
 def detect_face_candidates(frame):
     """
     Returns list of all detected faces using lightweight FaceDetection.
@@ -610,9 +679,14 @@ Technical Details: {str(e)}
     
     return downloaded_file, sanitized_title
 
-def process_video_to_vertical(input_video, final_output_video):
+def process_video_to_vertical(input_video, final_output_video, framing_output_path=None):
     """
     Core logic to convert horizontal video to vertical using scene detection and Active Speaker Tracking (MediaPipe).
+
+    When framing_output_path is provided, also writes a framing.json describing
+    every framing decision (face tracks, per-segment layout, crop keyframes) in
+    normalized coordinates, so the web editor can re-frame non-destructively.
+    The baked output is identical either way.
     """
     script_start_time = time.time()
     
@@ -682,6 +756,11 @@ def process_video_to_vertical(input_video, final_output_video):
     # Global tracker for single-person shots
     speaker_tracker = SpeakerTracker(cooldown_frames=30)
 
+    # Framing recording (editor metadata) — observational only
+    face_recorder = FaceTrackRecorder(original_width, original_height) if framing_output_path else None
+    segment_votes = {}      # scene_index -> {recorder_track_id: vote_count}
+    segment_keyframes = {}  # scene_index -> [normalized crop keyframes]
+
     with tqdm(total=total_frames, desc="   Processing", file=sys.stdout) as pbar:
         while cap.isOpened():
             ret, frame = cap.read()
@@ -701,20 +780,35 @@ def process_video_to_vertical(input_video, final_output_video):
             if current_strategy == 'GENERAL':
                 # "Plano General" -> Blur Background + Fit Width
                 output_frame = create_general_frame(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
-                
+
                 # Reset cameraman/tracker so they don't drift while inactive
                 cameraman.current_center_x = original_width / 2
                 cameraman.target_center_x = original_width / 2
-                
+
+                # Record face tracks even in GENERAL scenes (multi-person scenes
+                # land here — the editor needs these tracks to offer split/three/four).
+                # Recorder only; never feeds speaker_tracker, so baked output is untouched.
+                if face_recorder is not None and frame_number % 2 == 0:
+                    face_recorder.add(frame_number, detect_face_candidates(frame))
+
             else:
                 # "Single Speaker" -> Track & Crop
-                
+
                 # Detect every 2nd frame for performance
                 if frame_number % 2 == 0:
                     candidates = detect_face_candidates(frame)
+                    rec_ids = face_recorder.add(frame_number, candidates) if face_recorder is not None else []
                     target_box = speaker_tracker.get_target(candidates, frame_number, original_width)
                     if target_box:
                         cameraman.update_target(target_box)
+                        # Vote: which recorder track is the active speaker in this scene?
+                        # get_target always returns a box from `candidates`, so identity-match it.
+                        if face_recorder is not None:
+                            for ci, cand in enumerate(candidates):
+                                if cand['box'] == target_box:
+                                    votes = segment_votes.setdefault(current_scene_index, {})
+                                    votes[rec_ids[ci]] = votes.get(rec_ids[ci], 0) + 1
+                                    break
                     else:
                         person_box = detect_person_yolo(frame)
                         if person_box:
@@ -722,8 +816,18 @@ def process_video_to_vertical(input_video, final_output_video):
 
                 # Snap camera on scene change to avoid panning from previous scene position
                 is_scene_start = (frame_number == scene_boundaries[current_scene_index][0])
-                
+
                 x1, y1, x2, y2 = cameraman.get_crop_box(force_snap=is_scene_start)
+
+                # Record the smoothed crop window as a keyframe (every 3rd frame)
+                if face_recorder is not None and (frame_number % 3 == 0 or is_scene_start):
+                    segment_keyframes.setdefault(current_scene_index, []).append({
+                        'frame': frame_number,
+                        'x': round(x1 / original_width, 4),
+                        'y': round(y1 / original_height, 4),
+                        'w': round((x2 - x1) / original_width, 4),
+                        'h': round((y2 - y1) / original_height, 4),
+                    })
                 
                 # Crop
                 if y2 > y1 and x2 > x1:
@@ -779,7 +883,39 @@ def process_video_to_vertical(input_video, final_output_video):
     # Clean up temp files
     if os.path.exists(temp_video_output): os.remove(temp_video_output)
     if os.path.exists(temp_audio_output): os.remove(temp_audio_output)
-    
+
+    # Write framing metadata for the web editor (schema: docs/video-editor-plan.md §2)
+    if framing_output_path:
+        segments_out = []
+        for i, (s_f, e_f) in enumerate(scene_boundaries):
+            strategy = scene_strategies[i] if i < len(scene_strategies) else 'TRACK'
+            votes = segment_votes.get(i, {})
+            tracked = [max(votes, key=votes.get)] if votes else []
+            segments_out.append({
+                'id': f'seg-{i}',
+                'startFrame': s_f,
+                'endFrame': e_f,
+                'layout': 'fit' if strategy == 'GENERAL' else 'fill',
+                'trackedFaceIds': tracked,
+                'cameraKeyframes': segment_keyframes.get(i, []),
+                'manualCrop': None,
+            })
+        framing_data = {
+            'version': 1,
+            'source': {
+                'file': os.path.basename(input_video),
+                'fps': float(fps),
+                'width': original_width,
+                'height': original_height,
+                'durationFrames': total_frames,
+            },
+            'segments': segments_out,
+            'faceTracks': face_recorder.to_face_tracks(),
+        }
+        with open(framing_output_path, 'w') as f:
+            json.dump(framing_data, f)
+        print(f"   🎯 Framing metadata saved to {framing_output_path}")
+
     return True
 
 WHISPER_MODELS = {"tiny", "base", "small", "medium", "large-v3"}
@@ -1076,31 +1212,29 @@ if __name__ == '__main__':
                 
                 # Cut clip
                 clip_filename = f"{video_title}_clip_{i+1}.mp4"
-                clip_temp_path = os.path.join(output_dir, f"temp_{clip_filename}")
+                # 16:9 source is KEPT (not a temp file) — the web editor re-frames from it
+                clip_source_path = os.path.join(output_dir, f"{video_title}_clip_{i+1}_source.mp4")
                 clip_final_path = os.path.join(output_dir, clip_filename)
-                
+                clip_framing_path = os.path.join(output_dir, f"{video_title}_clip_{i+1}.framing.json")
+
                 # ffmpeg cut
                 # Using re-encoding for precision as requested by strict seconds
                 cut_command = [
-                    'ffmpeg', '-y', 
-                    '-ss', str(start), 
-                    '-to', str(end), 
+                    'ffmpeg', '-y',
+                    '-ss', str(start),
+                    '-to', str(end),
                     '-i', input_video,
                     '-c:v', 'libx264', '-crf', '12', '-preset', 'ultrafast',
                     '-c:a', 'aac',
-                    clip_temp_path
+                    clip_source_path
                 ]
                 subprocess.run(cut_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-                
+
                 # Process vertical
-                success = process_video_to_vertical(clip_temp_path, clip_final_path)
-                
+                success = process_video_to_vertical(clip_source_path, clip_final_path, framing_output_path=clip_framing_path)
+
                 if success:
                     print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
-                
-                # Clean up temp cut
-                if os.path.exists(clip_temp_path):
-                    os.remove(clip_temp_path)
 
     # Clean up original if requested
     if args.url and not args.keep_original and os.path.exists(input_video):
