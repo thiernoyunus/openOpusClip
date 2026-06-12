@@ -1,6 +1,12 @@
 # OpenShorts Video Editor — Execution Plan
 
-> Status: **approved direction, ready to execute** (written 2026-06-12)
+> Status: **PHASES 1–5 EXECUTED + undo/redo from Phase 6** (2026-06-12, commits e6663a5..5b1a3c4 on `dev`).
+> Remaining work = the rest of the Phase 6 backlog below. Notable deviations from plan:
+> - Phase 4 manual reframe is a modal over the 16:9 source (Opus's own pattern) instead of canvas drag — avoids inverse-crop math entirely.
+> - Click-to-track became per-panel person dropdowns; canvas click-to-track is still open backlog.
+> - Phase 5 implemented auto-SPLIT (2 people) only; auto-three is backlog. Kill switch: `AUTO_SPLIT_LAYOUT=false`.
+> - Found+fixed during execution: dashboard ESLint was entirely broken (v8/v9 flat-config skew), and render-service @remotion/* was version-skewed vs remotion/ which broke ALL server renders.
+> - Dev harness: `/?editorDev=1` (static fixtures in dashboard/public/dev-fixtures/, gitignored) or `/?editorDev=backend` (fixture job in output/dev/) mounts the editor without processing a job.
 > Branch: all work on `dev`, one PR per phase.
 > Companion docs: [opusclip-reference.md](opusclip-reference.md) (what we're matching), [opus-reference/ui-teardown.md](opus-reference/ui-teardown.md) (visual reference), `https://github.com/thiernoyunus/react-video-editor` (UX reference ONLY — do not vendor; see memory `video-editor-decision`).
 
