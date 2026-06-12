@@ -1,14 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Type, Calendar, Clock, Languages } from 'lucide-react';
+import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Type, Calendar, Clock, Languages, Play, ArrowUp, ArrowDown, FileText } from 'lucide-react';
 import { getApiUrl } from '../config';
 import SubtitleModal from './SubtitleModal';
 import HookModal from './HookModal';
 import TranslateModal from './TranslateModal';
 import { renderInBrowser } from '../lib/renderInBrowser';
 
-export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUserId, geminiApiKey, elevenLabsKey, onPlay, onPause }) {
+const fmtTime = (s) => {
+    s = Math.max(0, Math.floor(s || 0));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUserId, geminiApiKey, elevenLabsKey, onPlay, onPause, openIndex, setOpenIndex, totalClips }) {
+    const isOpen = openIndex === index;
     const [showModal, setShowModal] = useState(false);
     const [showSubtitleModal, setShowSubtitleModal] = useState(false);
+    const [playing, setPlaying] = useState(false);
+    const [captions, setCaptions] = useState([]);
     const videoRef = React.useRef(null);
     const originalVideoUrl = getApiUrl(clip.video_url); // Never changes — used for Remotion previews
     const [currentVideoUrl, setCurrentVideoUrl] = useState(originalVideoUrl);
@@ -34,7 +42,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
     const [showTranslateModal, setShowTranslateModal] = useState(false);
     const [editError, setEditError] = useState(null);
 
-    const [clipDuration, setClipDuration] = useState(clip.end && clip.start ? clip.end - clip.start : 30);
+    const [clipDuration, setClipDuration] = useState(clip.end != null && clip.start != null ? clip.end - clip.start : 30);
 
     // Accumulate Remotion layers across operations
     const [activeLayers, setActiveLayers] = useState({ subtitles: null, hook: null, effects: null });
@@ -46,6 +54,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
             .then(res => res.ok ? res.json() : null)
             .then(data => {
                 if (data && data.durationSec) setClipDuration(data.durationSec);
+                if (data && data.captions) setCaptions(data.captions);
             })
             .catch(() => {});
     }, [jobId, index]);
@@ -382,162 +391,148 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
         }
     };
 
+    const handleDownload = async () => {
+        try {
+            const response = await fetch(currentVideoUrl);
+            if (!response.ok) throw new Error('Download failed');
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `clip-${index + 1}.mp4`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (err) {
+            console.error('Download error:', err);
+            window.open(currentVideoUrl, '_blank');
+        }
+    };
+
+    const title = clip.video_title_for_youtube_short || `Viral clip ${index + 1}`;
+    const description = clip.video_description_for_tiktok || clip.video_description_for_instagram || '';
+    const transcriptText = captions.map((c) => c.text).join(' ');
+    const durSec = Math.floor(clipDuration);
+
+    const ActionBtn = ({ icon: Icon, label, onClick, loading, primary }) => (
+        <button
+            onClick={onClick}
+            disabled={loading}
+            className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 ${primary ? 'bg-fg text-[#18181b] hover:bg-white' : 'bg-surface2 text-fg hover:bg-white/10 border border-edge'}`}
+        >
+            {loading ? <Loader2 size={15} className="animate-spin shrink-0" /> : <Icon size={15} className="shrink-0" />}
+            <span className="truncate">{label}</span>
+        </button>
+    );
+
     return (
-        <div className="bg-surface border border-white/5 rounded-2xl overflow-hidden flex flex-col md:flex-row group hover:border-white/10 transition-all animate-[fadeIn_0.5s_ease-out] min-h-[300px] h-auto" style={{ animationDelay: `${index * 0.1}s` }}>
-            {/* Left: Video Preview (Responsive Width) */}
-            <div className="w-full md:w-[180px] lg:w-[200px] bg-black relative shrink-0 aspect-[9/16] md:aspect-auto group/video">
-                <video
-                    ref={videoRef}
-                    src={currentVideoUrl}
-                    controls
-                    className="w-full h-full object-cover"
-                    playsInline
-                    onPlay={() => {
-                        const currentTime = videoRef.current ? videoRef.current.currentTime : 0;
-                        onPlay && onPlay(clip.start + currentTime);
-                    }}
-                    onPause={() => onPause && onPause()}
-                    onEnded={() => {
-                        if (videoRef.current) {
-                            videoRef.current.currentTime = 0;
-                            videoRef.current.play();
-                        }
-                    }}
-                />
-                <div className="absolute top-3 left-3 flex gap-2">
-                    <span className="bg-black/60 backdrop-blur-md text-white text-[10px] font-bold px-2 py-1 rounded-md border border-white/10 uppercase tracking-wide">
-                        Clip {index + 1}
-                    </span>
+        <>
+            {/* Compact grid card */}
+            <div className="group flex flex-col animate-[fadeIn_0.4s_ease-out]">
+                <div
+                    className="relative aspect-[9/16] rounded-xl overflow-hidden bg-black border border-edge cursor-pointer"
+                    onClick={() => { if (!playing) setOpenIndex(index); }}
+                >
+                    <video
+                        ref={videoRef}
+                        src={currentVideoUrl}
+                        playsInline
+                        preload="metadata"
+                        controls={playing}
+                        className="w-full h-full object-cover"
+                        onPlay={() => { const t = videoRef.current ? videoRef.current.currentTime : 0; onPlay && onPlay(clip.start + t); }}
+                        onPause={() => onPause && onPause()}
+                        onEnded={() => { setPlaying(false); if (videoRef.current) videoRef.current.currentTime = 0; }}
+                    />
+                    <span className="absolute top-2 left-2 bg-black/65 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">Clip {index + 1}</span>
+                    <span className="absolute top-2 right-2 bg-black/65 text-white text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums">{fmtTime(durSec)}</span>
+
+                    {!playing && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setPlaying(true); videoRef.current && videoRef.current.play(); }}
+                            className="absolute inset-0 flex items-center justify-center bg-black/10 group-hover:bg-black/25 transition-colors"
+                            aria-label="Play clip"
+                        >
+                            <span className="w-12 h-12 rounded-full bg-black/55 backdrop-blur flex items-center justify-center text-white"><Play size={22} className="ml-0.5" /></span>
+                        </button>
+                    )}
+
+                    {isEditing && (
+                        <div className="absolute inset-0 bg-black/65 backdrop-blur-sm flex flex-col items-center justify-center z-10 p-4 text-center">
+                            <Loader2 size={28} className="text-viral animate-spin mb-2" />
+                            <span className="text-[11px] font-medium text-white">Applying AI edits…</span>
+                        </div>
+                    )}
                 </div>
 
-                {/* Auto Edit Overlay if Processing */}
-                {isEditing && (
-                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center z-10 p-4 text-center">
-                        <Loader2 size={32} className="text-primary animate-spin mb-3" />
-                        <span className="text-xs font-bold text-white uppercase tracking-wider">AI Magic in Progress...</span>
-                        <span className="text-[10px] text-zinc-400 mt-1">Applying viral edits & zooms</span>
-                    </div>
-                )}
+                <h3 className="mt-2.5 text-sm font-medium text-fg leading-snug line-clamp-2 cursor-pointer hover:text-white" onClick={() => setOpenIndex(index)} title={title}>
+                    {title}
+                </h3>
+                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    {clip.viral_hook_text && (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-muted bg-surface2 border border-edge px-1.5 py-0.5 rounded"><Wand2 size={10} /> Hook</span>
+                    )}
+                    <span className="text-[10px] text-muted bg-surface2 border border-edge px-1.5 py-0.5 rounded tabular-nums">{durSec}s</span>
+                </div>
+                <div className="flex items-center gap-1 mt-2">
+                    <button onClick={(e) => { e.stopPropagation(); setShowModal(true); }} title="Post / schedule" className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors"><Share2 size={15} /></button>
+                    <button onClick={(e) => { e.stopPropagation(); setShowHookModal(true); }} title="Viral hook" className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors"><Wand2 size={15} /></button>
+                    <button onClick={(e) => { e.stopPropagation(); handleDownload(); }} title="Download" className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors"><Download size={15} /></button>
+                </div>
             </div>
 
-            {/* Right: Content & Details */}
-            <div className="flex-1 p-4 md:p-5 flex flex-col bg-[#121214] overflow-hidden min-w-0">
-                <div className="mb-4">
-                    <h3 className="text-base font-bold text-white leading-tight line-clamp-2 mb-2 break-words" title={clip.video_title_for_youtube_short}>
-                        {clip.video_title_for_youtube_short || "Viral Clip Generated"}
-                    </h3>
-                    <div className="flex flex-wrap gap-2 text-[10px] text-zinc-500 font-mono">
-                        <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5 shrink-0">{Math.floor(clip.end - clip.start)}s</span>
-                        <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5 shrink-0">#shorts</span>
-                        <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5 shrink-0">#viral</span>
+            {/* Clip detail modal */}
+            {isOpen && (
+                <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-[fadeIn_0.2s_ease-out]" onClick={() => setOpenIndex(null)}>
+                    <div className="absolute top-5 right-5 flex items-center gap-2 z-10">
+                        <button disabled={index <= 0} onClick={(e) => { e.stopPropagation(); setOpenIndex(index - 1); }} className="w-9 h-9 rounded-lg bg-surface2 border border-edge text-fg flex items-center justify-center hover:bg-white/10 disabled:opacity-40 transition-colors" aria-label="Previous clip"><ArrowUp size={16} /></button>
+                        <button disabled={index >= totalClips - 1} onClick={(e) => { e.stopPropagation(); setOpenIndex(index + 1); }} className="w-9 h-9 rounded-lg bg-surface2 border border-edge text-fg flex items-center justify-center hover:bg-white/10 disabled:opacity-40 transition-colors" aria-label="Next clip"><ArrowDown size={16} /></button>
+                        <button onClick={(e) => { e.stopPropagation(); setOpenIndex(null); }} className="w-9 h-9 rounded-lg bg-surface2 border border-edge text-fg flex items-center justify-center hover:bg-white/10 transition-colors" aria-label="Close"><X size={16} /></button>
                     </div>
-                </div>
 
-                {/* Scrollable Descriptions Area */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-2 mb-4">
-                    {/* YouTube */}
-                    <div className="bg-black/20 rounded-lg p-3 border border-white/5">
-                        <div className="flex items-center gap-2 text-[10px] font-bold text-red-400 mb-1.5 uppercase tracking-wider">
-                            <Youtube size={12} className="shrink-0" /> <span className="truncate">YouTube Title</span>
+                    <div className="bg-surface border border-edge rounded-2xl w-full max-w-4xl max-h-[88vh] overflow-hidden flex shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                        {/* Preview */}
+                        <div className="w-[clamp(200px,26vw,280px)] shrink-0 bg-black relative">
+                            <video src={currentVideoUrl} controls autoPlay playsInline className="w-full h-full object-cover aspect-[9/16]" />
+                            <span className="absolute top-3 right-3 bg-black/65 text-white text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums">{fmtTime(durSec)}</span>
                         </div>
-                        <p className="text-xs text-zinc-300 select-all break-words">
-                            {clip.video_title_for_youtube_short || "Viral Short Video"}
-                        </p>
-                    </div>
 
-                    {/* TikTok / IG */}
-                    <div className="bg-black/20 rounded-lg p-3 border border-white/5">
-                        <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-400 mb-1.5 uppercase tracking-wider">
-                            <Video size={12} className="text-cyan-400 shrink-0" />
-                            <span className="text-zinc-500">/</span>
-                            <Instagram size={12} className="text-pink-400 shrink-0" />
-                            <span className="truncate">Caption</span>
+                        {/* Info */}
+                        <div className="flex-1 min-w-0 p-5 overflow-y-auto custom-scrollbar">
+                            <h2 className="text-base font-medium text-fg leading-snug">{title}</h2>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+                                {clip.viral_hook_text && <span className="inline-flex items-center gap-1 text-[11px] text-muted bg-surface2 border border-edge px-2 py-0.5 rounded"><Wand2 size={11} /> Hook</span>}
+                                <span className="text-[11px] text-muted bg-surface2 border border-edge px-2 py-0.5 rounded tabular-nums">{durSec}s</span>
+                            </div>
+                            {description && <p className="text-sm text-muted leading-relaxed mt-4">{description}</p>}
+                            {transcriptText && (
+                                <div className="mt-5">
+                                    <div className="flex items-center gap-1.5 text-xs text-muted mb-2"><FileText size={13} /> Transcript</div>
+                                    <p className="text-sm text-zinc-300 leading-relaxed">{transcriptText}</p>
+                                </div>
+                            )}
+                            {editError && (
+                                <div className="mt-4 p-2.5 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-lg flex items-center gap-2">
+                                    <AlertCircle size={13} className="shrink-0" /> {editError}
+                                </div>
+                            )}
                         </div>
-                        <p className="text-xs text-zinc-300 line-clamp-3 hover:line-clamp-none transition-all cursor-pointer select-all break-words">
-                            {clip.video_description_for_tiktok || clip.video_description_for_instagram}
-                        </p>
+
+                        {/* Actions */}
+                        <div className="w-[200px] shrink-0 border-l border-edge p-4 space-y-2 overflow-y-auto custom-scrollbar">
+                            <ActionBtn icon={Share2} label="Publish on Social" primary onClick={() => setShowModal(true)} />
+                            <ActionBtn icon={Download} label="Download HD" onClick={handleDownload} />
+                            <div className="h-px bg-edge my-1" />
+                            <ActionBtn icon={Wand2} label="Auto edit" loading={isEditing} onClick={handleAutoEdit} />
+                            <ActionBtn icon={Type} label="Subtitles" loading={isSubtitling} onClick={() => setShowSubtitleModal(true)} />
+                            <ActionBtn icon={Wand2} label="Viral hook" loading={isHooking} onClick={() => setShowHookModal(true)} />
+                            <ActionBtn icon={Languages} label="Dub voice" loading={isTranslating} onClick={() => setShowTranslateModal(true)} />
+                        </div>
                     </div>
                 </div>
-
-                {/* Error Message */}
-                {editError && (
-                    <div className="mb-3 p-2 bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] rounded-lg flex items-center gap-2">
-                        <AlertCircle size={12} className="shrink-0" />
-                        {editError}
-                    </div>
-                )}
-
-                {/* Actions Footer */}
-                <div className="grid grid-cols-2 gap-3 mt-auto pt-4 border-t border-white/5">
-                    <button
-                        onClick={handleAutoEdit}
-                        disabled={isEditing}
-                        className="col-span-1 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-purple-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 mb-1 truncate px-1"
-                    >
-                        {isEditing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
-                        {isEditing ? 'Editing...' : 'Auto Edit'}
-                    </button>
-
-                    <button
-                        onClick={() => setShowSubtitleModal(true)}
-                        disabled={isSubtitling}
-                        className="col-span-1 py-2 bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-500 hover:to-orange-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-orange-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 mb-1 truncate px-1"
-                    >
-                        {isSubtitling ? <Loader2 size={14} className="animate-spin" /> : <Type size={14} />}
-                        {isSubtitling ? 'Adding...' : 'Subtitles'}
-                    </button>
-
-                    <button
-                        onClick={() => setShowHookModal(true)}
-                        disabled={isHooking}
-                        className="col-span-1 py-2 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-yellow-400 text-black rounded-lg text-xs font-bold shadow-lg shadow-yellow-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 mb-1 truncate px-1"
-                    >
-                        {isHooking ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
-                        {isHooking ? 'Adding...' : 'Viral Hook'}
-                    </button>
-
-                    <button
-                        onClick={() => setShowTranslateModal(true)}
-                        disabled={isTranslating}
-                        className="col-span-1 py-2 bg-gradient-to-r from-green-500 to-teal-600 hover:from-green-400 hover:to-teal-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-green-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 mb-1 truncate px-1"
-                    >
-                        {isTranslating ? <Loader2 size={14} className="animate-spin" /> : <Languages size={14} />}
-                        {isTranslating ? 'Translating...' : 'Dub Voice'}
-                    </button>
-
-                    <button
-                        onClick={() => setShowModal(true)}
-                        className="col-span-1 py-2 bg-primary hover:bg-blue-600 text-white rounded-lg text-xs font-bold shadow-lg shadow-primary/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 truncate px-2"
-                    >
-                        <Share2 size={14} className="shrink-0" /> Post
-                    </button>
-                    <button
-                        onClick={async (e) => {
-                            e.preventDefault();
-                            try {
-                                const response = await fetch(currentVideoUrl);
-                                if (!response.ok) throw new Error('Download failed');
-                                const blob = await response.blob();
-                                const url = window.URL.createObjectURL(blob);
-                                const a = document.createElement('a');
-                                a.style.display = 'none';
-                                a.href = url;
-                                a.download = `clip-${index + 1}.mp4`;
-                                document.body.appendChild(a);
-                                a.click();
-                                window.URL.revokeObjectURL(url);
-                                document.body.removeChild(a);
-                            } catch (err) {
-                                console.error('Download error:', err);
-                                window.open(currentVideoUrl, '_blank');
-                            }
-                        }}
-                        className="col-span-1 py-2 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-2 border border-white/5 truncate px-2"
-                    >
-                        <Download size={14} className="shrink-0" /> Download
-                    </button>
-                </div>
-            </div>
+            )}
 
             {/* Post Modal */}
             {showModal && (
@@ -679,7 +674,6 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                 videoUrl={currentVideoUrl}
                 hasApiKey={!!elevenLabsKey}
             />
-
-        </div>
+        </>
     );
 }

@@ -171,6 +171,7 @@ function App() {
   const [projects, setProjects] = useState(() => getProjects());
   const [showProcessingModal, setShowProcessingModal] = useState(false);
   const [viewingResults, setViewingResults] = useState(false);
+  const [openClip, setOpenClip] = useState(null);
 
   // Sync state for original video playback
   const [syncedTime, setSyncedTime] = useState(0);
@@ -353,6 +354,7 @@ function App() {
     setResults(null);
     setProcessingMedia(data);
     setViewingResults(false);
+    setShowProcessingModal(true);
 
     try {
       let body;
@@ -409,6 +411,7 @@ function App() {
     setProcessingMedia(null);
     setViewingResults(false);
     setShowProcessingModal(false);
+    setOpenClip(null);
     localStorage.removeItem(SESSION_KEY);
   };
 
@@ -999,7 +1002,7 @@ function App() {
 
               <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
                 {results.clips && results.clips.length > 0 ? (
-                  <div className="grid gap-4 pb-10 grid-cols-1 xl:grid-cols-2">
+                  <div className="grid gap-x-4 gap-y-6 pb-10 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
                     {results.clips.map((clip, i) => (
                       <ResultCard
                         key={i}
@@ -1012,6 +1015,9 @@ function App() {
                         elevenLabsKey={elevenLabsKey}
                         onPlay={(time) => handleClipPlay(time)}
                         onPause={handleClipPause}
+                        openIndex={openClip}
+                        setOpenIndex={setOpenClip}
+                        totalClips={results.clips.length}
                       />
                     ))}
                   </div>
