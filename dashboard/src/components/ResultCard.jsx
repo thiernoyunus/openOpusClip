@@ -416,7 +416,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
     const transcriptText = captions.map((c) => c.text).join(' ');
     const durSec = Math.floor(clipDuration);
 
-    const ActionBtn = ({ icon: _Icon, label, onClick, loading, primary }) => (
+    const ActionBtn = ({ icon: Icon, label, onClick, loading, primary }) => (
         <button
             onClick={onClick}
             disabled={loading}

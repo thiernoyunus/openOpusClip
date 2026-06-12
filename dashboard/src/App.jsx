@@ -449,7 +449,7 @@ function App() {
 
   // --- UI Components ---
 
-  const RailItem = ({ icon: _Icon, label, active, onClick }) => (
+  const RailItem = ({ icon: Icon, label, active, onClick }) => (
     <button
       onClick={onClick}
       aria-label={label}
@@ -492,7 +492,7 @@ function App() {
     </div>
   );
 
-  const ShortcutItem = ({ icon: _Icon, color, label, onClick }) => (
+  const ShortcutItem = ({ icon: Icon, color, label, onClick }) => (
     <button onClick={onClick} className="group flex flex-col items-center gap-2.5 text-muted hover:text-fg transition-colors">
       <span className={`w-14 h-14 rounded-full bg-surface border border-edge flex items-center justify-center ${color} group-hover:border-white/20 transition-colors`}>
         <Icon size={22} />

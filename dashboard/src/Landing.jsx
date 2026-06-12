@@ -7,7 +7,7 @@ const TikTokIcon = ({ size = 16, className = "" }) => (
   </svg>
 );
 
-const FeatureCard = ({ icon: _Icon, title, description }) => (
+const FeatureCard = ({ icon: Icon, title, description }) => (
   <div className="group bg-surface/50 backdrop-blur-xl border border-white/10 rounded-2xl p-6 hover:border-primary/30 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5">
     <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4 group-hover:bg-primary/20 transition-colors">
       <Icon size={24} className="text-primary" />
