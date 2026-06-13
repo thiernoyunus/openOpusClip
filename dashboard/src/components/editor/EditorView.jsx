@@ -273,6 +273,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                             framing={framing}
                             playerRef={playerRef}
                             onEditWord={handleEditWord}
+                            dispatch={dispatch}
                         />
 
                         {/* Canvas */}
