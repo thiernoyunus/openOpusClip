@@ -4,12 +4,20 @@
 
 const KEY = 'openshorts_projects';
 const MAX = 30;
+const PROCESSING_MAX_AGE = 60 * 60 * 1000;
 
 export function getProjects() {
   try {
     const raw = localStorage.getItem(KEY);
     const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list : [];
+    if (!Array.isArray(list)) return [];
+    const now = Date.now();
+    return list.map((p) => {
+      if (p.status === 'processing' && p.createdAt && now - p.createdAt > PROCESSING_MAX_AGE) {
+        return { ...p, status: 'expired' };
+      }
+      return p;
+    });
   } catch {
     return [];
   }

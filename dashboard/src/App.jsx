@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Upload, FileVideo, Sparkles, Scissors, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Trash2 } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
@@ -126,12 +126,23 @@ const UserProfileSelector = ({ profiles, selectedUserId, onSelect }) => {
 };
 
 const SESSION_KEY = 'openshorts_session';
+const LEGACY_SESSION_KEY = 'openshorts_session_v1';
 const SESSION_MAX_AGE = 3600000; // 1 hour (matches server job retention)
+const MAX_POLL_FAILURES = 5;
 
-// Mock polling function
+class JobExpiredError extends Error {
+  constructor(message = 'Job expired') {
+    super(message);
+    this.name = 'JobExpiredError';
+  }
+}
+
 const pollJob = async (jobId) => {
   const res = await fetch(getApiUrl(`/api/status/${jobId}`));
-  if (!res.ok) throw new Error('Status check failed');
+  if (res.status === 404 || res.status === 410) {
+    throw new JobExpiredError('Job expired or server restarted');
+  }
+  if (!res.ok) throw new Error(`Status check failed (${res.status})`);
   return res.json();
 };
 
@@ -177,6 +188,7 @@ function App() {
   const [processingJobIds, setProcessingJobIds] = useState(() => (
     getProjects().filter((p) => p.status === 'processing').map((p) => p.id)
   ));
+  const pollFailureCounts = useRef({});
 
   // Sync state for original video playback
   const [_syncedTime, setSyncedTime] = useState(0);
@@ -195,6 +207,9 @@ function App() {
 
   // Session Recovery: Restore on mount
   useEffect(() => {
+    localStorage.removeItem(LEGACY_SESSION_KEY);
+
+    let cancelled = false;
     try {
       const saved = localStorage.getItem(SESSION_KEY);
       if (!saved) return;
@@ -204,18 +219,33 @@ function App() {
         return;
       }
       if (session.jobId && session.status && session.status !== 'idle') {
-        setJobId(session.jobId);
-        setResults(session.results || null);
-        if (session.processingMedia) setProcessingMedia(session.processingMedia);
-        if (session.activeTab) setActiveTab(session.activeTab);
-        // If was processing, resume polling; if complete/error, just show results
-        setStatus(session.status === 'processing' ? 'processing' : session.status);
-        setSessionRecovered(true);
-        setTimeout(() => setSessionRecovered(false), 5000);
+        pollJob(session.jobId)
+          .then((data) => {
+            if (cancelled) return;
+            setJobId(session.jobId);
+            setResults(data.result || session.results || null);
+            if (data.logs) setLogs(data.logs);
+            if (session.processingMedia) setProcessingMedia(session.processingMedia);
+            if (session.activeTab) setActiveTab(session.activeTab);
+            setStatus(data.status === 'completed' ? 'complete' : data.status === 'failed' ? 'error' : 'processing');
+            setSessionRecovered(true);
+            setTimeout(() => setSessionRecovered(false), 5000);
+          })
+          .catch((e) => {
+            if (cancelled) return;
+            localStorage.removeItem(SESSION_KEY);
+            if (e instanceof JobExpiredError) {
+              setProjects(updateProject(session.jobId, { status: 'expired' }));
+              setProcessingJobIds((ids) => ids.filter((id) => id !== session.jobId));
+            }
+          });
       }
     } catch (e) {
       localStorage.removeItem(SESSION_KEY);
     }
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Session Recovery: Save state changes
@@ -329,8 +359,34 @@ function App() {
             nextIds.push(id);
           }
         } catch (e) {
-          console.error("Polling error", id, e);
-          nextIds.push(id);
+          if (e instanceof JobExpiredError) {
+            console.warn("Dropping expired job", id);
+            setProjects(updateProject(id, { status: 'expired' }));
+            delete pollFailureCounts.current[id];
+            if (id === jobId) {
+              setStatus('idle');
+              setJobId(null);
+              setResults(null);
+              setLogs(["This recovered job expired or the backend restarted. Start a new job when you're ready."]);
+              setProcessingMedia(null);
+              localStorage.removeItem(SESSION_KEY);
+            }
+          } else {
+            const failures = (pollFailureCounts.current[id] || 0) + 1;
+            pollFailureCounts.current[id] = failures;
+            console.warn("Polling temporarily failed", id, e);
+            if (failures < MAX_POLL_FAILURES) {
+              nextIds.push(id);
+            } else {
+              setProjects(updateProject(id, { status: 'expired' }));
+              delete pollFailureCounts.current[id];
+              if (id === jobId) {
+                setStatus('error');
+                setLogs(prev => [...prev, "Backend is not reachable. Polling paused so the app does not spam requests."]);
+                localStorage.removeItem(SESSION_KEY);
+              }
+            }
+          }
         }
       }
 
@@ -520,7 +576,11 @@ function App() {
         setStatus('complete');
         setViewingResults(true);
       }
-    } catch {
+    } catch (e) {
+      if (e instanceof JobExpiredError) {
+        setProjects(updateProject(p.id, { status: 'expired' }));
+        setProcessingJobIds((ids) => ids.filter((id) => id !== p.id));
+      }
       alert('This project has expired. Jobs are kept on the server for about an hour after processing.');
     }
   };
@@ -583,6 +643,7 @@ function App() {
     const isActive = p.id === jobId;
     const proc = p.status === 'processing';
     const failed = p.status === 'failed';
+    const expired = p.status === 'expired';
     const phase = isActive ? phaseFromLogs(logs) : 'Processing';
     const cover = p.thumb || coverFromString(p.src || p.title);
     const handleDelete = (e) => {
@@ -612,12 +673,17 @@ function App() {
               <span className="flex items-center gap-1.5 text-red-400 text-xs"><AlertTriangle size={13} /> Failed</span>
             </div>
           )}
+          {expired && (
+            <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
+              <span className="flex items-center gap-1.5 text-zinc-300 text-xs"><AlertTriangle size={13} /> Expired</span>
+            </div>
+          )}
         </div>
         <div className="mt-2">
           <div className="text-xs text-fg truncate group-hover:text-white transition-colors">{p.title}</div>
           <div className="flex items-center justify-between mt-1">
             <span className="text-[11px] text-muted">
-              {proc ? 'Processing' : failed ? 'Failed' : `${p.clipCount} clip${p.clipCount === 1 ? '' : 's'}`}
+              {proc ? 'Processing' : failed ? 'Failed' : expired ? 'Expired' : `${p.clipCount} clip${p.clipCount === 1 ? '' : 's'}`}
             </span>
             {p.cost != null && (
               <span className="text-[10px] text-muted bg-surface2 px-1.5 py-0.5 rounded">${p.cost.toFixed(3)}</span>
