@@ -9,7 +9,83 @@
 
 **Free & open source AI video platform** with 3 tools in one: **Clip Generator**, **AI Shorts (UGC videos with AI actors)**, and **YouTube Studio**. Self-hosted with Docker. No watermarks, no limits.
 
+This fork keeps the original OpenShorts idea, then adds a more complete creation workflow: saved projects, multi-video processing, a clip review grid, and a real editor so you can fix clips before publishing.
+
 https://github.com/user-attachments/assets/b45fa983-16b4-48b5-ac5b-a267836b9ad9
+
+---
+
+## What This Fork Adds
+
+The original OpenShorts is great at turning long videos into short clips. This fork is focused on what happens next: reviewing, fixing, editing, exporting, and publishing those clips without leaving the app.
+
+In plain English:
+
+1. Upload one video or many videos.
+2. Let AI find the best short moments.
+3. Review the generated clips.
+4. Open a clip in the editor if the framing, captions, or timing need work.
+5. Export or publish the final version.
+
+## Screenshot Tour
+
+### Start from a simple dashboard
+
+Paste a YouTube URL or upload videos. The app keeps recent projects, shows job status, and lets you keep working while other videos are processing.
+
+![Dashboard upload screen](screenshots/fork-showcase/dashboard-home.png)
+
+### Review every generated clip
+
+After processing, clips appear in a grid with titles, durations, cost, logs, downloads, scheduling, and publishing actions.
+
+![Generated clips grid](screenshots/fork-showcase/generated-clips.png)
+
+### Open one clip and decide what to do next
+
+Each clip can be previewed before you commit to anything. From the clip view, you can edit, publish, download, auto-edit, add subtitles, generate a stronger hook, or dub the voice.
+
+![Clip action panel](screenshots/fork-showcase/clip-actions.png)
+
+### Fix clips in the built-in editor
+
+The editor is the biggest difference in this fork. It lets you adjust the clip after AI creates it. You can work with the transcript, timeline, layout, captions, text, audio, b-roll, and export.
+
+![Clip editor](screenshots/fork-showcase/clip-editor.png)
+
+## Original OpenShorts vs This Fork
+
+| Area | Original OpenShorts | This enhanced fork |
+|---|---|---|
+| Main goal | Generate shorts quickly | Generate shorts, review them, edit them, then publish |
+| Dashboard | Basic processing and results flow | App-style dashboard with sidebar tools, recent projects, status, logs, and delete-from-recents |
+| Uploads | One URL or one uploaded file at a time | Select or drag in multiple videos and queue them as separate jobs |
+| Project history | Jobs mostly live in backend memory | Recent projects are saved in the browser with thumbnails, status, cost, and clip count |
+| Clip review | View generated clips | Review clips in a grid with logs, downloads, scheduling, and social publishing actions |
+| Editor | Mostly baked output clips | Full clip editor with timeline, transcript, layouts, captions, text, audio, b-roll, and effects |
+| Framing | Auto-framed output | Saved framing data, so you can reopen a clip and fix the shot later |
+| Timeline edits | Mostly automatic | Trim clip edges, split segments, and cut or restore transcript words |
+| Export | Final files are created by the pipeline | Editor exports through the render service so preview and export use the same edit data |
+| Best for | Fast AI clip generation | Vibe coders, creators, and teams who want AI speed plus manual control |
+
+## New Workflow Features
+
+- **Multi-video queue**: pick several videos and send them all into processing.
+- **Recent projects**: jump back into earlier jobs without hunting through output folders.
+- **Processing logs**: open a running or completed project and see what happened.
+- **Clip editor**: adjust the clip after AI generates it.
+- **Transcript editing**: select words and cut or restore parts of the clip.
+- **Timeline control**: trim, split, and review the clip visually.
+- **Layout tools**: choose how the vertical short should frame people or screen content.
+- **Captions, text, audio, b-roll, and effects**: polish the clip before exporting.
+- **Remotion export service**: render edited clips from the same data used in preview.
+- **Social workflow**: publish or schedule clips through Upload-Post when configured.
+
+## Why This Matters
+
+AI can find good moments, but it does not always frame people perfectly, choose the exact cut you want, or prepare the clip the way you would before posting. This fork adds that missing control layer.
+
+The goal is simple: **AI gets you close, then the editor lets you finish the clip.**
 
 
 

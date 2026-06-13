@@ -174,6 +174,9 @@ function App() {
   const [viewingResults, setViewingResults] = useState(false);
   const [openClip, setOpenClip] = useState(null);
   const [editingClip, setEditingClip] = useState(null); // clip index being edited in EditorView
+  const [processingJobIds, setProcessingJobIds] = useState(() => (
+    getProjects().filter((p) => p.status === 'processing').map((p) => p.id)
+  ));
 
   // Sync state for original video playback
   const [_syncedTime, setSyncedTime] = useState(0);
@@ -282,43 +285,65 @@ function App() {
   }, [uploadPostKey]);
 
   useEffect(() => {
-    let interval;
-    if ((status === 'processing' || status === 'completed') && jobId) {
-      interval = setInterval(async () => {
-        try {
-          const data = await pollJob(jobId);
-          console.log("Job status:", data);
+    if (status === 'processing' && jobId) {
+      setProcessingJobIds((ids) => ids.includes(jobId) ? ids : [...ids, jobId]);
+    }
+  }, [status, jobId]);
 
-          // Update results if available (real-time)
-          if (data.result) {
-            setResults(data.result);
+  useEffect(() => {
+    if (processingJobIds.length === 0) return;
+
+    let cancelled = false;
+    const pollProcessingJobs = async () => {
+      const nextIds = [];
+
+      for (const id of processingJobIds) {
+        try {
+          const data = await pollJob(id);
+          if (cancelled) return;
+          console.log("Job status:", id, data);
+
+          if (id === jobId) {
+            if (data.result) setResults(data.result);
+            if (data.logs) setLogs(data.logs);
           }
 
           if (data.status === 'completed') {
-            setStatus('complete');
-            setProjects(updateProject(jobId, {
+            setProjects(updateProject(id, {
               status: 'complete',
               clipCount: data.result?.clips?.length || 0,
               cost: data.result?.cost_analysis?.total_cost ?? null,
             }));
-            clearInterval(interval);
+            if (id === jobId) {
+              setStatus('complete');
+              if (data.result) setResults(data.result);
+            }
           } else if (data.status === 'failed') {
-            setStatus('error');
-            const errorMsg = data.error || (data.logs && data.logs.length > 0 ? data.logs[data.logs.length - 1] : "Process failed");
-            setLogs(prev => [...prev, "Error: " + errorMsg]);
-            setProjects(updateProject(jobId, { status: 'failed' }));
-            clearInterval(interval);
+            setProjects(updateProject(id, { status: 'failed' }));
+            if (id === jobId) {
+              setStatus('error');
+              const errorMsg = data.error || (data.logs && data.logs.length > 0 ? data.logs[data.logs.length - 1] : "Process failed");
+              setLogs(prev => [...prev, "Error: " + errorMsg]);
+            }
           } else {
-            // Update logs if available
-            if (data.logs) setLogs(data.logs);
+            nextIds.push(id);
           }
         } catch (e) {
-          console.error("Polling error", e);
+          console.error("Polling error", id, e);
+          nextIds.push(id);
         }
-      }, 2000);
-    }
-    return () => clearInterval(interval);
-  }, [status, jobId]);
+      }
+
+      if (!cancelled) setProcessingJobIds(nextIds);
+    };
+
+    pollProcessingJobs();
+    const interval = setInterval(pollProcessingJobs, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [processingJobIds, jobId]);
 
 
   const fetchUserProfiles = async () => {
@@ -346,58 +371,86 @@ function App() {
     }
   };
 
+  const startProcessJob = async (data, { makeActive = true } = {}) => {
+    let body;
+    const headers = { 'X-Gemini-Key': apiKey };
+
+    if (data.type === 'url') {
+      headers['Content-Type'] = 'application/json';
+      body = JSON.stringify({ url: data.payload, acknowledged: !!data.acknowledged, whisper_model: data.whisperModel });
+    } else {
+      const formData = new FormData();
+      formData.append('file', data.payload);
+      formData.append('acknowledged', data.acknowledged ? 'true' : 'false');
+      formData.append('whisper_model', data.whisperModel);
+      body = formData;
+    }
+
+    const res = await fetch(getApiUrl('/api/process'), {
+      method: 'POST',
+      headers: data.type === 'url' ? headers : { 'X-Gemini-Key': apiKey },
+      body
+    });
+
+    if (!res.ok) throw new Error(await res.text());
+    const resData = await res.json();
+    const newId = resData.job_id;
+
+    setProjects(addProject({
+      id: newId,
+      title: titleFromPayload(data),
+      type: data.type,
+      model: data.whisperModel,
+      thumb: thumbFromPayload(data),
+      src: data.type === 'url' ? data.payload : null,
+    }));
+    setProcessingJobIds((ids) => ids.includes(newId) ? ids : [...ids, newId]);
+
+    if (makeActive) {
+      setJobId(newId);
+      setStatus('processing');
+      setLogs([`Queued ${titleFromPayload(data)}...`]);
+      setResults(null);
+      setProcessingMedia(data);
+    }
+
+    // Enrich asynchronously: real video title + (for files) a cover frame.
+    fetchVideoTitle(data).then((t) => { if (t) setProjects(updateProject(newId, { title: t })); });
+    if (data.type === 'file') {
+      captureVideoFrame(data.payload).then((th) => { if (th) setProjects(updateProject(newId, { thumb: th })); });
+    }
+
+    return newId;
+  };
+
   const handleProcess = async (data) => {
     if (!apiKey) {
       setShowKeyModal(true);
       return;
     }
     setStatus('processing');
-    setLogs(["Starting process..."]);
+    setLogs(data.type === 'files' ? [`Starting ${data.payload.length} video jobs...`] : ["Starting process..."]);
     setResults(null);
     setProcessingMedia(data);
     setViewingResults(false);
     setShowProcessingModal(true);
 
     try {
-      let body;
-      const headers = { 'X-Gemini-Key': apiKey };
-
-      if (data.type === 'url') {
-        headers['Content-Type'] = 'application/json';
-        body = JSON.stringify({ url: data.payload, acknowledged: !!data.acknowledged, whisper_model: data.whisperModel });
+      if (data.type === 'files') {
+        const fileJobs = data.payload.map((file) => ({
+          type: 'file',
+          payload: file,
+          acknowledged: data.acknowledged,
+          whisperModel: data.whisperModel,
+        }));
+        for (let i = 0; i < fileJobs.length; i++) {
+          await startProcessJob(fileJobs[i], { makeActive: i === 0 });
+        }
+        setLogs([`Queued ${fileJobs.length} videos. They will process in parallel up to the server limit.`]);
       } else {
-        const formData = new FormData();
-        formData.append('file', data.payload);
-        formData.append('acknowledged', data.acknowledged ? 'true' : 'false');
-        formData.append('whisper_model', data.whisperModel);
-        body = formData;
+        await startProcessJob(data, { makeActive: true });
       }
-
-      const res = await fetch(getApiUrl('/api/process'), {
-        method: 'POST',
-        headers: data.type === 'url' ? headers : { 'X-Gemini-Key': apiKey },
-        body
-      });
-
-      if (!res.ok) throw new Error(await res.text());
-      const resData = await res.json();
-      const newId = resData.job_id;
-      setJobId(newId);
-      setProjects(addProject({
-        id: newId,
-        title: titleFromPayload(data),
-        type: data.type,
-        model: data.whisperModel,
-        thumb: thumbFromPayload(data),
-        src: data.type === 'url' ? data.payload : null,
-      }));
       setShowProcessingModal(true);
-
-      // Enrich asynchronously: real video title + (for files) a cover frame.
-      fetchVideoTitle(data).then((t) => { if (t) setProjects(updateProject(newId, { title: t })); });
-      if (data.type === 'file') {
-        captureVideoFrame(data.payload).then((th) => { if (th) setProjects(updateProject(newId, { thumb: th })); });
-      }
 
     } catch (e) {
       setStatus('error');
@@ -422,7 +475,29 @@ function App() {
   const openProject = async (p) => {
     if (p.id === jobId) {
       if (status === 'complete') { setViewingResults(true); setShowProcessingModal(false); }
-      else { setShowProcessingModal(true); }
+      else {
+        try {
+          const data = await pollJob(p.id);
+          if (data.result) setResults(data.result);
+          if (data.logs) setLogs(data.logs);
+          if (data.status === 'completed') {
+            setStatus('complete');
+            setProjects(updateProject(p.id, {
+              status: 'complete',
+              clipCount: data.result?.clips?.length || 0,
+              cost: data.result?.cost_analysis?.total_cost ?? null,
+            }));
+          } else if (data.status === 'failed') {
+            setStatus('error');
+            setProjects(updateProject(p.id, { status: 'failed' }));
+          } else {
+            setStatus('processing');
+          }
+        } catch (e) {
+          console.warn('Could not refresh active project logs before opening modal', e);
+        }
+        setShowProcessingModal(true);
+      }
       return;
     }
     try {
@@ -439,6 +514,7 @@ function App() {
         setLogs(data.logs || []);
         setViewingResults(false);
         setShowProcessingModal(true);
+        setProcessingJobIds((ids) => ids.includes(p.id) ? ids : [...ids, p.id]);
       } else {
         setResults(data.result || null);
         setStatus('complete');
