@@ -101,11 +101,62 @@ export interface FramingSource {
   durationFrames: number;
 }
 
+/** Removed source range (EDL cut). Sorted, non-overlapping, inside clip bounds. */
+export interface SourceCut {
+  startFrame: number;
+  endFrame: number; // exclusive
+}
+
+/** Text overlay track (max 5). Frame times in SOURCE frames, EDL-mapped. */
+export interface TextOverlay {
+  id: string;
+  text: string;
+  startFrame: number;
+  endFrame: number;
+  x: number; // normalized center 0-1
+  y: number;
+  size: "S" | "M" | "L";
+  color: string;
+  bg: boolean;
+}
+
+export interface MusicConfig {
+  url: string;
+  volume: number; // 0-1
+  originalVolume: number; // 0-1, applied to the source video audio
+}
+
+export interface TransitionsConfig {
+  fadeIn: boolean;
+  fadeOut: boolean;
+  cutCrossfade: boolean;
+}
+
+export interface BrollItem {
+  id: string;
+  url: string;
+  startFrame: number; // SOURCE frames, EDL-mapped
+  endFrame: number;
+}
+
 export interface FramingConfig {
   version: number;
   source: FramingSource;
   segments: FramingSegment[];
   faceTracks: FaceTrack[];
+  /**
+   * v2 (EDL): playable content = [clipInFrame, clipOutFrame] minus cuts.
+   * v1 files omit these; consumers default to 0..durationFrames with no cuts.
+   * Segments must stay contiguous and cover exactly [clipInFrame, clipOutFrame].
+   */
+  clipInFrame?: number;
+  clipOutFrame?: number;
+  cuts?: SourceCut[];
+  subtitles?: SubtitleConfig | null;
+  textOverlays?: TextOverlay[];
+  music?: MusicConfig | null;
+  transitions?: TransitionsConfig;
+  broll?: BrollItem[];
 }
 
 // --- Main composition props ---

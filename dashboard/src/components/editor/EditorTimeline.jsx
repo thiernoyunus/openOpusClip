@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Play, Pause, SkipBack } from 'lucide-react';
+import { Play, Pause, SkipBack, X } from 'lucide-react';
 import { EDITOR_FPS } from './EditorCanvas';
 import { useFilmstrip, useWaveform } from './useMediaStrips';
+import { outputDurationFrames, outputToSource, sourceToOutput } from '../../remotion/lib/edl';
 
 const fmt = (frames) => {
     const totalSec = frames / EDITOR_FPS;
@@ -21,12 +22,15 @@ const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three',
 export default function EditorTimeline({ framing, playerRef, selectedIds, onSelect, dispatch, sourceUrl }) {
     const [frame, setFrame] = useState(0);
     const [playing, setPlaying] = useState(false);
-    const [drag, setDrag] = useState(null); // {boundaryIndex, frame}
+    // drag: {kind:'boundary', boundaryIndex, frame} | {kind:'trim', edge:'in'|'out', frame}
+    const [drag, setDrag] = useState(null);
     const stripRef = useRef(null);
 
-    const srcFps = framing.source.fps;
     const totalSrcFrames = framing.source.durationFrames;
-    const durationInFrames = Math.max(1, Math.round((totalSrcFrames / srcFps) * EDITOR_FPS));
+    const clipIn = framing.clipInFrame ?? 0;
+    const clipOut = framing.clipOutFrame ?? totalSrcFrames;
+    const cuts = framing.cuts ?? [];
+    const durationInFrames = outputDurationFrames(framing, EDITOR_FPS);
 
     const thumbs = useFilmstrip(sourceUrl);
     const peaks = useWaveform(sourceUrl);
@@ -59,9 +63,10 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
             const p = playerRef.current;
             if (!p) return;
             p.pause();
-            p.seekTo(Math.round((srcFrame / srcFps) * EDITOR_FPS));
+            // Map through the EDL: frames inside cuts snap to the next kept frame
+            p.seekTo(sourceToOutput(framing, srcFrame, EDITOR_FPS) ?? 0);
         },
-        [playerRef, srcFps]
+        [playerRef, framing]
     );
 
     const sourceFrameAtClientX = useCallback(
@@ -73,12 +78,12 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
         [totalSrcFrames]
     );
 
-    // Boundary dragging: live position in local state, single history entry
-    // committed to the reducer on release
-    const onBoundaryPointerDown = (boundaryIndex) => (e) => {
+    // Dragging (segment boundaries + clip trim handles): live position in
+    // local state, single history entry committed to the reducer on release
+    const startDrag = (payload) => (e) => {
         e.preventDefault();
         e.stopPropagation();
-        setDrag({ boundaryIndex, frame: framing.segments[boundaryIndex].endFrame });
+        setDrag(payload);
         try {
             e.target.setPointerCapture?.(e.pointerId);
         } catch { /* synthetic or already-released pointer */ }
@@ -87,9 +92,16 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
         if (!drag) return;
         setDrag((d) => ({ ...d, frame: sourceFrameAtClientX(e.clientX) }));
     };
-    const endBoundaryDrag = () => {
+    const endDrag = () => {
         if (!drag) return;
-        dispatch({ type: 'SET_BOUNDARY', boundaryIndex: drag.boundaryIndex, frame: drag.frame });
+        if (drag.kind === 'boundary') {
+            dispatch({ type: 'SET_BOUNDARY', boundaryIndex: drag.boundaryIndex, frame: drag.frame });
+        } else if (drag.kind === 'trim') {
+            dispatch({
+                type: 'SET_CLIP_BOUNDS',
+                ...(drag.edge === 'in' ? { clipInFrame: drag.frame } : { clipOutFrame: drag.frame }),
+            });
+        }
         setDrag(null);
     };
 
@@ -98,8 +110,12 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
         seekToSourceFrame(sourceFrameAtClientX(e.clientX));
     };
 
-    const playheadPct = Math.min(100, (frame / durationInFrames) * 100);
+    // Playhead lives on the SOURCE axis (the strips show source content)
+    const playheadSrc = outputToSource(framing, frame, EDITOR_FPS);
+    const playheadPct = Math.min(100, (playheadSrc / totalSrcFrames) * 100);
     const boundaryPct = (f) => (f / totalSrcFrames) * 100;
+    const liveClipIn = drag?.kind === 'trim' && drag.edge === 'in' ? drag.frame : clipIn;
+    const liveClipOut = drag?.kind === 'trim' && drag.edge === 'out' ? drag.frame : clipOut;
 
     return (
         <div className="border-t border-edge bg-surface px-4 py-3 select-none">
@@ -131,23 +147,25 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                 ref={stripRef}
                 className="relative rounded-lg overflow-hidden border border-edge bg-canvas"
                 onPointerMove={onStripPointerMove}
-                onPointerUp={endBoundaryDrag}
-                onPointerLeave={endBoundaryDrag}
+                onPointerUp={endDrag}
+                onPointerLeave={endDrag}
             >
-                {/* Layout chip row */}
-                <div className="relative h-7 flex border-b border-edge">
+                {/* Layout chip row (absolute positions: segments cover [clipIn, clipOut]) */}
+                <div className="relative h-7 border-b border-edge">
                     {framing.segments.map((seg) => {
-                        const widthPct = ((seg.endFrame - seg.startFrame) / totalSrcFrames) * 100;
                         const selected = selectedIds.includes(seg.id);
                         return (
                             <button
                                 key={seg.id}
-                                style={{ width: `${widthPct}%` }}
+                                style={{
+                                    left: `${boundaryPct(seg.startFrame)}%`,
+                                    width: `${boundaryPct(seg.endFrame - seg.startFrame)}%`,
+                                }}
                                 onClick={(e) => {
                                     onSelect(seg.id, e.shiftKey || e.metaKey || e.ctrlKey);
                                     seekToSourceFrame(seg.startFrame);
                                 }}
-                                className={`relative h-full border-r border-edge last:border-r-0 transition-colors text-left overflow-hidden ${
+                                className={`absolute top-0 h-full border-r border-edge transition-colors text-left overflow-hidden ${
                                     selected ? 'bg-white/20' : 'bg-surface2/40 hover:bg-white/10'
                                 }`}
                                 title={`${seg.id} · ${LAYOUT_LABEL[seg.layout] || seg.layout}`}
@@ -165,15 +183,16 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
 
                     {/* Boundary drag handles (between adjacent segments) */}
                     {framing.segments.slice(0, -1).map((seg, i) => {
-                        const f = drag?.boundaryIndex === i ? drag.frame : seg.endFrame;
+                        const active = drag?.kind === 'boundary' && drag.boundaryIndex === i;
+                        const f = active ? drag.frame : seg.endFrame;
                         return (
                             <div
                                 key={`b-${seg.id}`}
                                 style={{ left: `${boundaryPct(f)}%` }}
-                                onPointerDown={onBoundaryPointerDown(i)}
+                                onPointerDown={startDrag({ kind: 'boundary', boundaryIndex: i, frame: seg.endFrame })}
                                 className="absolute top-0 bottom-0 w-2 -ml-1 cursor-col-resize group z-10"
                             >
-                                <div className={`mx-auto w-[3px] h-full rounded ${drag?.boundaryIndex === i ? 'bg-viral' : 'bg-zinc-500 group-hover:bg-fg'}`} />
+                                <div className={`mx-auto w-[3px] h-full rounded ${active ? 'bg-viral' : 'bg-zinc-500 group-hover:bg-fg'}`} />
                             </div>
                         );
                     })}
@@ -214,7 +233,69 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                     )}
                 </div>
 
-                {/* Boundary drag live guide across all rows */}
+                {/* Removed content: dim everything outside [clipIn, clipOut] */}
+                {liveClipIn > 0 && (
+                    <div
+                        className="absolute top-0 bottom-0 left-0 bg-black/70 pointer-events-none z-10"
+                        style={{ width: `${boundaryPct(liveClipIn)}%` }}
+                    />
+                )}
+                {liveClipOut < totalSrcFrames && (
+                    <div
+                        className="absolute top-0 bottom-0 right-0 bg-black/70 pointer-events-none z-10"
+                        style={{ width: `${100 - boundaryPct(liveClipOut)}%` }}
+                    />
+                )}
+
+                {/* EDL cut bands (click × to restore) */}
+                {cuts.map((cut, i) => (
+                    <div
+                        key={`cut-${cut.startFrame}`}
+                        className="absolute top-0 bottom-0 z-10 bg-red-500/25 border-x border-red-400/60 group"
+                        style={{
+                            left: `${boundaryPct(cut.startFrame)}%`,
+                            width: `${boundaryPct(cut.endFrame - cut.startFrame)}%`,
+                            backgroundImage:
+                                'repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(248,113,113,0.25) 6px, rgba(248,113,113,0.25) 12px)',
+                        }}
+                        title="Cut content (click × to restore)"
+                    >
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                dispatch({ type: 'REMOVE_CUT', index: i });
+                            }}
+                            className="absolute top-0.5 left-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-red-500 text-white items-center justify-center hidden group-hover:flex"
+                            aria-label="Restore cut content"
+                        >
+                            <X size={10} />
+                        </button>
+                    </div>
+                ))}
+
+                {/* Clip trim/extend handles */}
+                {[
+                    { edge: 'in', frame: liveClipIn },
+                    { edge: 'out', frame: liveClipOut },
+                ].map(({ edge, frame: f }) => (
+                    <div
+                        key={`trim-${edge}`}
+                        style={{ left: `${boundaryPct(f)}%` }}
+                        onPointerDown={startDrag({ kind: 'trim', edge, frame: f })}
+                        className="absolute top-0 bottom-0 w-3 -ml-1.5 cursor-ew-resize group z-20"
+                        title={edge === 'in' ? 'Trim/extend clip start' : 'Trim/extend clip end'}
+                    >
+                        <div
+                            className={`mx-auto w-[5px] h-full rounded ${
+                                drag?.kind === 'trim' && drag.edge === edge
+                                    ? 'bg-amber-400'
+                                    : 'bg-amber-500/70 group-hover:bg-amber-400'
+                            }`}
+                        />
+                    </div>
+                ))}
+
+                {/* Drag live guide across all rows */}
                 {drag && (
                     <div
                         className="absolute top-0 bottom-0 w-px bg-viral pointer-events-none z-20"

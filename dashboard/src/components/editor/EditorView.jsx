@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Loader2, AlertCircle, LayoutGrid, Captions, Crosshair } from 'lucide-react';
 import { getApiUrl } from '../../config';
 import useEditorState, { defaultSubtitleConfig } from './useEditorState';
+import { outputDurationFrames } from '../../remotion/lib/edl';
 import EditorTopBar from './EditorTopBar';
 import EditorCanvas, { EDITOR_FPS } from './EditorCanvas';
 import EditorTimeline from './EditorTimeline';
@@ -132,10 +133,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
             // Persist the framing first so export and saved state never diverge
             if (state.dirty) await saveFraming();
 
-            const durationInFrames = Math.max(
-                1,
-                Math.round((state.framing.source.durationFrames / state.framing.source.fps) * EDITOR_FPS)
-            );
+            const durationInFrames = outputDurationFrames(state.framing, EDITOR_FPS);
             const res = await fetch(getApiUrl('/render'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -228,9 +226,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     }, [handleBack, handleSave, dispatch]);
 
     const framing = state.framing;
-    const durationInFrames = framing
-        ? Math.max(1, Math.round((framing.source.durationFrames / framing.source.fps) * EDITOR_FPS))
-        : 1;
+    const durationInFrames = framing ? outputDurationFrames(framing, EDITOR_FPS) : 1;
 
     const title =
         clip.video_title_for_youtube_short || `Clip ${typeof index === 'number' ? index + 1 : ''}`;

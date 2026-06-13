@@ -21,7 +21,13 @@ export const editorReducer = (state, action) => {
 
     switch (action.type) {
         case 'LOAD':
-            return { framing: action.framing, selectedIds: [], dirty: false, past: [], future: [] };
+            return {
+                framing: normalizeFraming(action.framing),
+                selectedIds: [],
+                dirty: false,
+                past: [],
+                future: [],
+            };
         case 'SELECT': {
             const { id, multi } = action;
             if (!multi) return { ...state, selectedIds: [id] };
@@ -101,6 +107,55 @@ export const editorReducer = (state, action) => {
                 return s;
             });
             return withHistory({ ...state.framing, segments });
+        }
+        case 'SET_CLIP_BOUNDS': {
+            // Trim (inward) or extend (outward into the padded source).
+            // Invariant: segments always cover exactly [clipIn, clipOut].
+            const f = state.framing;
+            const MIN_CLIP = 10;
+            let clipIn = action.clipInFrame ?? f.clipInFrame;
+            let clipOut = action.clipOutFrame ?? f.clipOutFrame;
+            clipIn = Math.max(0, Math.min(clipIn, f.source.durationFrames - MIN_CLIP));
+            clipOut = Math.max(clipIn + MIN_CLIP, Math.min(clipOut, f.source.durationFrames));
+            if (clipIn === f.clipInFrame && clipOut === f.clipOutFrame) return state;
+            const segments = fitSegmentsToBounds(f.segments, clipIn, clipOut);
+            const cuts = f.cuts
+                .map((c) => ({
+                    startFrame: Math.max(c.startFrame, clipIn),
+                    endFrame: Math.min(c.endFrame, clipOut),
+                }))
+                .filter((c) => c.endFrame - c.startFrame > 0);
+            return withHistory({ ...f, clipInFrame: clipIn, clipOutFrame: clipOut, segments, cuts });
+        }
+        case 'ADD_CUT': {
+            const f = state.framing;
+            const start = Math.max(action.startFrame, f.clipInFrame);
+            const end = Math.min(action.endFrame, f.clipOutFrame);
+            if (end - start < 2) return state;
+            // merge with overlapping/adjacent cuts (within 2 frames)
+            const merged = [];
+            let cur = { startFrame: start, endFrame: end };
+            for (const c of [...f.cuts].sort((a, b) => a.startFrame - b.startFrame)) {
+                if (c.endFrame >= cur.startFrame - 2 && c.startFrame <= cur.endFrame + 2) {
+                    cur = {
+                        startFrame: Math.min(cur.startFrame, c.startFrame),
+                        endFrame: Math.max(cur.endFrame, c.endFrame),
+                    };
+                } else {
+                    merged.push(c);
+                }
+            }
+            merged.push(cur);
+            merged.sort((a, b) => a.startFrame - b.startFrame);
+            // never let cuts consume the whole clip
+            const kept = f.clipOutFrame - f.clipInFrame - merged.reduce((acc, c) => acc + (c.endFrame - c.startFrame), 0);
+            if (kept < 10) return state;
+            return withHistory({ ...f, cuts: merged });
+        }
+        case 'REMOVE_CUT': {
+            const cuts = state.framing.cuts.filter((_, i) => i !== action.index);
+            if (cuts.length === state.framing.cuts.length) return state;
+            return withHistory({ ...state.framing, cuts });
         }
         case 'TRACK_PERSON': {
             // Tracker click: in multi-panel layouts, reassign the clicked
@@ -207,6 +262,54 @@ export function buildFillKeyframes(framing, segment, trackId) {
         });
     }
     return keyframes;
+}
+
+/**
+ * Re-fit segments to new clip bounds: drop segments fully outside, clamp the
+ * survivors, stretch the edges so coverage is exactly [clipIn, clipOut].
+ */
+function fitSegmentsToBounds(segments, clipIn, clipOut) {
+    let segs = segments
+        .filter((s) => s.endFrame > clipIn && s.startFrame < clipOut)
+        .map((s) => ({
+            ...s,
+            startFrame: Math.max(s.startFrame, clipIn),
+            endFrame: Math.min(s.endFrame, clipOut),
+        }));
+    if (segs.length === 0) {
+        segs = [{
+            id: 'seg-trim',
+            startFrame: clipIn,
+            endFrame: clipOut,
+            layout: 'fit',
+            trackedFaceIds: [],
+            cameraKeyframes: [],
+            manualCrop: null,
+        }];
+    } else {
+        segs[0] = { ...segs[0], startFrame: clipIn };
+        segs[segs.length - 1] = { ...segs[segs.length - 1], endFrame: clipOut };
+    }
+    return segs;
+}
+
+/**
+ * Upgrade any loaded framing (v1 or partial v2) to a fully-populated v2 shape
+ * so the reducer, composition, and validator can assume the EDL fields exist.
+ */
+export function normalizeFraming(framing) {
+    return {
+        ...framing,
+        version: 2,
+        clipInFrame: framing.clipInFrame ?? 0,
+        clipOutFrame: framing.clipOutFrame ?? framing.source.durationFrames,
+        cuts: framing.cuts ?? [],
+        subtitles: framing.subtitles ?? null,
+        textOverlays: framing.textOverlays ?? [],
+        music: framing.music ?? null,
+        transitions: framing.transitions ?? { fadeIn: false, fadeOut: false, cutCrossfade: false },
+        broll: framing.broll ?? [],
+    };
 }
 
 /** Default caption styling for newly enabled captions (Opus-like pop style). */

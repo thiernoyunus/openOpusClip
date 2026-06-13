@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { EDITOR_FPS } from './EditorCanvas';
 import { buildFillKeyframes } from './useEditorState';
+import { outputToSource } from '../../remotion/lib/edl';
 import {
     segmentAtSourceFrame,
     canvasToSource,
@@ -21,17 +22,14 @@ export default function TrackerOverlay({ playerRef, framing, dispatch }) {
     useEffect(() => {
         const p = playerRef.current;
         if (!p) return;
-        const toSrcFrame = (compFrame) =>
-            Math.min(
-                Math.round(compFrame * (framing.source.fps / EDITOR_FPS)),
-                framing.source.durationFrames - 1
-            );
+        // Output frame -> source frame goes through the EDL (cuts/trim aware)
+        const toSrcFrame = (outFrame) => outputToSource(framing, outFrame, EDITOR_FPS);
         // The overlay can mount after the user already seeked — sync first
         setSrcFrame(toSrcFrame(p.getCurrentFrame()));
         const onFrame = (e) => setSrcFrame(toSrcFrame(e.detail.frame));
         p.addEventListener('frameupdate', onFrame);
         return () => p.removeEventListener('frameupdate', onFrame);
-    }, [playerRef, framing.source.fps, framing.source.durationFrames]);
+    }, [playerRef, framing]);
 
     const segment = segmentAtSourceFrame(framing, srcFrame);
     const faces = facesAtSourceFrame(framing, srcFrame);

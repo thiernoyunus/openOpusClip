@@ -36,6 +36,7 @@ export default defineConfig([
       'react-hooks/set-state-in-effect': 'warn',
       'react-hooks/static-components': 'warn',
       'react-hooks/immutability': 'warn',
+      'react-hooks/refs': 'warn',
       'react-refresh/only-export-components': 'warn',
     },
   },

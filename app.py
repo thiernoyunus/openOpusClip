@@ -913,7 +913,7 @@ def _validate_framing(framing: dict) -> Optional[str]:
     """Returns an error message, or None if the framing config is valid."""
     if not isinstance(framing, dict):
         return "Framing must be an object"
-    if framing.get("version") != 1:
+    if framing.get("version") not in (1, 2):
         return "Unsupported framing version"
     source = framing.get("source")
     if not isinstance(source, dict):
@@ -921,10 +921,35 @@ def _validate_framing(framing: dict) -> Optional[str]:
     for key in ("file", "fps", "width", "height", "durationFrames"):
         if key not in source:
             return f"source.{key} is required"
+
+    # v2 EDL fields: playable content = [clipInFrame, clipOutFrame] minus cuts
+    duration = source["durationFrames"]
+    clip_in = framing.get("clipInFrame", 0)
+    clip_out = framing.get("clipOutFrame", duration)
+    if not isinstance(clip_in, int) or not isinstance(clip_out, int):
+        return "clipInFrame/clipOutFrame must be integers"
+    if not (0 <= clip_in < clip_out <= duration):
+        return "clip bounds out of range"
+    cuts = framing.get("cuts", [])
+    if not isinstance(cuts, list):
+        return "cuts must be a list"
+    prev_cut_end = clip_in
+    kept = clip_out - clip_in
+    for i, cut in enumerate(cuts):
+        cs, ce = cut.get("startFrame"), cut.get("endFrame")
+        if not isinstance(cs, int) or not isinstance(ce, int) or ce <= cs:
+            return f"cuts[{i}] has an invalid frame range"
+        if cs < prev_cut_end or ce > clip_out:
+            return f"cuts[{i}] is out of order or outside the clip bounds"
+        prev_cut_end = ce
+        kept -= ce - cs
+    if kept < 2:
+        return "cuts cannot remove the entire clip"
+
     segments = framing.get("segments")
     if not isinstance(segments, list) or not segments:
         return "segments must be a non-empty list"
-    prev_end = 0
+    prev_end = clip_in
     for i, seg in enumerate(segments):
         if not isinstance(seg, dict):
             return f"segments[{i}] must be an object"
@@ -947,6 +972,8 @@ def _validate_framing(framing: dict) -> Optional[str]:
         manual = seg.get("manualCrop")
         if manual is not None and not _crop_rect_valid(manual):
             return f"segments[{i}].manualCrop is out of bounds"
+    if prev_end != clip_out:
+        return "segments must cover the clip bounds exactly"
     if not isinstance(framing.get("faceTracks"), list):
         return "faceTracks must be a list"
     return None

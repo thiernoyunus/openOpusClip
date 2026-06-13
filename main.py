@@ -761,7 +761,8 @@ Technical Details: {str(e)}
     
     return downloaded_file, sanitized_title
 
-def process_video_to_vertical(input_video, final_output_video, framing_output_path=None):
+def process_video_to_vertical(input_video, final_output_video, framing_output_path=None,
+                              framing_source_override=None):
     """
     Core logic to convert horizontal video to vertical using scene detection and Active Speaker Tracking (MediaPipe).
 
@@ -991,8 +992,13 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
     if os.path.exists(temp_video_output): os.remove(temp_video_output)
     if os.path.exists(temp_audio_output): os.remove(temp_audio_output)
 
-    # Write framing metadata for the web editor (schema: docs/video-editor-plan.md §2)
+    # Write framing metadata for the web editor (schema v2:
+    # docs/video-editor-plan-2.md §1). The analysis above ran on the UNPADDED
+    # clip; when the kept _source.mp4 is a padded cut (framing_source_override),
+    # shift every recorded frame number by the padding offset so coordinates
+    # are in padded-source frames, and record the clip bounds for trim/extend.
     if framing_output_path:
+        offset = framing_source_override['offsetFrames'] if framing_source_override else 0
         segments_out = []
         for i, (s_f, e_f) in enumerate(scene_boundaries):
             strategy = scene_strategies[i] if i < len(scene_strategies) else 'TRACK'
@@ -1014,25 +1020,47 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
                 tracked = [max(votes, key=votes.get)] if votes else []
             segments_out.append({
                 'id': f'seg-{i}',
-                'startFrame': s_f,
-                'endFrame': e_f,
+                'startFrame': s_f + offset,
+                'endFrame': e_f + offset,
                 'layout': layout,
                 'trackedFaceIds': tracked,
-                'cameraKeyframes': segment_keyframes.get(i, []),
+                'cameraKeyframes': [
+                    {**kf, 'frame': kf['frame'] + offset}
+                    for kf in segment_keyframes.get(i, [])
+                ],
                 'manualCrop': None,
             })
+        face_tracks_out = face_recorder.to_face_tracks()
+        if offset:
+            face_tracks_out = [
+                {
+                    'id': t['id'],
+                    'samples': [{**s, 'frame': s['frame'] + offset} for s in t['samples']],
+                }
+                for t in face_tracks_out
+            ]
         framing_data = {
-            'version': 1,
+            'version': 2,
             'source': {
-                'file': os.path.basename(input_video),
+                'file': framing_source_override['file'] if framing_source_override else os.path.basename(input_video),
                 'fps': float(fps),
                 'width': original_width,
                 'height': original_height,
-                'durationFrames': total_frames,
+                'durationFrames': framing_source_override['durationFrames'] if framing_source_override else total_frames,
             },
+            'clipInFrame': offset,
+            'clipOutFrame': offset + total_frames,
+            'cuts': [],
             'segments': segments_out,
-            'faceTracks': face_recorder.to_face_tracks(),
+            'faceTracks': face_tracks_out,
         }
+        if framing_source_override:
+            # ffmpeg -ss seeking isn't frame-exact; keep bounds inside the
+            # actual padded file so the editor/validator never see overflow
+            padded_dur = framing_source_override['durationFrames']
+            framing_data['clipOutFrame'] = min(framing_data['clipOutFrame'], padded_dur)
+            if segments_out:
+                segments_out[-1]['endFrame'] = framing_data['clipOutFrame']
         with open(framing_output_path, 'w') as f:
             json.dump(framing_data, f)
         print(f"   🎯 Framing metadata saved to {framing_output_path}")
@@ -1333,13 +1361,14 @@ if __name__ == '__main__':
                 
                 # Cut clip
                 clip_filename = f"{video_title}_clip_{i+1}.mp4"
-                # 16:9 source is KEPT (not a temp file) — the web editor re-frames from it
+                # 16:9 source is KEPT with ±3s padding — the web editor re-frames
+                # from it and can trim/extend within the padding (framing v2 EDL)
+                clip_cut_path = os.path.join(output_dir, f"temp_{video_title}_clip_{i+1}.mp4")
                 clip_source_path = os.path.join(output_dir, f"{video_title}_clip_{i+1}_source.mp4")
                 clip_final_path = os.path.join(output_dir, clip_filename)
                 clip_framing_path = os.path.join(output_dir, f"{video_title}_clip_{i+1}.framing.json")
 
-                # ffmpeg cut
-                # Using re-encoding for precision as requested by strict seconds
+                # Unpadded cut: the bake input (re-encoding for frame precision)
                 cut_command = [
                     'ffmpeg', '-y',
                     '-ss', str(start),
@@ -1347,12 +1376,47 @@ if __name__ == '__main__':
                     '-i', input_video,
                     '-c:v', 'libx264', '-crf', '12', '-preset', 'ultrafast',
                     '-c:a', 'aac',
-                    clip_source_path
+                    clip_cut_path
                 ]
                 subprocess.run(cut_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
-                # Process vertical
-                success = process_video_to_vertical(clip_source_path, clip_final_path, framing_output_path=clip_framing_path)
+                # Padded cut: the editor's source (extend headroom on both sides)
+                EXTEND_PAD_SECONDS = 3.0
+                pad_start = max(0.0, start - EXTEND_PAD_SECONDS)
+                pad_end = min(duration, end + EXTEND_PAD_SECONDS)
+                padded_cut_command = [
+                    'ffmpeg', '-y',
+                    '-ss', str(pad_start),
+                    '-to', str(pad_end),
+                    '-i', input_video,
+                    '-c:v', 'libx264', '-crf', '12', '-preset', 'ultrafast',
+                    '-c:a', 'aac',
+                    clip_source_path
+                ]
+                subprocess.run(padded_cut_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+                framing_source_override = None
+                if os.path.exists(clip_source_path):
+                    src_cap = cv2.VideoCapture(clip_source_path)
+                    padded_frames = int(src_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    src_fps = src_cap.get(cv2.CAP_PROP_FPS) or 30.0
+                    src_cap.release()
+                    framing_source_override = {
+                        'file': os.path.basename(clip_source_path),
+                        'durationFrames': padded_frames,
+                        'offsetFrames': int(round((start - pad_start) * src_fps)),
+                    }
+
+                # Process vertical (bakes from the unpadded cut; framing.json is
+                # written in padded-source coordinates via the override)
+                success = process_video_to_vertical(
+                    clip_cut_path, clip_final_path,
+                    framing_output_path=clip_framing_path,
+                    framing_source_override=framing_source_override,
+                )
+
+                if os.path.exists(clip_cut_path):
+                    os.remove(clip_cut_path)
 
                 if success:
                     print(f"   ✅ Clip {i+1} ready: {clip_final_path}")

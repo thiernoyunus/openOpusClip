@@ -1,5 +1,5 @@
 import React from "react";
-import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, Sequence, useCurrentFrame, useVideoConfig } from "remotion";
 import { Video } from "@remotion/media";
 import type {
   CropRect,
@@ -8,6 +8,7 @@ import type {
   FramingConfig,
   FramingSegment,
 } from "../lib/types";
+import { placedRanges, type PlacedRange } from "../lib/edl";
 
 /**
  * Non-destructive reframing: renders a 9:16 (or any) canvas from the ORIGINAL
@@ -187,7 +188,9 @@ const CroppedVideo: React.FC<{
   srcW: number;
   srcH: number;
   muted: boolean;
-}> = ({ src, crop, panel, srcW, srcH, muted }) => {
+  trimBefore: number;
+  volume?: number;
+}> = ({ src, crop, panel, srcW, srcH, muted, trimBefore, volume = 1 }) => {
   // Scale the source so the crop region covers the panel, then offset so the
   // crop region is centered in the panel. GPU-cheap (transform only).
   const scale = Math.max(
@@ -214,6 +217,8 @@ const CroppedVideo: React.FC<{
       <Video
         src={src}
         muted={muted}
+        volume={volume}
+        trimBefore={trimBefore}
         style={{
           position: "absolute",
           left: offsetX,
@@ -234,7 +239,9 @@ const FitFrame: React.FC<{
   height: number;
   srcW: number;
   srcH: number;
-}> = ({ src, width, height, srcW, srcH }) => {
+  trimBefore: number;
+  volume?: number;
+}> = ({ src, width, height, srcW, srcH, trimBefore, volume = 1 }) => {
   const fgHeight = width * (srcH / srcW);
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
@@ -242,6 +249,7 @@ const FitFrame: React.FC<{
       <Video
         src={src}
         muted
+        trimBefore={trimBefore}
         style={{
           position: "absolute",
           left: "50%",
@@ -256,6 +264,8 @@ const FitFrame: React.FC<{
       {/* sharp full-width foreground, vertically centered */}
       <Video
         src={src}
+        volume={volume}
+        trimBefore={trimBefore}
         style={{
           position: "absolute",
           left: 0,
@@ -269,19 +279,26 @@ const FitFrame: React.FC<{
   );
 };
 
-export const ReframedVideo: React.FC<{
+/**
+ * The framing renderer for one kept EDL range. Runs inside a <Sequence>, so
+ * useCurrentFrame() is range-relative; source position = range start + offset.
+ * All Videos get trimBefore so the media engine plays the right source region.
+ */
+const RangeContent: React.FC<{
   src: string;
   framing: FramingConfig;
-}> = ({ src, framing }) => {
+  range: PlacedRange;
+  originalVolume: number;
+}> = ({ src, framing, range, originalVolume }) => {
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const { source, segments, faceTracks } = framing;
 
-  // Composition frame -> source frame (framing data is in source fps)
   const sourceFrame = Math.min(
-    Math.round(frame * (source.fps / fps)),
-    source.durationFrames - 1
+    range.startFrame + Math.round(frame * (source.fps / fps)),
+    range.endFrame - 1
   );
+  const trimBefore = Math.round((range.startFrame / source.fps) * fps);
 
   const segment =
     segments.find(
@@ -291,7 +308,9 @@ export const ReframedVideo: React.FC<{
     null;
 
   if (!segment) {
-    return <FitFrame src={src} width={width} height={height} srcW={source.width} srcH={source.height} />;
+    return (
+      <FitFrame src={src} width={width} height={height} srcW={source.width} srcH={source.height} trimBefore={trimBefore} volume={originalVolume} />
+    );
   }
 
   // Manual crop always wins, regardless of layout
@@ -305,13 +324,17 @@ export const ReframedVideo: React.FC<{
           srcW={source.width}
           srcH={source.height}
           muted={false}
+          trimBefore={trimBefore}
+          volume={originalVolume}
         />
       </AbsoluteFill>
     );
   }
 
   if (segment.layout === "fit") {
-    return <FitFrame src={src} width={width} height={height} srcW={source.width} srcH={source.height} />;
+    return (
+      <FitFrame src={src} width={width} height={height} srcW={source.width} srcH={source.height} trimBefore={trimBefore} volume={originalVolume} />
+    );
   }
 
   if (segment.layout === "fill") {
@@ -327,12 +350,14 @@ export const ReframedVideo: React.FC<{
           srcW={source.width}
           srcH={source.height}
           muted={false}
+          trimBefore={trimBefore}
+          volume={originalVolume}
         />
       </AbsoluteFill>
     );
   }
 
-  // Multi-panel layouts: split / three / four
+  // Multi-panel layouts: split / three / four / screenshare / gameplay
   const panels = panelsForLayout(segment.layout, width, height);
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
@@ -353,9 +378,40 @@ export const ReframedVideo: React.FC<{
             srcW={source.width}
             srcH={source.height}
             muted={i !== 0} // only the first panel carries audio
+            trimBefore={trimBefore}
+            volume={originalVolume}
           />
         );
       })}
+    </AbsoluteFill>
+  );
+};
+
+export const ReframedVideo: React.FC<{
+  src: string;
+  framing: FramingConfig;
+}> = ({ src, framing }) => {
+  const { fps } = useVideoConfig();
+  const ranges = placedRanges(framing, fps);
+  const originalVolume = framing.music ? framing.music.originalVolume : 1;
+
+  return (
+    <AbsoluteFill style={{ backgroundColor: "#000" }}>
+      {ranges.map((range) => (
+        <Sequence
+          key={`${range.startFrame}-${range.outStart}`}
+          from={range.outStart}
+          durationInFrames={range.outDuration}
+          premountFor={30}
+        >
+          <RangeContent
+            src={src}
+            framing={framing}
+            range={range}
+            originalVolume={originalVolume}
+          />
+        </Sequence>
+      ))}
     </AbsoluteFill>
   );
 };
