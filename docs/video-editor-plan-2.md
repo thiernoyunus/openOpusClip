@@ -129,13 +129,19 @@ Round **per range** with the same function everywhere (`Math.round(frames * fps 
 - E2E pipeline check (the real acceptance): process a 2-person YouTube video via the UI with a Gemini key.
 
 ## 4. Done so far in Part 2
-(keep this list updated as phases land)
-- [ ] E1 EDL core
-- [ ] E2 timeline trim/cuts
-- [ ] E3 transcript cuts
-- [ ] E4 transitions
-- [ ] E5 text overlays
-- [ ] E6 music/volume
-- [ ] E7 screenshare/gameplay
-- [ ] E8 b-roll
-- [ ] E9 caption default
+ALL SHIPPED on `dev` (commits 9e5bc14, ddde28f, e007534).
+- [x] E1 EDL core — framing v2, lib/edl, range-based ReframedVideo, ±3s padded source
+- [x] E2 timeline trim/cuts — trim handles, cut bands, EDL playhead/scrub
+- [x] E3 transcript cuts — select words → Cut/Restore, struck-through rendering
+- [x] E4 transitions — fade in/out + smooth-cut dips (TransitionOverlay)
+- [x] E5 text overlays — TextOverlays layer + Text tab (max 5)
+- [x] E6 music/volume — upload endpoint + Audio tab + <Audio> mix
+- [x] E7 screenshare/gameplay — content panels + FACE_PANEL_INDICES
+- [x] E8 b-roll — Pexels search tab + BrollLayer
+- [x] E9 caption default — localStorage default style
+
+### Verification notes / deviations
+- cutCrossfade is implemented as a deterministic dip-to-black at cut boundaries (not a true overlapping crossfade) — server-render safe, no double-decoding.
+- Text overlay & b-roll positions use sliders / fixed insert (no canvas drag yet) — fast follow if desired.
+- The `@remotion/media` `<Video>` trim prop is `trimBefore` (comp-fps frames); `<Audio>` supports `volume`+`loop`.
+- Still NOT done (Part 3 candidates): true brand templates (logo/fonts/asset library), AI-generated B-roll (only Pexels stock), snap editing, rearrange segments, duplicate/split clip, XML export, shared composition package to kill the dashboard/remotion duplication.
