@@ -27,6 +27,18 @@ In plain English:
 4. Open a clip in the editor if the framing, captions, or timing need work.
 5. Export or publish the final version.
 
+The biggest editing upgrade is **multi-person framing**. Older auto-cropping workflows usually pick one face, crop around that person, and bake that choice into the final video. If the wrong person is centered, or if two speakers should both be visible, you are stuck.
+
+This fork keeps the source video and framing data separate. That means you can reopen a clip and choose how it should look:
+
+- **Fill**: focus on one speaker.
+- **Fit**: show the full video with blurred space around it.
+- **Split**: stack two people in the same vertical short.
+- **Three / Four**: keep more speakers visible when the clip needs the full conversation.
+- **Screenshare / Gameplay**: keep the main content visible while still showing the speaker.
+
+So instead of AI making one permanent crop, the editor lets you decide who should be on screen.
+
 ## Screenshot Tour
 
 ### Start from a simple dashboard
@@ -53,6 +65,8 @@ The editor is the biggest difference in this fork. It lets you adjust the clip a
 
 ![Clip editor](screenshots/fork-showcase/clip-editor.png)
 
+The screenshot above shows the new layout controls. A clip can use Fill, Fit, Split, Three, Four, Screenshare, or Gameplay layouts. This is especially useful for podcasts, interviews, panels, debates, courses, and screen recordings where more than one person or thing matters.
+
 ## Original OpenShorts vs This Fork
 
 | Area | Original OpenShorts | This enhanced fork |
@@ -64,6 +78,8 @@ The editor is the biggest difference in this fork. It lets you adjust the clip a
 | Clip review | View generated clips | Review clips in a grid with logs, downloads, scheduling, and social publishing actions |
 | Editor | Mostly baked output clips | Full clip editor with timeline, transcript, layouts, captions, text, audio, b-roll, and effects |
 | Framing | Auto-framed output | Saved framing data, so you can reopen a clip and fix the shot later |
+| Multi-person clips | Usually follows one main face or uses a simple fit/fill crop | Keep two, three, or four people visible with Split, Three, and Four layouts |
+| Tracking | Crop choice is baked into the exported video | Track who matters, change the layout, and export again without reprocessing the whole video |
 | Timeline edits | Mostly automatic | Trim clip edges, split segments, and cut or restore transcript words |
 | Export | Final files are created by the pipeline | Editor exports through the render service so preview and export use the same edit data |
 | Best for | Fast AI clip generation | Vibe coders, creators, and teams who want AI speed plus manual control |
@@ -74,9 +90,10 @@ The editor is the biggest difference in this fork. It lets you adjust the clip a
 - **Recent projects**: jump back into earlier jobs without hunting through output folders.
 - **Processing logs**: open a running or completed project and see what happened.
 - **Clip editor**: adjust the clip after AI generates it.
+- **Multi-person tracking layouts**: keep one, two, three, or four speakers on screen instead of forcing one crop.
 - **Transcript editing**: select words and cut or restore parts of the clip.
 - **Timeline control**: trim, split, and review the clip visually.
-- **Layout tools**: choose how the vertical short should frame people or screen content.
+- **Layout tools**: choose Fill, Fit, Split, Three, Four, Screenshare, or Gameplay framing.
 - **Captions, text, audio, b-roll, and effects**: polish the clip before exporting.
 - **Remotion export service**: render edited clips from the same data used in preview.
 - **Social workflow**: publish or schedule clips through Upload-Post when configured.
@@ -84,6 +101,8 @@ The editor is the biggest difference in this fork. It lets you adjust the clip a
 ## Why This Matters
 
 AI can find good moments, but it does not always frame people perfectly, choose the exact cut you want, or prepare the clip the way you would before posting. This fork adds that missing control layer.
+
+This matters most when a clip has more than one important person. A one-person crop can make a podcast or panel feel broken because half the conversation disappears. The new editor can keep multiple speakers visible and lets you change that decision later.
 
 The goal is simple: **AI gets you close, then the editor lets you finish the clip.**
 
