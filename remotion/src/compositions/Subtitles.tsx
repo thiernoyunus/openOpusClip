@@ -124,7 +124,31 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   const currentTimeMs = block.startMs + (frame / fps) * 1000;
   const activeIndex = getActiveWordIndex(block.words, currentTimeMs);
 
-  const positionStyle = POSITION_MAP[position] ?? POSITION_MAP.bottom;
+  // Free-drag placement wins when both x/y are set; otherwise fall back to the
+  // top/middle/bottom preset (existing behavior, fully back-compat).
+  const freePlaced =
+    typeof config.x === "number" && typeof config.y === "number";
+  const outerStyle: React.CSSProperties = freePlaced
+    ? {
+        position: "absolute",
+        left: `${(config.x as number) * 100}%`,
+        top: `${(config.y as number) * 100}%`,
+        // A fixed width centered on the drag point so the inner block's
+        // percentage maxWidth resolves predictably and long captions wrap
+        // the same way they do in the preset layouts.
+        width: "88%",
+        transform: "translate(-50%, -50%)",
+        display: "flex",
+        justifyContent: "center",
+      }
+    : {
+        position: "absolute",
+        left: 0,
+        right: 0,
+        display: "flex",
+        justifyContent: "center",
+        ...(POSITION_MAP[position] ?? POSITION_MAP.bottom),
+      };
   const containerStyle = template.containerStyle?.(style) ?? {};
 
   // Block-level fade so captions enter/leave smoothly instead of popping.
@@ -144,14 +168,9 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   return (
     <div
       style={{
-        position: "absolute",
-        left: 0,
-        right: 0,
-        display: "flex",
-        justifyContent: "center",
+        ...outerStyle,
         opacity,
         filter: shadowFilter(style),
-        ...positionStyle,
       }}
     >
       <div

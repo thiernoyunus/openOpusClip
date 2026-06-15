@@ -43,6 +43,13 @@ export interface SubtitleConfig {
   captions: CaptionWord[];
   position: SubtitlePosition;
   style: SubtitleStyle;
+  /**
+   * Free-drag caption placement. Normalized 0..1, center-anchored, relative to
+   * the 9:16 frame. When BOTH are present they override `position`; when absent
+   * the top/middle/bottom preset is used (back-compat default).
+   */
+  x?: number;
+  y?: number;
 }
 
 // --- Hook config ---
@@ -225,6 +232,10 @@ export const subtitleConfigSchema = z.object({
   captions: z.array(captionWordSchema),
   position: z.enum(["top", "middle", "bottom"]),
   style: subtitleStyleSchema,
+  // Free-drag placement (normalized, center-anchored). Optional → existing
+  // configs without x/y still validate and fall back to `position`.
+  x: z.number().min(0).max(1).optional(),
+  y: z.number().min(0).max(1).optional(),
 });
 
 export const hookConfigSchema = z.object({

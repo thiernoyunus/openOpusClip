@@ -166,8 +166,17 @@ function CaptionsPanel({ framing, captions, dispatch }) {
             subtitles: { ...subs, style: { ...subs.style, ...patch } },
         });
 
-    const setPosition = (pos) =>
-        dispatch({ type: 'SET_SUBTITLES', subtitles: { ...subs, position: pos } });
+    // Choosing a preset clears any free-drag x/y so presets and drag stay
+    // mutually exclusive (preset wins when chosen; dragging on the canvas sets
+    // a custom position that overrides the preset).
+    const setPosition = (pos) => {
+        const next = { ...subs, position: pos };
+        delete next.x;
+        delete next.y;
+        dispatch({ type: 'SET_SUBTITLES', subtitles: next });
+    };
+
+    const customPlaced = subs && typeof subs.x === 'number' && typeof subs.y === 'number';
 
     const applyTemplate = (tpl) =>
         dispatch({
@@ -342,9 +351,14 @@ function CaptionsPanel({ framing, captions, dispatch }) {
                         <span className="block text-[11px] text-muted mb-1.5">Position</span>
                         <Seg
                             options={POSITIONS.map((p) => ({ value: p, label: p }))}
-                            value={subs.position}
+                            value={customPlaced ? null : subs.position}
                             onChange={setPosition}
                         />
+                        <p className="text-[10px] text-zinc-500 mt-1.5">
+                            {customPlaced
+                                ? 'Custom position set — pick a preset to reset.'
+                                : 'Or drag the caption on the canvas to position it.'}
+                        </p>
                     </div>
 
                     {SaveDefaultButton}
@@ -432,9 +446,14 @@ function CaptionsPanel({ framing, captions, dispatch }) {
                         <span className="block text-[11px] text-muted mb-1.5">Position</span>
                         <Seg
                             options={POSITIONS.map((p) => ({ value: p, label: p }))}
-                            value={subs.position}
+                            value={customPlaced ? null : subs.position}
                             onChange={setPosition}
                         />
+                        <p className="text-[10px] text-zinc-500 mt-1.5">
+                            {customPlaced
+                                ? 'Custom position set — pick a preset to reset.'
+                                : 'Or drag the caption on the canvas to position it.'}
+                        </p>
                     </div>
 
                     {/* Quick size */}

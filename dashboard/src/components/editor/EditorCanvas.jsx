@@ -2,6 +2,7 @@ import React, { forwardRef, useMemo } from 'react';
 import { Player } from '@remotion/player';
 import { ShortVideo } from '../../remotion/compositions/ShortVideo';
 import TrackerOverlay from './TrackerOverlay';
+import CaptionDragOverlay from './CaptionDragOverlay';
 
 export const EDITOR_FPS = 30;
 
@@ -54,6 +55,11 @@ const EditorCanvas = forwardRef(function EditorCanvas(
             />
             {trackerOn && (
                 <TrackerOverlay playerRef={playerRef} framing={framing} dispatch={dispatch} />
+            )}
+            {/* Drag-to-reposition handle for captions. Only the handle itself
+                captures pointer events, so it coexists with the tracker layer. */}
+            {subtitles && (
+                <CaptionDragOverlay subtitles={subtitles} dispatch={dispatch} />
             )}
         </div>
     );
