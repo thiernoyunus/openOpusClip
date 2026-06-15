@@ -504,6 +504,62 @@ const PillKaraokeWord: React.FC<WordRenderArgs> = ({ word, isActive, isPast, sty
   return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 700, textTransform: "lowercase", color: spoken ? style.highlightColor || "#1C1E1D" : style.fontColor || "#A6A6A6", display: "inline-block" }}>{word}</span>;
 };
 
+// --- trending viral styles (TikTok/Reels/Shorts 2026) -----------------------
+
+// hormozi — Montserrat Black all-caps, thick outline, spoken word pops in color
+const HormoziWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+  const t = frame - wordStartFrame;
+  const s = isActive ? spring({ frame: t, fps, config: { mass: 0.5, stiffness: 200, damping: 11 }, durationInFrames: 9 }) : 0;
+  const scale = isActive ? interpolate(s, [0, 1], [1, 1.16]) : 1;
+  const rot = isActive ? interpolate(s, [0, 1], [-5, 0]) : 0;
+  const stroke = strokeShadow(style);
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 900, textTransform: "uppercase", letterSpacing: "-0.01em", display: "inline-block", transform: `scale(${scale}) rotate(${rot}deg)`, color: isActive ? style.highlightColor : style.fontColor, textShadow: stroke || "0 4px 14px rgba(0,0,0,0.6)" }}>{word}</span>;
+};
+
+// tiktok-bounce — each word bounces into place as it's spoken (TikTok native)
+const TikTokBounceWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
+  const t = frame - wordStartFrame;
+  const shown = t >= 0;
+  const p = shown ? spring({ frame: t, fps, config: { mass: 0.4, stiffness: 220, damping: 10 }, durationInFrames: 12 }) : 0;
+  const scale = shown ? interpolate(p, [0, 1], [0.3, 1]) : 0;
+  const stroke = strokeShadow(style);
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 800, textTransform: uppercase ? "uppercase" : "none", display: "inline-block", opacity: shown ? 1 : 0, transform: `scale(${scale})`, color: isActive ? style.highlightColor : style.fontColor, textShadow: stroke || "0 3px 10px rgba(0,0,0,0.5)" }}>{word}</span>;
+};
+
+// typewriter — characters type out per word with a blinking cursor
+const TypewriterWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, wordEndFrame, style, fontStack }) => {
+  const t = frame - wordStartFrame;
+  if (t < 0) return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 700, opacity: 0, display: "inline-block" }}>{word}</span>;
+  const dur = Math.max(1, wordEndFrame - wordStartFrame);
+  const shown = Math.min(word.length, Math.floor((t / dur) * word.length) + 1);
+  const blink = Math.floor(frame / Math.max(1, Math.round(0.4 * fps))) % 2 === 0;
+  return (
+    <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 700, display: "inline-block", color: isActive ? style.highlightColor : style.fontColor, textShadow: "0 3px 10px rgba(0,0,0,0.5)" }}>
+      {word.slice(0, shown)}
+      {isActive ? <span style={{ opacity: blink ? 1 : 0.15, fontWeight: 400 }}>|</span> : null}
+    </span>
+  );
+};
+
+// mrbeast — chunky rounded type, big bouncy pop, vibrant per-word color + wiggle
+const MRBEAST_PALETTE = ["#FFE000", "#00E676", "#FF1744", "#2979FF", "#FF6D00", "#D500F9"];
+const MrBeastWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, seed }) => {
+  const t = frame - wordStartFrame;
+  const s = isActive ? spring({ frame: t, fps, config: { mass: 0.45, stiffness: 240, damping: 9 }, durationInFrames: 9 }) : 0;
+  const scale = isActive ? interpolate(s, [0, 1], [1, 1.22]) : 1;
+  const wiggle = isActive ? Math.sin((t / fps) * 22) * 2 : 0;
+  const stroke = strokeShadow(style);
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 900, textTransform: "uppercase", display: "inline-block", transform: `scale(${scale}) rotate(${wiggle.toFixed(2)}deg)`, color: isActive ? MRBEAST_PALETTE[seed % MRBEAST_PALETTE.length] : style.fontColor, textShadow: stroke || "0 4px 14px rgba(0,0,0,0.6)" }}>{word}</span>;
+};
+
+// dynamic-minimal — the 2026 "minimalism" meta: clean, no outline, subtle emphasis
+const MinimalWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+  const t = frame - wordStartFrame;
+  const s = isActive ? spring({ frame: t, fps, config: { mass: 0.5, stiffness: 200, damping: 14 }, durationInFrames: 8 }) : 0;
+  const scale = isActive ? interpolate(s, [0, 1], [1, 1.06]) : 1;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: isActive ? 800 : 600, display: "inline-block", transform: `scale(${scale})`, color: isActive ? style.highlightColor : style.fontColor, textShadow: "0 2px 8px rgba(0,0,0,0.45)" }}>{word}</span>;
+};
+
 // --- registry ---------------------------------------------------------------
 
 export const CAPTION_TEMPLATES: CaptionTemplate[] = [
@@ -517,6 +573,53 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     bgOpacity: 0.65,
   }),
   classicTemplate("classic-clean", "Clean", "none"),
+  {
+    id: "hormozi",
+    label: "Hormozi",
+    category: "effects",
+    font: "Montserrat",
+    uppercase: true,
+    grouping: { maxWords: 4, maxChars: 22 },
+    defaultStyle: { template: "hormozi", animation: "none", fontFamily: "Montserrat", fontSize: 74, fontColor: "#FFFFFF", highlightColor: "#FFE000", borderColor: "#000000", borderWidth: 7, bgColor: "#000000", bgOpacity: 0 },
+    renderWord: (args) => <HormoziWord {...args} />,
+  },
+  {
+    id: "tiktok-bounce",
+    label: "TikTok Bounce",
+    category: "effects",
+    font: "Inter",
+    grouping: { maxWords: 4, maxChars: 24 },
+    defaultStyle: { template: "tiktok-bounce", animation: "none", fontFamily: "Inter", fontSize: 64, fontColor: "#FFFFFF", highlightColor: "#3DD68C", borderColor: "#000000", borderWidth: 4, bgColor: "#000000", bgOpacity: 0 },
+    renderWord: (args) => <TikTokBounceWord {...args} />,
+  },
+  {
+    id: "typewriter",
+    label: "Typewriter",
+    category: "effects",
+    font: "Inter",
+    grouping: { maxWords: 5, maxChars: 28 },
+    defaultStyle: { template: "typewriter", animation: "none", fontFamily: "Inter", fontSize: 58, fontColor: "#FFFFFF", highlightColor: "#FFE000", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    renderWord: (args) => <TypewriterWord {...args} />,
+  },
+  {
+    id: "mrbeast",
+    label: "MrBeast",
+    category: "effects",
+    font: "Gabarito",
+    uppercase: true,
+    grouping: { maxWords: 3, maxChars: 20 },
+    defaultStyle: { template: "mrbeast", animation: "none", fontFamily: "Gabarito", fontSize: 74, fontColor: "#FFFFFF", highlightColor: "#FFE000", borderColor: "#000000", borderWidth: 7, bgColor: "#000000", bgOpacity: 0 },
+    renderWord: (args) => <MrBeastWord {...args} />,
+  },
+  {
+    id: "dynamic-minimal",
+    label: "Minimal",
+    category: "effects",
+    font: "Inter",
+    grouping: { maxWords: 5, maxChars: 30 },
+    defaultStyle: { template: "dynamic-minimal", animation: "none", fontFamily: "Inter", fontSize: 60, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    renderWord: (args) => <MinimalWord {...args} />,
+  },
   {
     id: "glitch-rgb",
     label: "Glitch RGB",
