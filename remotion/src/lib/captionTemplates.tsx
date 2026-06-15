@@ -222,9 +222,11 @@ const GlitchWord: React.FC<WordRenderArgs> = ({
 const GLYPHS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
 
 function scramble(word: string, seed: number, frame: number, revealCount: number): string {
+  // Split by code point so emojis / surrogate pairs aren't sliced in half.
+  const chars = Array.from(word);
   let out = "";
-  for (let i = 0; i < word.length; i++) {
-    const ch = word[i];
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
     if (ch === " ") {
       out += " ";
     } else if (i < revealCount) {
@@ -658,11 +660,13 @@ const TypewriterWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, 
   const t = frame - wordStartFrame;
   if (t < 0) return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 700, opacity: 0, display: "inline-block" }}>{word}</span>;
   const dur = Math.max(1, wordEndFrame - wordStartFrame);
-  const shown = Math.min(word.length, Math.floor((t / dur) * word.length) + 1);
+  // Split by code point so emojis / surrogate pairs aren't sliced in half.
+  const chars = Array.from(word);
+  const shown = Math.min(chars.length, Math.floor((t / dur) * chars.length) + 1);
   const blink = Math.floor(frame / Math.max(1, Math.round(0.4 * fps))) % 2 === 0;
   return (
     <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 700, display: "inline-block", color: isActive ? style.highlightColor : style.fontColor, textShadow: "0 3px 10px rgba(0,0,0,0.5)" }}>
-      {word.slice(0, shown)}
+      {chars.slice(0, shown).join("")}
       {isActive ? <span style={{ opacity: blink ? 1 : 0.15, fontWeight: 400 }}>|</span> : null}
     </span>
   );
