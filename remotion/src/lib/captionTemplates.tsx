@@ -504,6 +504,122 @@ const PillKaraokeWord: React.FC<WordRenderArgs> = ({ word, isActive, isPast, sty
   return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 700, textTransform: "lowercase", color: spoken ? style.highlightColor || "#1C1E1D" : style.fontColor || "#A6A6A6", display: "inline-block" }}>{word}</span>;
 };
 
+// --- premium "After Effects" styles (hand-animated look) ---------------------
+
+/** Multiply a #rrggbb color toward black by `factor` (0..1). */
+function darken(color: string, factor: number): string {
+  if (!/^#[0-9a-fA-F]{6}$/.test(color)) return color;
+  const ch = (i: number) =>
+    Math.max(0, Math.min(255, Math.round(parseInt(color.slice(i, i + 2), 16) * factor)))
+      .toString(16)
+      .padStart(2, "0");
+  return `#${ch(1)}${ch(3)}${ch(5)}`;
+}
+
+// glossy-gradient — Devin Jatho signature: soft glassy gradient that floats + glows
+const GlossyGradientWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+  const t = frame - wordStartFrame;
+  const float = Math.sin(frame / fps * 1.6 + wordStartFrame) * 3;
+  const intro = interpolate(t, [0, Math.round(0.3 * fps)], [12, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
+  const grad = isActive ? "linear-gradient(180deg,#FFFFFF 0%,#EAF2FF 100%)" : "linear-gradient(180deg,#FFFFFF 0%,#BFD9FF 100%)";
+  const glow = isActive ? 0.9 : 0.4;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 800, textTransform: "uppercase", letterSpacing: "-0.02em", display: "inline-block", transform: `translateY(${(float + intro).toFixed(2)}px) scale(${isActive ? 1.05 : 1})`, opacity: isActive ? 1 : 0.72, backgroundImage: grad, WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent", color: "transparent", filter: `drop-shadow(0 0 8px rgba(190,217,255,${glow})) drop-shadow(0 4px 18px rgba(120,160,255,${glow * 0.5}))` }}>{word}</span>;
+};
+
+// extrude-3d — hard isometric 3D block that punches toward camera
+const Extrude3DWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+  const t = frame - wordStartFrame;
+  let scale = 1, depth = 5, lift = 0;
+  if (isActive) {
+    const s = spring({ frame: t, fps, config: { mass: 0.6, stiffness: 260, damping: 11 }, durationInFrames: 11 });
+    scale = interpolate(s, [0, 1], [0.6, 1]);
+    depth = Math.max(0, interpolate(s, [0, 1], [0, 8]));
+    lift = interpolate(s, [0, 1], [6, 0]);
+  }
+  const color = isActive ? style.highlightColor : style.fontColor;
+  const ex = darken(color, 0.5);
+  const layers: string[] = [];
+  for (let i = 1; i <= Math.round(depth); i++) layers.push(`${i}px ${i}px 0 ${ex}`);
+  const ts = [...layers, strokeShadow(style)].filter(Boolean).join(", ") || "none";
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 400, textTransform: "uppercase", letterSpacing: "0.01em", display: "inline-block", transform: `translateY(${lift.toFixed(2)}px) scale(${scale.toFixed(3)})`, color, textShadow: ts }}>{word}</span>;
+};
+
+// flip-3d — each word hinges down into place on the X axis (perspective)
+const Flip3DWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+  const t = frame - wordStartFrame;
+  const p = t < 0 ? 0 : spring({ frame: t, fps, config: { mass: 0.5, stiffness: 170, damping: 14 }, durationInFrames: 12 });
+  const rotX = interpolate(p, [0, 1], [-92, 0]);
+  const opacity = t < 0 ? 0 : interpolate(t, [0, 3], [0, 1], { extrapolateRight: "clamp" });
+  const b = interpolate(p, [0, 1], [0.4, 1]);
+  return (
+    <span style={{ perspective: "620px", display: "inline-block" }}>
+      <span style={{ display: "inline-block", fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 800, textTransform: "uppercase", transform: `rotateX(${rotX.toFixed(1)}deg)`, transformOrigin: "center top", filter: `brightness(${b.toFixed(2)})`, opacity, color: isActive ? style.highlightColor : style.fontColor, textShadow: strokeShadow(style) || "0 3px 10px rgba(0,0,0,0.5)" }}>{word}</span>
+    </span>
+  );
+};
+
+// whip-blur — word streaks in from the side with directional motion-blur ghosts
+const WhipBlurWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, seed, uppercase }) => {
+  const t = frame - wordStartFrame;
+  if (t < 0) return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, opacity: 0, display: "inline-block" }}>{word}</span>;
+  const dir = seed % 2 ? 1 : -1;
+  const e = interpolate(t, [0, Math.max(1, Math.round(0.23 * fps))], [0, 1], { extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
+  const x = interpolate(e, [0, 1], [dir * 120, 0]);
+  const color = isActive ? style.highlightColor : style.fontColor;
+  const tt: React.CSSProperties["textTransform"] = uppercase ? "uppercase" : "none";
+  return (
+    <span style={{ position: "relative", display: "inline-block", transform: `translateX(${x.toFixed(1)}px) scaleX(${(1 + (1 - e) * 0.18).toFixed(3)})`, transformOrigin: dir > 0 ? "left center" : "right center" }}>
+      {e < 1 && [1, 2, 3].map((k) => (
+        <span key={k} style={{ position: "absolute", left: 0, top: 0, fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 800, textTransform: tt, color, opacity: (1 - e) * (0.35 / k), filter: `blur(${((1 - e) * 4).toFixed(1)}px)`, transform: `translateX(${(dir * 14 * k).toFixed(0)}px)`, pointerEvents: "none" }}>{word}</span>
+      ))}
+      <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 800, textTransform: tt, color, textShadow: strokeShadow(style) || "0 3px 10px rgba(0,0,0,0.5)", display: "inline-block" }}>{word}</span>
+    </span>
+  );
+};
+
+// zoom-rush — word rushes from oversize+blurred to crisp with chromatic fringe
+const ZoomRushWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+  const t = frame - wordStartFrame;
+  if (t < 0) return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, opacity: 0, display: "inline-block" }}>{word}</span>;
+  const e = interpolate(t, [0, Math.max(1, Math.round(0.2 * fps))], [0, 1], { extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
+  const scale = interpolate(e, [0, 1], [1.9, 1]) * (isActive ? 1.06 : 1);
+  const blurPx = interpolate(e, [0, 1], [10, 0]);
+  const split = (1 - e) * 8;
+  const color = isActive ? style.highlightColor : style.fontColor;
+  const frontFilter = isActive ? `blur(${blurPx.toFixed(1)}px) drop-shadow(0 0 10px ${color})` : `blur(${blurPx.toFixed(1)}px)`;
+  return (
+    <span style={{ position: "relative", display: "inline-block", transform: `scale(${scale.toFixed(3)})` }}>
+      {e < 1 && (
+        <>
+          <span style={{ position: "absolute", left: 0, top: 0, fontFamily: fontStack, fontWeight: 400, fontSize: style.fontSize, textTransform: "uppercase", color: "#FF0044", mixBlendMode: "screen", transform: `translateX(${(-split).toFixed(1)}px)` }}>{word}</span>
+          <span style={{ position: "absolute", left: 0, top: 0, fontFamily: fontStack, fontWeight: 400, fontSize: style.fontSize, textTransform: "uppercase", color: "#00E5FF", mixBlendMode: "screen", transform: `translateX(${split.toFixed(1)}px)` }}>{word}</span>
+        </>
+      )}
+      <span style={{ fontFamily: fontStack, fontWeight: 400, fontSize: style.fontSize, textTransform: "uppercase", color, filter: frontFilter, textShadow: strokeShadow(style) || "0 3px 10px rgba(0,0,0,0.5)", display: "inline-block" }}>{word}</span>
+    </span>
+  );
+};
+
+// squash-pop — liquid squash & stretch cartoon physics on entry
+const SquashPopWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+  const t = frame - wordStartFrame;
+  const s = t < 0 ? 0 : spring({ frame: t, fps, config: { mass: 0.45, stiffness: 240, damping: 9 }, durationInFrames: 14 });
+  const scaleY = interpolate(s, [0, 0.5, 1], [1.35, 0.82, 1]) + (isActive ? Math.sin(t / 3) * 0.02 : 0);
+  const scaleX = interpolate(s, [0, 0.5, 1], [0.7, 1.18, 1]);
+  const opacity = t < 0 ? 0 : interpolate(t, [0, 2], [0, 1], { extrapolateRight: "clamp" });
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 800, display: "inline-block", transformOrigin: "center bottom", transform: `scale(${scaleX.toFixed(3)}, ${scaleY.toFixed(3)})`, opacity, color: isActive ? style.highlightColor : style.fontColor, textShadow: strokeShadow(style) || "0 3px 10px rgba(0,0,0,0.5)" }}>{word}</span>;
+};
+
+// chrome-shine — metallic gradient with a specular highlight that sweeps across
+const ChromeShineWord: React.FC<WordRenderArgs> = ({ word, frame, fps, wordStartFrame, style, fontStack }) => {
+  const t = frame - wordStartFrame;
+  const intro = t < 0 ? 0 : spring({ frame: t, fps, config: { mass: 0.5, stiffness: 200, damping: 12 }, durationInFrames: 9 });
+  const y = interpolate(intro, [0, 1], [-24, 0]);
+  const sc = interpolate(intro, [0, 1], [1.08, 1]);
+  const pos = interpolate(t, [0, Math.max(1, Math.round(0.6 * fps))], [-120, 220], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 400, textTransform: "uppercase", display: "inline-block", transform: `translateY(${y.toFixed(1)}px) scale(${sc.toFixed(3)})`, opacity: t < 0 ? 0 : 1, backgroundImage: "linear-gradient(110deg,#7a7a7a 0%,#ffffff 42%,#e9e9e9 50%,#8f8f8f 58%,#ffffff 100%)", backgroundSize: "250% 100%", backgroundPosition: `${pos.toFixed(0)}% 0`, WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent", color: "transparent", WebkitTextStroke: `${Math.max(1, style.borderWidth || 2)}px ${style.borderColor || "#111111"}`, filter: "drop-shadow(0 3px 6px rgba(0,0,0,0.5))" }}>{word}</span>;
+};
+
 // --- trending viral styles (TikTok/Reels/Shorts 2026) -----------------------
 
 // hormozi — Montserrat Black all-caps, thick outline, spoken word pops in color
@@ -619,6 +735,74 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     grouping: { maxWords: 5, maxChars: 30 },
     defaultStyle: { template: "dynamic-minimal", animation: "none", fontFamily: "Inter", fontSize: 60, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <MinimalWord {...args} />,
+  },
+  {
+    id: "glossy-gradient",
+    label: "Glossy",
+    category: "effects",
+    font: "Montserrat",
+    uppercase: true,
+    grouping: { maxWords: 3, maxChars: 20 },
+    defaultStyle: { template: "glossy-gradient", animation: "none", fontFamily: "Montserrat", fontSize: 78, fontColor: "#FFFFFF", highlightColor: "#EAF2FF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    renderWord: (args) => <GlossyGradientWord {...args} />,
+  },
+  {
+    id: "extrude-3d",
+    label: "3D Extrude",
+    category: "effects",
+    font: "Anton",
+    uppercase: true,
+    grouping: { maxWords: 3, maxChars: 18 },
+    defaultStyle: { template: "extrude-3d", animation: "none", fontFamily: "Anton", fontSize: 84, fontColor: "#FFFFFF", highlightColor: "#FFE45C", borderColor: "#141414", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
+    renderWord: (args) => <Extrude3DWord {...args} />,
+  },
+  {
+    id: "flip-3d",
+    label: "3D Flip",
+    category: "effects",
+    font: "Montserrat",
+    uppercase: true,
+    grouping: { maxWords: 3, maxChars: 20 },
+    defaultStyle: { template: "flip-3d", animation: "none", fontFamily: "Montserrat", fontSize: 70, fontColor: "#F2F2F2", highlightColor: "#3DDC97", borderColor: "#0E0E0E", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
+    renderWord: (args) => <Flip3DWord {...args} />,
+  },
+  {
+    id: "whip-blur",
+    label: "Whip Blur",
+    category: "effects",
+    font: "Outfit",
+    grouping: { maxWords: 4, maxChars: 22 },
+    defaultStyle: { template: "whip-blur", animation: "none", fontFamily: "Outfit", fontSize: 66, fontColor: "#FFFFFF", highlightColor: "#FF4D6D", borderColor: "#111111", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
+    renderWord: (args) => <WhipBlurWord {...args} />,
+  },
+  {
+    id: "zoom-rush",
+    label: "Zoom Rush",
+    category: "effects",
+    font: "Anton",
+    uppercase: true,
+    grouping: { maxWords: 3, maxChars: 18 },
+    defaultStyle: { template: "zoom-rush", animation: "none", fontFamily: "Anton", fontSize: 84, fontColor: "#FFFFFF", highlightColor: "#00E0FF", borderColor: "#0A0A0A", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
+    renderWord: (args) => <ZoomRushWord {...args} />,
+  },
+  {
+    id: "squash-pop",
+    label: "Squash Pop",
+    category: "effects",
+    font: "Gabarito",
+    grouping: { maxWords: 3, maxChars: 20 },
+    defaultStyle: { template: "squash-pop", animation: "none", fontFamily: "Gabarito", fontSize: 70, fontColor: "#FFFFFF", highlightColor: "#FFD23F", borderColor: "#1B1B1B", borderWidth: 3, bgColor: "#000000", bgOpacity: 0 },
+    renderWord: (args) => <SquashPopWord {...args} />,
+  },
+  {
+    id: "chrome-shine",
+    label: "Chrome",
+    category: "effects",
+    font: "Anton",
+    uppercase: true,
+    grouping: { maxWords: 3, maxChars: 18 },
+    defaultStyle: { template: "chrome-shine", animation: "none", fontFamily: "Anton", fontSize: 84, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#111111", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
+    renderWord: (args) => <ChromeShineWord {...args} />,
   },
   {
     id: "glitch-rgb",
