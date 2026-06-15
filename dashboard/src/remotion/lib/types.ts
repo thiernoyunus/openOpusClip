@@ -5,6 +5,18 @@ export interface CaptionWord {
   text: string;
   startMs: number;
   endMs: number;
+  /**
+   * Optional emoji attached to this word (AI-inserted or manual). Rendered
+   * right after the word text inside the same animated span. Optional →
+   * existing caption data is unaffected (back-compat).
+   */
+  emoji?: string;
+  /**
+   * When true, this word is a highlighted keyword and gets the active-word
+   * highlight treatment even when it isn't the word currently being spoken.
+   * Optional → existing caption data is unaffected (back-compat).
+   */
+  highlight?: boolean;
 }
 
 // --- Subtitle config ---
@@ -215,6 +227,8 @@ export const captionWordSchema = z.object({
   text: z.string(),
   startMs: z.number(),
   endMs: z.number(),
+  emoji: z.string().optional(),
+  highlight: z.boolean().optional(),
 });
 
 export const subtitleStyleSchema = z.object({

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Type, Bookmark, Check, Sparkles, Pencil, ArrowLeft } from 'lucide-react';
+import { Type, Bookmark, Check, Sparkles, Pencil, ArrowLeft, Wand2, Eraser, Loader2 } from 'lucide-react';
 import { defaultSubtitleConfig, saveDefaultCaptionStyle } from './useEditorState';
 import { CAPTION_TEMPLATES, resolveTemplateId, getCaptionTemplate } from '../../remotion/lib/captionTemplates';
 import { SUBTITLE_FONTS } from '../../remotion/lib/fonts';
+import { getApiUrl } from '../../config';
 
 const POSITIONS = ['top', 'middle', 'bottom'];
 const HIGHLIGHTS = ['#FFDD00', '#3dd68c', '#FF5C5C', '#5CA8FF', '#00E5FF', '#FFD700', '#FFFFFF'];
@@ -159,6 +160,8 @@ function CaptionsPanel({ framing, captions, dispatch }) {
     const subs = framing.subtitles || null;
     const [savedDefault, setSavedDefault] = useState(false);
     const [customizing, setCustomizing] = useState(false);
+    const [enhancing, setEnhancing] = useState(false);
+    const [enhanceError, setEnhanceError] = useState(null);
 
     const setStyle = (patch) =>
         dispatch({
@@ -183,6 +186,69 @@ function CaptionsPanel({ framing, captions, dispatch }) {
             type: 'SET_SUBTITLES',
             subtitles: { ...subs, style: { ...subs.style, ...tpl.defaultStyle } },
         });
+
+    // AI pass: ask the backend for contextual emojis + keyword highlights and
+    // merge them into the active subtitle captions by index. If captions aren't
+    // enabled yet we enable them first (same default config as the toggle/
+    // EditorView.handleEditWord path) so the AI result has somewhere to land.
+    const enhanceWithAI = async () => {
+        const base = subs || defaultSubtitleConfig(captions);
+        const words = base.captions;
+        if (!words || words.length === 0) {
+            setEnhanceError('No caption words to enhance.');
+            return;
+        }
+        const apiKey = localStorage.getItem('gemini_key');
+        if (!apiKey) {
+            setEnhanceError('Set your Gemini API key in Settings to use AI enhancements.');
+            return;
+        }
+        setEnhancing(true);
+        setEnhanceError(null);
+        try {
+            const res = await fetch(getApiUrl('/api/captions/enhance'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': apiKey },
+                body: JSON.stringify({ words: words.map((w) => w.text) }),
+            });
+            if (!res.ok) {
+                const txt = await res.text();
+                let detail = txt;
+                try { detail = JSON.parse(txt).detail || txt; } catch { /* keep raw */ }
+                throw new Error(detail || `Request failed (${res.status})`);
+            }
+            const data = await res.json();
+            const emojis = data.emojis || {};
+            const highlights = new Set((data.highlights || []).map(Number));
+            const merged = words.map((w, i) => {
+                const next = { ...w };
+                const emoji = emojis[String(i)] ?? emojis[i];
+                if (emoji) next.emoji = emoji;
+                if (highlights.has(i)) next.highlight = true;
+                return next;
+            });
+            dispatch({ type: 'SET_SUBTITLES', subtitles: { ...base, captions: merged } });
+        } catch (e) {
+            setEnhanceError(e.message || 'AI enhancement failed. Try again.');
+        } finally {
+            setEnhancing(false);
+        }
+    };
+
+    // Strip every AI/manual emoji + highlight so the user can undo the AI pass
+    // without relying on Ctrl+Z.
+    const clearEnhancements = () => {
+        if (!subs) return;
+        const cleaned = subs.captions.map((w) => {
+            const { emoji, highlight, ...rest } = w; // eslint-disable-line no-unused-vars
+            return rest;
+        });
+        dispatch({ type: 'SET_SUBTITLES', subtitles: { ...subs, captions: cleaned } });
+        setEnhanceError(null);
+    };
+
+    const hasEnhancements =
+        !!subs && subs.captions.some((w) => w.emoji || w.highlight);
 
     const currentId = subs ? resolveTemplateId(subs.style) : null;
     const currentTpl = subs ? getCaptionTemplate(currentId) : null;
@@ -440,6 +506,34 @@ function CaptionsPanel({ framing, captions, dispatch }) {
                         <Pencil size={13} />
                         Customize {currentTpl?.label}
                     </button>
+
+                    {/* AI emoji & keyword highlights */}
+                    <div>
+                        <span className="block text-[11px] text-muted mb-1.5">AI enhance</span>
+                        <button
+                            onClick={enhanceWithAI}
+                            disabled={enhancing}
+                            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-viral/40 bg-viral/15 text-fg text-[11px] font-medium hover:bg-viral/25 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                            {enhancing ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />}
+                            {enhancing ? 'Enhancing…' : 'AI Emoji & Keywords'}
+                        </button>
+                        {hasEnhancements && !enhancing && (
+                            <button
+                                onClick={clearEnhancements}
+                                className="mt-1.5 w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-edge bg-surface2/50 text-muted text-[11px] hover:bg-white/5 transition-colors"
+                            >
+                                <Eraser size={12} />
+                                Clear emojis/highlights
+                            </button>
+                        )}
+                        {enhanceError && (
+                            <p className="text-[10px] text-red-400 mt-1.5">{enhanceError}</p>
+                        )}
+                        <p className="text-[10px] text-zinc-500 mt-1.5">
+                            Auto-inserts fitting emojis and highlights key words.
+                        </p>
+                    </div>
 
                     {/* Quick position */}
                     <div>

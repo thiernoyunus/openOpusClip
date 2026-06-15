@@ -245,6 +245,127 @@ class VideoEditor:
             print(f"❌ Failed to parse effects config JSON: {response.text}")
             return None
 
+    def get_caption_enhancements(self, words: list[str]) -> dict:
+        """
+        Text-only Gemini call: given the ordered list of caption words, pick a
+        SMALL set of contextually fitting emojis to attach to specific word
+        indices, and the keyword word indices worth highlighting.
+
+        Returns {"emojis": {index: "🔥", ...}, "highlights": [index, ...]}.
+        Robust to malformed responses — returns empty enhancements on any error.
+        """
+        empty = {"emojis": {}, "highlights": []}
+        if not words:
+            return empty
+
+        # Number the words so the model can reference them by index precisely.
+        numbered = "\n".join(f"{i}: {w}" for i, w in enumerate(words))
+        total = len(words)
+        # Budgets scale with length but stay sparse (OpusClip-style restraint).
+        max_emojis = max(1, min(8, round(total / 12)))
+        max_highlights = max(1, min(12, round(total / 6)))
+
+        prompt = f"""You are a social-video caption editor. You are given the ordered words of a short-form video caption track, one per line as "INDEX: WORD".
+
+WORDS ({total} total):
+{numbered}
+
+Do TWO things, sparingly and tastefully:
+1. EMOJIS: Attach a single fitting emoji to a FEW high-impact words (nouns, actions, or emotional beats). Use at most {max_emojis} emojis total. Do NOT emoji every word — most words get none. Pick the emoji that best matches the word's meaning in context.
+2. HIGHLIGHTS: Choose the KEYWORD word indices worth visually highlighting — the words a viewer should remember (power words, numbers, names, key claims). Use at most {max_highlights} highlights total. Be selective.
+
+Rules:
+- Reference words ONLY by their integer index shown above (0-based).
+- An index may appear in both emojis and highlights.
+- Emojis must be a single emoji character (no text).
+- If nothing fits, return empty objects/arrays — that is fine.
+
+Return ONLY JSON of this exact shape:
+{{
+  "emojis": {{ "3": "🔥", "10": "🚀" }},
+  "highlights": [3, 7, 10]
+}}"""
+
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=[prompt],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema={
+                        "type": "object",
+                        "properties": {
+                            "emojis": {
+                                "type": "object",
+                                # word index (as string) -> emoji
+                                "additionalProperties": {"type": "string"},
+                            },
+                            "highlights": {
+                                "type": "array",
+                                "items": {"type": "integer"},
+                            },
+                        },
+                        "required": ["emojis", "highlights"],
+                    },
+                ),
+            )
+        except Exception as e:
+            print(f"❌ Caption enhancement request failed: {e}")
+            return empty
+
+        text = response.text if response and getattr(response, "text", None) else ""
+        if not text:
+            return empty
+
+        # Defensive cleanup: strip markdown fences / trailing junk, then parse.
+        try:
+            if text.startswith("```json"):
+                text = text[7:]
+            elif text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+            start_idx = text.find("{")
+            end_idx = text.rfind("}")
+            if start_idx != -1 and end_idx != -1:
+                text = text[start_idx:end_idx + 1]
+            data = json.loads(text)
+        except (json.JSONDecodeError, TypeError) as e:
+            print(f"❌ Failed to parse caption enhancements JSON: {e}")
+            return empty
+
+        if not isinstance(data, dict):
+            return empty
+
+        # Normalize and clamp to valid in-range indices so the frontend can
+        # merge by index without extra validation.
+        raw_emojis = data.get("emojis") or {}
+        emojis: dict[str, str] = {}
+        if isinstance(raw_emojis, dict):
+            for k, v in raw_emojis.items():
+                try:
+                    idx = int(k)
+                except (ValueError, TypeError):
+                    continue
+                if 0 <= idx < total and isinstance(v, str) and v.strip():
+                    emojis[str(idx)] = v.strip()
+
+        raw_highlights = data.get("highlights") or []
+        highlights: list[int] = []
+        if isinstance(raw_highlights, list):
+            seen = set()
+            for h in raw_highlights:
+                try:
+                    idx = int(h)
+                except (ValueError, TypeError):
+                    continue
+                if 0 <= idx < total and idx not in seen:
+                    seen.add(idx)
+                    highlights.append(idx)
+
+        return {"emojis": emojis, "highlights": highlights}
+
     @staticmethod
     def _split_filter_chain(filter_string: str) -> list[str]:
         """Split a -vf filter chain on commas, respecting single-quoted substrings."""

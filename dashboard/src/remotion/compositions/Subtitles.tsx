@@ -193,12 +193,26 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           const wordEndFrame = Math.round(
             ((word.endMs - block.startMs) / 1000) * fps
           );
+          const isActive = i === activeIndex;
+          const isPast = i < activeIndex;
+          // Keyword highlight: words flagged `highlight` get the active-word
+          // treatment (which is driven by style.highlightColor in every
+          // template) even when they aren't the word being spoken. We only
+          // force it once the word has appeared (frame >= its start) so entry
+          // animations are settled and we don't render a mid-animation pose on
+          // a word that hasn't been reached yet. The genuinely active word
+          // always wins so its live animation is never overridden.
+          const highlighted = word.highlight === true;
+          const forceHighlight = highlighted && !isActive && frame >= wordStartFrame;
+          // Append the emoji to the word text so it lives inside the same
+          // animated span the template renders (timing/animation still apply).
+          const renderedText = word.emoji ? `${word.text} ${word.emoji}` : word.text;
           return (
             <React.Fragment key={i}>
               {template.renderWord({
-                word: word.text,
-                isActive: i === activeIndex,
-                isPast: i < activeIndex,
+                word: renderedText,
+                isActive: isActive || forceHighlight,
+                isPast,
                 frame,
                 fps,
                 wordStartFrame,
