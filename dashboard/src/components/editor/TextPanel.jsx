@@ -9,7 +9,7 @@ const COLORS = ['#FFFFFF', '#FFDD00', '#3dd68c', '#FF5C5C', '#000000'];
  * in SOURCE frames (anchored to content through cuts); position is normalized
  * 0-1 and adjusted with the X/Y sliders (the canvas shows the result live).
  */
-export default function TextPanel({ framing, dispatch, getCurrentSourceFrame }) {
+function TextPanel({ framing, dispatch, getCurrentSourceFrame }) {
     const overlays = framing.textOverlays || [];
     const srcFps = framing.source.fps;
 
@@ -138,3 +138,7 @@ export default function TextPanel({ framing, dispatch, getCurrentSourceFrame }) 
         </div>
     );
 }
+
+// Memoized: re-renders only when its own props change, not on every editor
+// dispatch or tab switch (props from EditorView are stable).
+export default React.memo(TextPanel);

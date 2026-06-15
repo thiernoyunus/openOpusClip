@@ -126,7 +126,7 @@ const ClassicWord: React.FC<WordRenderArgs & { animation: SubtitleAnimation }> =
       style={{
         fontFamily: fontStack,
         fontSize: style.fontSize,
-        fontWeight: 800,
+        fontWeight: style.fontWeight ?? 800,
         color,
         textTransform: uppercase ? "uppercase" : "none",
         textShadow,
@@ -182,6 +182,7 @@ const GlitchWord: React.FC<WordRenderArgs> = ({
   style,
   fontStack,
   seed,
+  uppercase,
 }) => {
   const t = frame - wordStartFrame;
   const dur = Math.round(0.18 * fps);
@@ -203,9 +204,9 @@ const GlitchWord: React.FC<WordRenderArgs> = ({
       style={{
         fontFamily: fontStack,
         fontSize: style.fontSize,
-        fontWeight: 700,
+        fontWeight: style.fontWeight ?? 700,
         letterSpacing: "0.03em",
-        textTransform: "uppercase",
+        textTransform: uppercase ? "uppercase" : "none",
         color: style.fontColor,
         textShadow: stroke ? `${stroke}, ${textShadow}` : textShadow,
         transform,
@@ -266,7 +267,7 @@ const MatrixWord: React.FC<WordRenderArgs> = ({
       style={{
         fontFamily: fontStack,
         fontSize: style.fontSize,
-        fontWeight: 700,
+        fontWeight: style.fontWeight ?? 700,
         letterSpacing: "0.04em",
         color,
         textShadow: `0 0 10px ${color}99, 0 0 2px ${color}, 0 3px 10px rgba(0,0,0,0.5)`,
@@ -293,6 +294,7 @@ const ParticleWord: React.FC<WordRenderArgs> = ({
   style,
   fontStack,
   seed,
+  uppercase,
 }) => {
   const t = frame - wordStartFrame;
   const s = isActive
@@ -318,9 +320,9 @@ const ParticleWord: React.FC<WordRenderArgs> = ({
         display: "inline-block",
         fontFamily: fontStack,
         fontSize: style.fontSize,
-        fontWeight: 900,
+        fontWeight: style.fontWeight ?? 900,
         letterSpacing: "0.05em",
-        textTransform: "uppercase",
+        textTransform: uppercase ? "uppercase" : "none",
         color,
         opacity: isActive ? 1 : 0.5,
         transform: `scale(${scale})`,
@@ -383,13 +385,13 @@ function entrySpring(t: number, fps: number): number {
 }
 
 // highlight — marker bar sweeps in behind each word as it's spoken
-const HighlightWord: React.FC<WordRenderArgs> = ({ word, isActive, isPast, frame, fps, wordStartFrame, style, fontStack }) => {
+const HighlightWord: React.FC<WordRenderArgs> = ({ word, isActive, isPast, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
   const on = frame >= wordStartFrame;
   const t = frame - wordStartFrame;
   const scaleX = on ? interpolate(t, [0, Math.round(0.15 * fps)], [0, 1], { extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) }) : 0;
   const marker = style.highlightColor || "#FFE94E";
   return (
-    <span style={{ position: "relative", display: "inline-block", fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", color: on ? "#141414" : style.fontColor, textShadow: on ? "none" : "0 4px 14px rgba(0,0,0,0.45)", padding: "0 6px" }}>
+    <span style={{ position: "relative", display: "inline-block", fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 800, textTransform: uppercase ? "uppercase" : "none", letterSpacing: "0.02em", color: on ? "#141414" : style.fontColor, textShadow: on ? "none" : "0 4px 14px rgba(0,0,0,0.45)", padding: "0 6px" }}>
       <span style={{ position: "absolute", left: 0, top: "8%", bottom: "8%", right: 0, background: marker, borderRadius: 6, transform: `scaleX(${scaleX})`, transformOrigin: "left center", zIndex: 0, opacity: isActive || isPast ? 1 : 0 }} />
       <span style={{ position: "relative", zIndex: 1 }}>{word}</span>
     </span>
@@ -403,24 +405,24 @@ const GradientFillWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps
   const pos = ((frame % period) / period) * 100;
   const scale = isActive ? interpolate(entrySpring(frame - wordStartFrame, fps), [0, 1], [1, 1.08]) : 1;
   return (
-    <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 900, letterSpacing: "0.03em", display: "inline-block", transform: `scale(${scale})`, backgroundImage: SIRI_GRADIENT, backgroundSize: "300% 100%", backgroundPosition: `${pos}% 0`, WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent", color: "transparent", filter: "drop-shadow(0 4px 12px rgba(0,0,0,0.5))" }}>{word}</span>
+    <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 900, letterSpacing: "0.03em", display: "inline-block", transform: `scale(${scale})`, backgroundImage: SIRI_GRADIENT, backgroundSize: "300% 100%", backgroundPosition: `${pos}% 0`, WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent", color: "transparent", filter: "drop-shadow(0 4px 12px rgba(0,0,0,0.5))" }}>{word}</span>
   );
 };
 
 // neon-glow — dim base, the spoken word ignites with a neon glow
-const NeonGlowWord: React.FC<WordRenderArgs> = ({ word, isActive, style, fontStack }) => {
+const NeonGlowWord: React.FC<WordRenderArgs> = ({ word, isActive, style, fontStack, uppercase }) => {
   const neon = style.highlightColor || "#00FFF0";
   const color = isActive ? neon : withAlpha(neon, 0.16);
   const glow = isActive ? `0 0 8px ${neon}, 0 0 22px ${neon}, 0 0 44px ${withAlpha(neon, 0.5)}` : "none";
-  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.04em", color, textShadow: glow, display: "inline-block" }}>{word}</span>;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 900, textTransform: uppercase ? "uppercase" : "none", letterSpacing: "0.04em", color, textShadow: glow, display: "inline-block" }}>{word}</span>;
 };
 
 // neon-accent — white base, each word a punchy assigned accent when spoken
 const NEON_ACCENTS = ["#53FF01", "#FF0002", "#FCFF00"];
-const NeonAccentWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, seed }) => {
+const NeonAccentWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, seed, uppercase }) => {
   const accent = NEON_ACCENTS[seed % NEON_ACCENTS.length];
   const scale = isActive ? interpolate(entrySpring(frame - wordStartFrame, fps), [0, 1], [1, 1.1]) : 1;
-  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 800, textTransform: "uppercase", display: "inline-block", transform: `scale(${scale})`, color: isActive ? accent : style.fontColor, textShadow: isActive ? `0 0 12px ${withAlpha(accent, 0.6)}` : "0 4px 14px rgba(0,0,0,0.5)" }}>{word}</span>;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 800, textTransform: uppercase ? "uppercase" : "none", display: "inline-block", transform: `scale(${scale})`, color: isActive ? accent : style.fontColor, textShadow: isActive ? `0 0 12px ${withAlpha(accent, 0.6)}` : "0 4px 14px rgba(0,0,0,0.5)" }}>{word}</span>;
 };
 
 // weight-shift — thin base, the spoken word swells to a heavy weight
@@ -443,12 +445,12 @@ const EMOJI_MAP: Record<string, string> = {
   ai: "🤖", big: "💥", huge: "💥", time: "⏰", fast: "⚡", idea: "💡", growth: "📈",
   up: "🚀", boom: "💥", crazy: "🤯", mind: "🧠", deal: "🤝", free: "🎁",
 };
-const EmojiPopWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, seed }) => {
+const EmojiPopWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, seed, uppercase }) => {
   const scale = isActive ? interpolate(entrySpring(frame - wordStartFrame, fps), [0, 1], [1, 1.14]) : 1;
   const key = word.toLowerCase().replace(/[^a-z]/g, "");
   const emoji = EMOJI_MAP[key];
   return (
-    <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 900, textTransform: "uppercase", display: "inline-block", transform: `scale(${scale})`, color: isActive ? EMOJI_ACCENTS[seed % EMOJI_ACCENTS.length] : style.fontColor, WebkitTextStroke: "3px #000000" }}>
+    <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 900, textTransform: uppercase ? "uppercase" : "none", display: "inline-block", transform: `scale(${scale})`, color: isActive ? EMOJI_ACCENTS[seed % EMOJI_ACCENTS.length] : style.fontColor, WebkitTextStroke: "3px #000000" }}>
       {word}
       {emoji ? <span style={{ WebkitTextStroke: "0", marginLeft: "0.18em" }}>{emoji}</span> : null}
     </span>
@@ -456,27 +458,27 @@ const EmojiPopWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wo
 };
 
 // kinetic-slam — each word slams down into place with an overshoot
-const KineticSlamWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+const KineticSlamWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
   const t = frame - wordStartFrame;
   if (t < 0) return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, opacity: 0, display: "inline-block" }}>{word}</span>;
   const p = spring({ frame: t, fps, config: { mass: 0.6, stiffness: 200, damping: 9 }, durationInFrames: 16 });
   const y = interpolate(p, [0, 1], [-120, 0]);
   const opacity = interpolate(t, [0, Math.round(0.06 * fps)], [0, 1], { extrapolateRight: "clamp" });
-  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 400, textTransform: "uppercase", display: "inline-block", transform: `translateY(${y}px)`, opacity, color: isActive ? style.highlightColor : style.fontColor, textShadow: "0 6px 18px rgba(0,0,0,0.5)" }}>{word}</span>;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 400, textTransform: uppercase ? "uppercase" : "none", display: "inline-block", transform: `translateY(${y}px)`, opacity, color: isActive ? style.highlightColor : style.fontColor, textShadow: "0 6px 18px rgba(0,0,0,0.5)" }}>{word}</span>;
 };
 
 // clip-wipe — each word is wiped in left-to-right
-const ClipWipeWord: React.FC<WordRenderArgs> = ({ word, isActive, isPast, frame, fps, wordStartFrame, style, fontStack }) => {
+const ClipWipeWord: React.FC<WordRenderArgs> = ({ word, isActive, isPast, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
   const t = frame - wordStartFrame;
   const reveal = t < 0 ? 100 : interpolate(t, [0, Math.round(0.3 * fps)], [100, 0], { extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
   const color = isActive ? style.highlightColor || "#FFD700" : isPast ? "rgba(255,255,255,0.45)" : style.fontColor;
-  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 800, textTransform: "uppercase", display: "inline-block", clipPath: `inset(0 ${reveal}% 0 0)`, color, textShadow: "0 4px 14px rgba(0,0,0,0.5)" }}>{word}</span>;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 800, textTransform: uppercase ? "uppercase" : "none", display: "inline-block", clipPath: `inset(0 ${reveal}% 0 0)`, color, textShadow: "0 4px 14px rgba(0,0,0,0.5)" }}>{word}</span>;
 };
 
 // blend-difference — text inverts against the footage via mix-blend-mode
-const BlendDifferenceWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+const BlendDifferenceWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
   const scale = isActive ? interpolate(entrySpring(frame - wordStartFrame, fps), [0, 1], [1, 1.08]) : 1;
-  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 900, textTransform: "uppercase", display: "inline-block", transform: `scale(${scale})`, color: "#ffffff", mixBlendMode: "difference" }}>{word}</span>;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 900, textTransform: uppercase ? "uppercase" : "none", display: "inline-block", transform: `scale(${scale})`, color: "#ffffff", mixBlendMode: "difference" }}>{word}</span>;
 };
 
 // parallax-layers — bold serif with a scaled echo behind for depth
@@ -485,7 +487,7 @@ const ParallaxLayersWord: React.FC<WordRenderArgs> = ({ word, frame, fps, wordSt
   const opacity = interpolate(t, [0, Math.round(0.18 * fps)], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   const c = style.fontColor || "#E50914";
   return (
-    <span style={{ position: "relative", display: "inline-block", fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 400, lineHeight: 1, color: c, opacity, WebkitTextStroke: `2px ${c}` }}>
+    <span style={{ position: "relative", display: "inline-block", fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 400, lineHeight: 1, color: c, opacity, WebkitTextStroke: `2px ${c}` }}>
       <span aria-hidden="true" style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%,-50%) scale(1.7)", opacity: 0.12, whiteSpace: "nowrap", pointerEvents: "none" }}>{word}</span>
       <span style={{ position: "relative", textShadow: "2px 4px 4px rgba(0,0,0,0.5)" }}>{word}</span>
     </span>
@@ -493,17 +495,17 @@ const ParallaxLayersWord: React.FC<WordRenderArgs> = ({ word, frame, fps, wordSt
 };
 
 // texture — warm gradient-filled display type with a fiery glow
-const TextureWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+const TextureWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
   const t = frame - wordStartFrame;
   const scale = t >= 0 ? interpolate(entrySpring(t, fps), [0, 1], [0.88, 1]) : 0.88;
   const grad = isActive ? "linear-gradient(180deg,#ffe7c2,#ff9d3c)" : "linear-gradient(180deg,#ffd0a0,#ff7a18)";
-  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 400, textTransform: "uppercase", display: "inline-block", transform: `scale(${scale})`, backgroundImage: grad, WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent", color: "transparent", filter: "drop-shadow(0 4px 24px rgba(255,100,20,0.55))" }}>{word}</span>;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 400, textTransform: uppercase ? "uppercase" : "none", display: "inline-block", transform: `scale(${scale})`, backgroundImage: grad, WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent", color: "transparent", filter: "drop-shadow(0 4px 24px rgba(255,100,20,0.55))" }}>{word}</span>;
 };
 
 // pill-karaoke — gray words darken as spoken, inside a light rounded pill
 const PillKaraokeWord: React.FC<WordRenderArgs> = ({ word, isActive, isPast, style, fontStack }) => {
   const spoken = isActive || isPast;
-  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 700, textTransform: "lowercase", color: spoken ? style.highlightColor || "#1C1E1D" : style.fontColor || "#A6A6A6", display: "inline-block" }}>{word}</span>;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 700, textTransform: "lowercase", color: spoken ? style.highlightColor || "#1C1E1D" : style.fontColor || "#A6A6A6", display: "inline-block" }}>{word}</span>;
 };
 
 // --- premium "After Effects" styles (hand-animated look) ---------------------
@@ -519,17 +521,17 @@ function darken(color: string, factor: number): string {
 }
 
 // glossy-gradient — Devin Jatho signature: soft glassy gradient that floats + glows
-const GlossyGradientWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+const GlossyGradientWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
   const t = frame - wordStartFrame;
   const float = Math.sin(frame / fps * 1.6 + wordStartFrame) * 3;
   const intro = interpolate(t, [0, Math.round(0.3 * fps)], [12, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
   const grad = isActive ? "linear-gradient(180deg,#FFFFFF 0%,#EAF2FF 100%)" : "linear-gradient(180deg,#FFFFFF 0%,#BFD9FF 100%)";
   const glow = isActive ? 0.9 : 0.4;
-  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 800, textTransform: "uppercase", letterSpacing: "-0.02em", display: "inline-block", transform: `translateY(${(float + intro).toFixed(2)}px) scale(${isActive ? 1.05 : 1})`, opacity: isActive ? 1 : 0.72, backgroundImage: grad, WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent", color: "transparent", filter: `drop-shadow(0 0 8px rgba(190,217,255,${glow})) drop-shadow(0 4px 18px rgba(120,160,255,${glow * 0.5}))` }}>{word}</span>;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 800, textTransform: uppercase ? "uppercase" : "none", letterSpacing: "-0.02em", display: "inline-block", transform: `translateY(${(float + intro).toFixed(2)}px) scale(${isActive ? 1.05 : 1})`, opacity: isActive ? 1 : 0.72, backgroundImage: grad, WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent", color: "transparent", filter: `drop-shadow(0 0 8px rgba(190,217,255,${glow})) drop-shadow(0 4px 18px rgba(120,160,255,${glow * 0.5}))` }}>{word}</span>;
 };
 
 // extrude-3d — hard isometric 3D block that punches toward camera
-const Extrude3DWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+const Extrude3DWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
   const t = frame - wordStartFrame;
   let scale = 1, depth = 5, lift = 0;
   if (isActive) {
@@ -543,11 +545,11 @@ const Extrude3DWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, w
   const layers: string[] = [];
   for (let i = 1; i <= Math.round(depth); i++) layers.push(`${i}px ${i}px 0 ${ex}`);
   const ts = [...layers, strokeShadow(style)].filter(Boolean).join(", ") || "none";
-  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 400, textTransform: "uppercase", letterSpacing: "0.01em", display: "inline-block", transform: `translateY(${lift.toFixed(2)}px) scale(${scale.toFixed(3)})`, color, textShadow: ts }}>{word}</span>;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 400, textTransform: uppercase ? "uppercase" : "none", letterSpacing: "0.01em", display: "inline-block", transform: `translateY(${lift.toFixed(2)}px) scale(${scale.toFixed(3)})`, color, textShadow: ts }}>{word}</span>;
 };
 
 // flip-3d — each word hinges down into place on the X axis (perspective)
-const Flip3DWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+const Flip3DWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
   const t = frame - wordStartFrame;
   const p = t < 0 ? 0 : spring({ frame: t, fps, config: { mass: 0.5, stiffness: 170, damping: 14 }, durationInFrames: 12 });
   const rotX = interpolate(p, [0, 1], [-92, 0]);
@@ -555,7 +557,7 @@ const Flip3DWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, word
   const b = interpolate(p, [0, 1], [0.4, 1]);
   return (
     <span style={{ perspective: "620px", display: "inline-block" }}>
-      <span style={{ display: "inline-block", fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 800, textTransform: "uppercase", transform: `rotateX(${rotX.toFixed(1)}deg)`, transformOrigin: "center top", filter: `brightness(${b.toFixed(2)})`, opacity, color: isActive ? style.highlightColor : style.fontColor, textShadow: strokeShadow(style) || "0 3px 10px rgba(0,0,0,0.5)" }}>{word}</span>
+      <span style={{ display: "inline-block", fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 800, textTransform: uppercase ? "uppercase" : "none", transform: `rotateX(${rotX.toFixed(1)}deg)`, transformOrigin: "center top", filter: `brightness(${b.toFixed(2)})`, opacity, color: isActive ? style.highlightColor : style.fontColor, textShadow: strokeShadow(style) || "0 3px 10px rgba(0,0,0,0.5)" }}>{word}</span>
     </span>
   );
 };
@@ -572,15 +574,15 @@ const WhipBlurWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wo
   return (
     <span style={{ position: "relative", display: "inline-block", transform: `translateX(${x.toFixed(1)}px) scaleX(${(1 + (1 - e) * 0.18).toFixed(3)})`, transformOrigin: dir > 0 ? "left center" : "right center" }}>
       {e < 1 && [1, 2, 3].map((k) => (
-        <span key={k} style={{ position: "absolute", left: 0, top: 0, fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 800, textTransform: tt, color, opacity: (1 - e) * (0.35 / k), filter: `blur(${((1 - e) * 4).toFixed(1)}px)`, transform: `translateX(${(dir * 14 * k).toFixed(0)}px)`, pointerEvents: "none" }}>{word}</span>
+        <span key={k} style={{ position: "absolute", left: 0, top: 0, fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 800, textTransform: tt, color, opacity: (1 - e) * (0.35 / k), filter: `blur(${((1 - e) * 4).toFixed(1)}px)`, transform: `translateX(${(dir * 14 * k).toFixed(0)}px)`, pointerEvents: "none" }}>{word}</span>
       ))}
-      <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 800, textTransform: tt, color, textShadow: strokeShadow(style) || "0 3px 10px rgba(0,0,0,0.5)", display: "inline-block" }}>{word}</span>
+      <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 800, textTransform: tt, color, textShadow: strokeShadow(style) || "0 3px 10px rgba(0,0,0,0.5)", display: "inline-block" }}>{word}</span>
     </span>
   );
 };
 
 // zoom-rush — word rushes from oversize+blurred to crisp with chromatic fringe
-const ZoomRushWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+const ZoomRushWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
   const t = frame - wordStartFrame;
   if (t < 0) return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, opacity: 0, display: "inline-block" }}>{word}</span>;
   const e = interpolate(t, [0, Math.max(1, Math.round(0.2 * fps))], [0, 1], { extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
@@ -593,11 +595,11 @@ const ZoomRushWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wo
     <span style={{ position: "relative", display: "inline-block", transform: `scale(${scale.toFixed(3)})` }}>
       {e < 1 && (
         <>
-          <span style={{ position: "absolute", left: 0, top: 0, fontFamily: fontStack, fontWeight: 400, fontSize: style.fontSize, textTransform: "uppercase", color: "#FF0044", mixBlendMode: "screen", transform: `translateX(${(-split).toFixed(1)}px)` }}>{word}</span>
-          <span style={{ position: "absolute", left: 0, top: 0, fontFamily: fontStack, fontWeight: 400, fontSize: style.fontSize, textTransform: "uppercase", color: "#00E5FF", mixBlendMode: "screen", transform: `translateX(${split.toFixed(1)}px)` }}>{word}</span>
+          <span style={{ position: "absolute", left: 0, top: 0, fontFamily: fontStack, fontWeight: style.fontWeight ?? 400, fontSize: style.fontSize, textTransform: uppercase ? "uppercase" : "none", color: "#FF0044", mixBlendMode: "screen", transform: `translateX(${(-split).toFixed(1)}px)` }}>{word}</span>
+          <span style={{ position: "absolute", left: 0, top: 0, fontFamily: fontStack, fontWeight: style.fontWeight ?? 400, fontSize: style.fontSize, textTransform: uppercase ? "uppercase" : "none", color: "#00E5FF", mixBlendMode: "screen", transform: `translateX(${split.toFixed(1)}px)` }}>{word}</span>
         </>
       )}
-      <span style={{ fontFamily: fontStack, fontWeight: 400, fontSize: style.fontSize, textTransform: "uppercase", color, filter: frontFilter, textShadow: strokeShadow(style) || "0 3px 10px rgba(0,0,0,0.5)", display: "inline-block" }}>{word}</span>
+      <span style={{ fontFamily: fontStack, fontWeight: style.fontWeight ?? 400, fontSize: style.fontSize, textTransform: uppercase ? "uppercase" : "none", color, filter: frontFilter, textShadow: strokeShadow(style) || "0 3px 10px rgba(0,0,0,0.5)", display: "inline-block" }}>{word}</span>
     </span>
   );
 };
@@ -609,17 +611,17 @@ const SquashPopWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, w
   const scaleY = interpolate(s, [0, 0.5, 1], [1.35, 0.82, 1]) + (isActive ? Math.sin(t / 3) * 0.02 : 0);
   const scaleX = interpolate(s, [0, 0.5, 1], [0.7, 1.18, 1]);
   const opacity = t < 0 ? 0 : interpolate(t, [0, 2], [0, 1], { extrapolateRight: "clamp" });
-  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 800, display: "inline-block", transformOrigin: "center bottom", transform: `scale(${scaleX.toFixed(3)}, ${scaleY.toFixed(3)})`, opacity, color: isActive ? style.highlightColor : style.fontColor, textShadow: strokeShadow(style) || "0 3px 10px rgba(0,0,0,0.5)" }}>{word}</span>;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 800, display: "inline-block", transformOrigin: "center bottom", transform: `scale(${scaleX.toFixed(3)}, ${scaleY.toFixed(3)})`, opacity, color: isActive ? style.highlightColor : style.fontColor, textShadow: strokeShadow(style) || "0 3px 10px rgba(0,0,0,0.5)" }}>{word}</span>;
 };
 
 // chrome-shine — metallic gradient with a specular highlight that sweeps across
-const ChromeShineWord: React.FC<WordRenderArgs> = ({ word, frame, fps, wordStartFrame, style, fontStack }) => {
+const ChromeShineWord: React.FC<WordRenderArgs> = ({ word, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
   const t = frame - wordStartFrame;
   const intro = t < 0 ? 0 : spring({ frame: t, fps, config: { mass: 0.5, stiffness: 200, damping: 12 }, durationInFrames: 9 });
   const y = interpolate(intro, [0, 1], [-24, 0]);
   const sc = interpolate(intro, [0, 1], [1.08, 1]);
   const pos = interpolate(t, [0, Math.max(1, Math.round(0.6 * fps))], [-120, 220], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 400, textTransform: "uppercase", display: "inline-block", transform: `translateY(${y.toFixed(1)}px) scale(${sc.toFixed(3)})`, opacity: t < 0 ? 0 : 1, backgroundImage: "linear-gradient(110deg,#7a7a7a 0%,#ffffff 42%,#e9e9e9 50%,#8f8f8f 58%,#ffffff 100%)", backgroundSize: "250% 100%", backgroundPosition: `${pos.toFixed(0)}% 0`, WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent", color: "transparent", WebkitTextStroke: `${Math.max(1, style.borderWidth || 2)}px ${style.borderColor || "#111111"}`, filter: "drop-shadow(0 3px 6px rgba(0,0,0,0.5))" }}>{word}</span>;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 400, textTransform: uppercase ? "uppercase" : "none", display: "inline-block", transform: `translateY(${y.toFixed(1)}px) scale(${sc.toFixed(3)})`, opacity: t < 0 ? 0 : 1, backgroundImage: "linear-gradient(110deg,#7a7a7a 0%,#ffffff 42%,#e9e9e9 50%,#8f8f8f 58%,#ffffff 100%)", backgroundSize: "250% 100%", backgroundPosition: `${pos.toFixed(0)}% 0`, WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent", color: "transparent", WebkitTextStroke: `${Math.max(1, style.borderWidth || 2)}px ${style.borderColor || "#111111"}`, filter: "drop-shadow(0 3px 6px rgba(0,0,0,0.5))" }}>{word}</span>;
 };
 
 // apple — Apple keynote/marketing style: each word blur-fades up into place
@@ -630,19 +632,19 @@ const AppleWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordS
   const blur = (1 - e) * 10;
   const ty = (1 - e) * 14;
   const scale = interpolate(e, [0, 1], [0.96, 1]);
-  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 600, letterSpacing: "-0.02em", display: "inline-block", opacity: e, filter: blur > 0.1 ? `blur(${blur.toFixed(1)}px)` : "none", transform: `translateY(${ty.toFixed(1)}px) scale(${scale.toFixed(3)})`, color: isActive ? style.highlightColor : style.fontColor, textShadow: strokeShadow(style) || "0 2px 12px rgba(0,0,0,0.45)" }}>{word}</span>;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 600, letterSpacing: "-0.02em", display: "inline-block", opacity: e, filter: blur > 0.1 ? `blur(${blur.toFixed(1)}px)` : "none", transform: `translateY(${ty.toFixed(1)}px) scale(${scale.toFixed(3)})`, color: isActive ? style.highlightColor : style.fontColor, textShadow: strokeShadow(style) || "0 2px 12px rgba(0,0,0,0.45)" }}>{word}</span>;
 };
 
 // --- trending viral styles (TikTok/Reels/Shorts 2026) -----------------------
 
 // hormozi — Montserrat Black all-caps, thick outline, spoken word pops in color
-const HormoziWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+const HormoziWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
   const t = frame - wordStartFrame;
   const s = isActive ? spring({ frame: t, fps, config: { mass: 0.5, stiffness: 200, damping: 11 }, durationInFrames: 9 }) : 0;
   const scale = isActive ? interpolate(s, [0, 1], [1, 1.16]) : 1;
   const rot = isActive ? interpolate(s, [0, 1], [-5, 0]) : 0;
   const stroke = strokeShadow(style);
-  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 900, textTransform: "uppercase", letterSpacing: "-0.01em", display: "inline-block", transform: `scale(${scale}) rotate(${rot}deg)`, color: isActive ? style.highlightColor : style.fontColor, textShadow: stroke || "0 4px 14px rgba(0,0,0,0.6)" }}>{word}</span>;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 900, textTransform: uppercase ? "uppercase" : "none", letterSpacing: "-0.01em", display: "inline-block", transform: `scale(${scale}) rotate(${rot}deg)`, color: isActive ? style.highlightColor : style.fontColor, textShadow: stroke || "0 4px 14px rgba(0,0,0,0.6)" }}>{word}</span>;
 };
 
 // tiktok-bounce — each word bounces into place as it's spoken (TikTok native)
@@ -652,20 +654,20 @@ const TikTokBounceWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps
   const p = shown ? spring({ frame: t, fps, config: { mass: 0.4, stiffness: 220, damping: 10 }, durationInFrames: 12 }) : 0;
   const scale = shown ? interpolate(p, [0, 1], [0.3, 1]) : 0;
   const stroke = strokeShadow(style);
-  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 800, textTransform: uppercase ? "uppercase" : "none", display: "inline-block", opacity: shown ? 1 : 0, transform: `scale(${scale})`, color: isActive ? style.highlightColor : style.fontColor, textShadow: stroke || "0 3px 10px rgba(0,0,0,0.5)" }}>{word}</span>;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 800, textTransform: uppercase ? "uppercase" : "none", display: "inline-block", opacity: shown ? 1 : 0, transform: `scale(${scale})`, color: isActive ? style.highlightColor : style.fontColor, textShadow: stroke || "0 3px 10px rgba(0,0,0,0.5)" }}>{word}</span>;
 };
 
 // typewriter — characters type out per word with a blinking cursor
 const TypewriterWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, wordEndFrame, style, fontStack }) => {
   const t = frame - wordStartFrame;
-  if (t < 0) return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 700, opacity: 0, display: "inline-block" }}>{word}</span>;
+  if (t < 0) return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 700, opacity: 0, display: "inline-block" }}>{word}</span>;
   const dur = Math.max(1, wordEndFrame - wordStartFrame);
   // Split by code point so emojis / surrogate pairs aren't sliced in half.
   const chars = Array.from(word);
   const shown = Math.min(chars.length, Math.floor((t / dur) * chars.length) + 1);
   const blink = Math.floor(frame / Math.max(1, Math.round(0.4 * fps))) % 2 === 0;
   return (
-    <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 700, display: "inline-block", color: isActive ? style.highlightColor : style.fontColor, textShadow: "0 3px 10px rgba(0,0,0,0.5)" }}>
+    <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 700, display: "inline-block", color: isActive ? style.highlightColor : style.fontColor, textShadow: "0 3px 10px rgba(0,0,0,0.5)" }}>
       {chars.slice(0, shown).join("")}
       {isActive ? <span style={{ opacity: blink ? 1 : 0.15, fontWeight: 400 }}>|</span> : null}
     </span>
@@ -674,13 +676,13 @@ const TypewriterWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, 
 
 // mrbeast — chunky rounded type, big bouncy pop, vibrant per-word color + wiggle
 const MRBEAST_PALETTE = ["#FFE000", "#00E676", "#FF1744", "#2979FF", "#FF6D00", "#D500F9"];
-const MrBeastWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, seed }) => {
+const MrBeastWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, seed, uppercase }) => {
   const t = frame - wordStartFrame;
   const s = isActive ? spring({ frame: t, fps, config: { mass: 0.45, stiffness: 240, damping: 9 }, durationInFrames: 9 }) : 0;
   const scale = isActive ? interpolate(s, [0, 1], [1, 1.22]) : 1;
   const wiggle = isActive ? Math.sin((t / fps) * 22) * 2 : 0;
   const stroke = strokeShadow(style);
-  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 900, textTransform: "uppercase", display: "inline-block", transform: `scale(${scale}) rotate(${wiggle.toFixed(2)}deg)`, color: isActive ? MRBEAST_PALETTE[seed % MRBEAST_PALETTE.length] : style.fontColor, textShadow: stroke || "0 4px 14px rgba(0,0,0,0.6)" }}>{word}</span>;
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 900, textTransform: uppercase ? "uppercase" : "none", display: "inline-block", transform: `scale(${scale}) rotate(${wiggle.toFixed(2)}deg)`, color: isActive ? MRBEAST_PALETTE[seed % MRBEAST_PALETTE.length] : style.fontColor, textShadow: stroke || "0 4px 14px rgba(0,0,0,0.6)" }}>{word}</span>;
 };
 
 // dynamic-minimal — the 2026 "minimalism" meta: clean, no outline, subtle emphasis

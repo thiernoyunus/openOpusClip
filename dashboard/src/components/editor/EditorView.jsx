@@ -363,7 +363,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                     <AudioPanel framing={framing} jobId={jobId} clipIndex={index} dispatch={dispatch} />
                                 )}
                                 {activeTab === 'broll' && (
-                                    <BrollPanel framing={framing} dispatch={dispatch} getCurrentSourceFrame={getCurrentSourceFrame} />
+                                    <BrollPanel framing={framing} dispatch={dispatch} getCurrentSourceFrame={getCurrentSourceFrame} captions={captions} />
                                 )}
                                 {activeTab === 'transitions' && (
                                     <TransitionsPanel framing={framing} dispatch={dispatch} />

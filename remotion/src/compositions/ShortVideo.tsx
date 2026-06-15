@@ -9,6 +9,7 @@ import { ReframedVideo } from "./ReframedVideo";
 import { BrollLayer } from "./BrollLayer";
 import { TextOverlays } from "./TextOverlays";
 import { TransitionOverlay } from "./TransitionOverlay";
+import { TransitionZoom } from "./TransitionZoom";
 import { remapCaptions } from "../lib/edl";
 
 /**
@@ -34,20 +35,35 @@ export const ShortVideo: React.FC<Record<string, unknown>> = (rawProps) => {
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
-      {/* Layer 1: Base video with optional zoom/color effects */}
-      <VideoEffects config={effects}>
-        {framing && sourceVideoUrl ? (
-          <ReframedVideo src={sourceVideoUrl} framing={framing} />
-        ) : (
+      {/* Layers 1+2: footage (base video + b-roll). When framing exists they
+          are wrapped in TransitionZoom so the zoom cut-style scales the
+          FOOTAGE only — captions/text/overlays (layers 3+) are not scaled. */}
+      {framing ? (
+        <TransitionZoom framing={framing}>
+          {/* Layer 1: Base video with optional zoom/color effects */}
+          <VideoEffects config={effects}>
+            {sourceVideoUrl ? (
+              <ReframedVideo src={sourceVideoUrl} framing={framing} />
+            ) : (
+              <Video
+                src={videoUrl}
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              />
+            )}
+          </VideoEffects>
+
+          {/* Layer 2: B-roll inserts (cover the base during a span) */}
+          <BrollLayer framing={framing} />
+        </TransitionZoom>
+      ) : (
+        // No framing: plain base video, no zoom transition / b-roll.
+        <VideoEffects config={effects}>
           <Video
             src={videoUrl}
             style={{ width: "100%", height: "100%", objectFit: "cover" }}
           />
-        )}
-      </VideoEffects>
-
-      {/* Layer 2: B-roll inserts (cover the base during a span) */}
-      {framing && <BrollLayer framing={framing} />}
+        </VideoEffects>
+      )}
 
       {/* Layer 3: Transitions (fade in/out, smooth cuts) — darkens picture */}
       {framing && <TransitionOverlay framing={framing} />}

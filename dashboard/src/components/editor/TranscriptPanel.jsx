@@ -1,9 +1,41 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { FileText, Scissors, RotateCcw } from 'lucide-react';
+import { FileText, Scissors, RotateCcw, Wand2 } from 'lucide-react';
 import { EDITOR_FPS } from './EditorCanvas';
 import { sourceToOutput } from '../../remotion/lib/edl';
+import { detectFillerCuts, detectPauseCuts } from './speechCleanup';
 
 const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three', four: 'Four' };
+
+/**
+ * A single transcript word. Memoized on its primitive props so that, during
+ * playback, only the 1-2 words whose active/selection state actually changed
+ * re-render — the other hundreds of words are skipped entirely. The parent
+ * keeps the click/edit handlers stable (useCallback) and passes index+word
+ * back through them, so this component's props stay referentially stable.
+ */
+const Word = React.memo(function Word({ index, word, isActive, isCut, inSel, onWordClick, onEdit }) {
+    return (
+        <span
+            data-active-word={isActive ? '' : undefined}
+            onClick={(e) => onWordClick(index, word, e)}
+            onDoubleClick={() => {
+                if (isCut) return;
+                onEdit(index, word);
+            }}
+            className={`cursor-pointer text-sm rounded px-0.5 transition-colors ${
+                isCut
+                    ? 'line-through text-zinc-600 hover:text-zinc-400'
+                    : inSel
+                      ? 'bg-amber-400/30 text-fg'
+                      : isActive
+                        ? 'bg-viral/30 text-fg'
+                        : 'text-zinc-300 hover:bg-white/10'
+            }`}
+        >
+            {word.text}{' '}
+        </span>
+    );
+});
 
 /**
  * Opus-style transcript column with text-based editing: word-level captions,
@@ -18,11 +50,20 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     const [draft, setDraft] = useState('');
     const [sel, setSel] = useState(null); // {anchor, focus} word indices
     const [selectedCut, setSelectedCut] = useState(null); // cut index
+    const [cleanupOpen, setCleanupOpen] = useState(false);
+    const [removeFillers, setRemoveFillers] = useState(true);
+    const [removePauses, setRemovePauses] = useState(true);
     const containerRef = useRef(null);
+    // Mirror of `sel` so the stable onWordClick handler can read the latest
+    // selection without taking `sel` as a dependency (which would change its
+    // identity every selection and defeat <Word> memoization).
+    const selRef = useRef(null);
+    useEffect(() => {
+        selRef.current = sel;
+    }, [sel]);
 
     const srcFps = framing.source.fps;
     const clipIn = framing.clipInFrame ?? 0;
-    const cuts = framing.cuts ?? [];
 
     // Word -> source frames (captions are ms relative to the clip start)
     const wordToSource = useCallback(
@@ -33,15 +74,18 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         [clipIn, srcFps]
     );
 
-    // Which cut (if any) a word falls inside, by its midpoint
-    const cutIndexForWord = useCallback(
-        (word) => {
-            const { start, end } = wordToSource(word);
+    // Which cut (if any) each word falls inside, by its midpoint. Precomputed
+    // once per [captions, framing.cuts, clipIn, srcFps] instead of per word per
+    // render.
+    const cutIndexByWord = useMemo(() => {
+        const cuts = framing.cuts ?? [];
+        return captions.map((word) => {
+            const start = clipIn + Math.round((word.startMs / 1000) * srcFps);
+            const end = clipIn + Math.round((word.endMs / 1000) * srcFps);
             const mid = (start + end) / 2;
             return cuts.findIndex((c) => mid >= c.startFrame && mid < c.endFrame);
-        },
-        [cuts, wordToSource]
-    );
+        });
+    }, [captions, framing.cuts, clipIn, srcFps]);
 
     useEffect(() => {
         const p = playerRef.current;
@@ -76,22 +120,50 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         return out;
     }, [captions, segmentStarts]);
 
-    const activeIndex = useMemo(() => {
-        // currentMs is on the OUTPUT timeline; compare against each word's
-        // output position so highlighting stays correct through cuts
-        for (let i = captions.length - 1; i >= 0; i--) {
-            const { start, end } = wordToSource(captions[i]);
+    // Each non-cut word's position on the OUTPUT timeline (ms), precomputed
+    // once so the per-frame active-word lookup is a binary search instead of an
+    // O(n) scan that recomputes sourceToOutput for every word. Output start
+    // times are monotonic across `kept` (kept ranges play back-to-back), so it
+    // can be binary-searched directly. Each entry carries its original caption
+    // index. Cut words are simply omitted (they can never be active).
+    const kept = useMemo(() => {
+        const keptList = [];
+        captions.forEach((word, index) => {
+            const { start, end } = wordToSource(word);
             const outStart = sourceToOutput(framing, start, EDITOR_FPS, true);
-            if (outStart === null) continue; // word is cut
-            const outStartMs = (outStart / EDITOR_FPS) * 1000;
+            if (outStart === null) return; // word is cut
             const outEnd = sourceToOutput(framing, end, EDITOR_FPS) ?? outStart;
-            const outEndMs = (outEnd / EDITOR_FPS) * 1000;
-            if (currentMs >= outStartMs) {
-                return currentMs <= outEndMs + 150 ? i : -1;
+            keptList.push({
+                index,
+                startMs: (outStart / EDITOR_FPS) * 1000,
+                endMs: (outEnd / EDITOR_FPS) * 1000,
+            });
+        });
+        return keptList;
+    }, [captions, framing, wordToSource]);
+
+    const activeIndex = useMemo(() => {
+        // currentMs is on the OUTPUT timeline. Binary-search the kept (non-cut)
+        // words — whose output start times are monotonic — for the last one
+        // that has started, then apply the same +150ms grace window the linear
+        // scan used. Mirrors the old "last word with currentMs >= outStart,
+        // skipping cuts" logic, now O(log n) per frame.
+        let lo = 0;
+        let hi = kept.length - 1;
+        let candidate = -1;
+        while (lo <= hi) {
+            const m = (lo + hi) >> 1;
+            if (kept[m].startMs <= currentMs) {
+                candidate = m;
+                lo = m + 1;
+            } else {
+                hi = m - 1;
             }
         }
-        return -1;
-    }, [captions, currentMs, framing, wordToSource]);
+        if (candidate === -1) return -1;
+        const w = kept[candidate];
+        return currentMs <= w.endMs + 150 ? w.index : -1;
+    }, [kept, currentMs]);
 
     useEffect(() => {
         containerRef.current
@@ -117,22 +189,35 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         setEditingIndex(null);
     }, [editingIndex, draft, onEditWord]);
 
-    const onWordClick = (index, word, e) => {
-        const cutIdx = cutIndexForWord(word);
-        if (cutIdx !== -1) {
-            // clicking cut content selects its cut so it can be restored
-            setSelectedCut(cutIdx);
-            setSel(null);
-            return;
-        }
-        setSelectedCut(null);
-        if (e.shiftKey && sel) {
-            setSel({ anchor: sel.anchor, focus: index });
-        } else {
-            setSel({ anchor: index, focus: index });
-            seekToWord(word);
-        }
-    };
+    // Stable identity so memoized <Word> children don't re-render on every
+    // frame just because the parent re-rendered. Reads sel via the functional
+    // updater so it needn't be a dependency.
+    const onWordClick = useCallback(
+        (index, word, e) => {
+            const cutIdx = cutIndexByWord[index];
+            if (cutIdx !== -1) {
+                // clicking cut content selects its cut so it can be restored
+                setSelectedCut(cutIdx);
+                setSel(null);
+                return;
+            }
+            setSelectedCut(null);
+            const cur = selRef.current;
+            if (e.shiftKey && cur) {
+                setSel({ anchor: cur.anchor, focus: index });
+            } else {
+                setSel({ anchor: index, focus: index });
+                seekToWord(word);
+            }
+        },
+        [cutIndexByWord, seekToWord]
+    );
+
+    // Stable double-click -> edit handler for memoized <Word> children.
+    const onEdit = useCallback((index, word) => {
+        setEditingIndex(index);
+        setDraft(word.text);
+    }, []);
 
     const selRange = sel
         ? { lo: Math.min(sel.anchor, sel.focus), hi: Math.max(sel.anchor, sel.focus) }
@@ -152,13 +237,76 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         setSelectedCut(null);
     };
 
+    const applyCleanup = useCallback(() => {
+        const cuts = [
+            ...(removeFillers ? detectFillerCuts(captions, framing) : []),
+            ...(removePauses ? detectPauseCuts(captions, framing) : []),
+        ];
+        if (cuts.length > 0) dispatch({ type: 'ADD_CUTS', cuts });
+        setCleanupOpen(false);
+    }, [removeFillers, removePauses, captions, framing, dispatch]);
+
     const selCount = selRange ? selRange.hi - selRange.lo + 1 : 0;
 
     return (
         <div className="w-[300px] shrink-0 border-r border-edge bg-surface flex flex-col min-h-0">
-            <div className="px-4 pt-4 pb-2 flex items-center gap-1.5 text-xs text-muted shrink-0">
-                <FileText size={13} /> Transcript
-                <span className="ml-auto text-[10px] text-zinc-600">shift-click to select · ✂ to cut</span>
+            <div className="px-4 pt-4 pb-2 shrink-0 relative">
+                <div className="flex items-center gap-1.5 text-xs text-muted">
+                    <FileText size={13} /> Transcript
+                    <button
+                        onClick={() => setCleanupOpen((v) => !v)}
+                        disabled={captions.length === 0}
+                        title="Auto-remove filler words and pauses"
+                        className={`ml-auto flex items-center gap-1 px-2 py-1 rounded bg-surface2 border border-edge text-[11px] transition-colors ${
+                            captions.length === 0
+                                ? 'opacity-40 cursor-not-allowed'
+                                : cleanupOpen
+                                  ? 'text-fg border-white/30'
+                                  : 'text-muted hover:text-fg hover:bg-white/5'
+                        }`}
+                    >
+                        <Wand2 size={12} /> Speech cleanup
+                    </button>
+                </div>
+                {cleanupOpen && (
+                    <div className="absolute right-4 top-full mt-1 z-30 w-56 bg-surface2 border border-edge rounded-lg shadow-lg p-3 text-xs">
+                        <p className="text-[11px] text-muted mb-2">Auto-detect and remove:</p>
+                        <label className="flex items-center gap-2 mb-1.5 cursor-pointer text-zinc-300">
+                            <input
+                                type="checkbox"
+                                checked={removeFillers}
+                                onChange={(e) => setRemoveFillers(e.target.checked)}
+                                className="accent-viral"
+                            />
+                            Remove filler words
+                        </label>
+                        <label className="flex items-center gap-2 mb-3 cursor-pointer text-zinc-300">
+                            <input
+                                type="checkbox"
+                                checked={removePauses}
+                                onChange={(e) => setRemovePauses(e.target.checked)}
+                                className="accent-viral"
+                            />
+                            Remove pauses
+                        </label>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={applyCleanup}
+                                disabled={!removeFillers && !removePauses}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-viral/15 border border-viral/40 text-viral hover:bg-viral/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                <Wand2 size={12} /> Apply
+                            </button>
+                            <button
+                                onClick={() => setCleanupOpen(false)}
+                                className="text-[11px] text-muted hover:text-fg px-2 py-1"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                )}
+                <div className="mt-1 text-[10px] text-zinc-600">shift-click to select · ✂ to cut</div>
             </div>
             <div ref={containerRef} className="flex-1 overflow-y-auto custom-scrollbar px-4 pb-4 leading-7">
                 {captions.length === 0 ? (
@@ -186,33 +334,16 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                 className="inline-block w-20 bg-surface2 border border-white/30 rounded px-1 text-sm text-fg focus:outline-none"
                             />
                         ) : (
-                            (() => {
-                                const isCut = cutIndexForWord(row.word) !== -1;
-                                const inSel = selRange && row.index >= selRange.lo && row.index <= selRange.hi;
-                                return (
-                                    <span
-                                        key={`w-${row.index}`}
-                                        data-active-word={row.index === activeIndex ? '' : undefined}
-                                        onClick={(e) => onWordClick(row.index, row.word, e)}
-                                        onDoubleClick={() => {
-                                            if (isCut) return;
-                                            setEditingIndex(row.index);
-                                            setDraft(row.word.text);
-                                        }}
-                                        className={`cursor-pointer text-sm rounded px-0.5 transition-colors ${
-                                            isCut
-                                                ? 'line-through text-zinc-600 hover:text-zinc-400'
-                                                : inSel
-                                                  ? 'bg-amber-400/30 text-fg'
-                                                  : row.index === activeIndex
-                                                    ? 'bg-viral/30 text-fg'
-                                                    : 'text-zinc-300 hover:bg-white/10'
-                                        }`}
-                                    >
-                                        {row.word.text}{' '}
-                                    </span>
-                                );
-                            })()
+                            <Word
+                                key={`w-${row.index}`}
+                                index={row.index}
+                                word={row.word}
+                                isActive={row.index === activeIndex}
+                                isCut={cutIndexByWord[row.index] !== -1}
+                                inSel={!!(selRange && row.index >= selRange.lo && row.index <= selRange.hi)}
+                                onWordClick={onWordClick}
+                                onEdit={onEdit}
+                            />
                         )
                     )
                 )}

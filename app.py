@@ -776,6 +776,81 @@ async def generate_effects_config(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class CaptionEnhanceRequest(BaseModel):
+    words: List[str]
+
+@app.post("/api/captions/enhance")
+async def enhance_captions(
+    req: CaptionEnhanceRequest,
+    x_gemini_key: Optional[str] = Header(None, alias="X-Gemini-Key")
+):
+    """AI emoji + keyword highlight pass over caption words (text-only Gemini).
+
+    Returns {"emojis": {index: emoji, ...}, "highlights": [index, ...]} that the
+    frontend merges into the subtitle captions by index. No video upload — the
+    captions are text, so this is fast and cheap.
+    """
+    final_api_key = x_gemini_key or os.environ.get("GEMINI_API_KEY")
+
+    if not final_api_key:
+        raise HTTPException(status_code=400, detail="Missing Gemini API Key (Header)")
+
+    if not req.words:
+        return {"emojis": {}, "highlights": []}
+
+    try:
+        def run_enhance():
+            editor = VideoEditor(api_key=final_api_key)
+            return editor.get_caption_enhancements(req.words)
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, run_enhance)
+        return result or {"emojis": {}, "highlights": []}
+    except Exception as e:
+        print(f"❌ Caption Enhancement Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class BrollWord(BaseModel):
+    text: str
+    startMs: int
+
+class BrollSuggestRequest(BaseModel):
+    words: List[BrollWord]
+
+@app.post("/api/broll/suggest")
+async def suggest_broll(
+    req: BrollSuggestRequest,
+    x_gemini_key: Optional[str] = Header(None, alias="X-Gemini-Key")
+):
+    """AI b-roll auto-placement pass over caption words (text-only Gemini).
+
+    Returns {"suggestions": [{keyword, startMs, durationMs}, ...]} (up to 3).
+    The frontend turns each keyword into a Pexels stock clip and inserts it at
+    the suggested moment. No video upload — captions are text, so this is fast.
+    """
+    final_api_key = x_gemini_key or os.environ.get("GEMINI_API_KEY")
+
+    if not final_api_key:
+        raise HTTPException(status_code=400, detail="Missing Gemini API Key (Header)")
+
+    if not req.words:
+        return {"suggestions": []}
+
+    try:
+        def run_suggest():
+            editor = VideoEditor(api_key=final_api_key)
+            words = [{"text": w.text, "startMs": w.startMs} for w in req.words]
+            return editor.get_broll_suggestions(words)
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, run_suggest)
+        return {"suggestions": result or []}
+    except Exception as e:
+        print(f"❌ B-roll Suggestion Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/subtitle")
 async def add_subtitles(req: SubtitleRequest):
     if req.job_id not in jobs:

@@ -8,7 +8,7 @@ import {
   delayRender,
   continueRender,
 } from "remotion";
-import type { SubtitleConfig } from "../lib/types";
+import type { SubtitleConfig, SubtitleStyle } from "../lib/types";
 import { groupCaptionsIntoBlocks, getActiveWordIndex } from "../lib/captions";
 import { getFontStack, captionFontFaces, BUNDLED_CAPTION_FONTS } from "../lib/fonts";
 import { getCaptionTemplate, resolveTemplateId } from "../lib/captionTemplates";
@@ -22,6 +22,22 @@ const POSITION_MAP: Record<string, React.CSSProperties> = {
   middle: { top: "45%", bottom: "auto" },
   bottom: { bottom: "10%", top: "auto" },
 };
+
+// Drop-shadow size presets (offsetY/blur in px). Applied as a CSS `filter` on the
+// whole caption block, so it layers over every template uniformly without touching
+// any per-word renderer. `none`/undefined → no filter.
+const SHADOW_MAP: Record<string, { oy: number; blur: number }> = {
+  small: { oy: 2, blur: 4 },
+  medium: { oy: 4, blur: 10 },
+  large: { oy: 8, blur: 20 },
+};
+
+function shadowFilter(style: SubtitleStyle): string | undefined {
+  const preset = style.shadow && SHADOW_MAP[style.shadow];
+  if (!preset) return undefined;
+  const color = style.shadowColor ?? "#000000";
+  return `drop-shadow(0 ${preset.oy}px ${preset.blur}px ${color})`;
+}
 
 /** How long a block lingers after its last word, clamped to the next block. */
 const TAIL_MS = 320;
@@ -103,12 +119,36 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
 
   const template = getCaptionTemplate(resolveTemplateId(style));
   const fontStack = getFontStack(template.font ?? style.fontFamily);
-  const uppercase = template.uppercase ?? false;
+  const uppercase = style.uppercase ?? template.uppercase ?? false;
 
   const currentTimeMs = block.startMs + (frame / fps) * 1000;
   const activeIndex = getActiveWordIndex(block.words, currentTimeMs);
 
-  const positionStyle = POSITION_MAP[position] ?? POSITION_MAP.bottom;
+  // Free-drag placement wins when both x/y are set; otherwise fall back to the
+  // top/middle/bottom preset (existing behavior, fully back-compat).
+  const freePlaced =
+    typeof config.x === "number" && typeof config.y === "number";
+  const outerStyle: React.CSSProperties = freePlaced
+    ? {
+        position: "absolute",
+        left: `${(config.x as number) * 100}%`,
+        top: `${(config.y as number) * 100}%`,
+        // A fixed width centered on the drag point so the inner block's
+        // percentage maxWidth resolves predictably and long captions wrap
+        // the same way they do in the preset layouts.
+        width: "88%",
+        transform: "translate(-50%, -50%)",
+        display: "flex",
+        justifyContent: "center",
+      }
+    : {
+        position: "absolute",
+        left: 0,
+        right: 0,
+        display: "flex",
+        justifyContent: "center",
+        ...(POSITION_MAP[position] ?? POSITION_MAP.bottom),
+      };
   const containerStyle = template.containerStyle?.(style) ?? {};
 
   // Block-level fade so captions enter/leave smoothly instead of popping.
@@ -128,13 +168,9 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   return (
     <div
       style={{
-        position: "absolute",
-        left: 0,
-        right: 0,
-        display: "flex",
-        justifyContent: "center",
+        ...outerStyle,
         opacity,
-        ...positionStyle,
+        filter: shadowFilter(style),
       }}
     >
       <div
@@ -157,12 +193,26 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           const wordEndFrame = Math.round(
             ((word.endMs - block.startMs) / 1000) * fps
           );
+          const isActive = i === activeIndex;
+          const isPast = i < activeIndex;
+          // Keyword highlight: words flagged `highlight` get the active-word
+          // treatment (which is driven by style.highlightColor in every
+          // template) even when they aren't the word being spoken. We only
+          // force it once the word has appeared (frame >= its start) so entry
+          // animations are settled and we don't render a mid-animation pose on
+          // a word that hasn't been reached yet. The genuinely active word
+          // always wins so its live animation is never overridden.
+          const highlighted = word.highlight === true;
+          const forceHighlight = highlighted && !isActive && frame >= wordStartFrame;
+          // Append the emoji to the word text so it lives inside the same
+          // animated span the template renders (timing/animation still apply).
+          const renderedText = word.emoji ? `${word.text} ${word.emoji}` : word.text;
           return (
             <React.Fragment key={i}>
               {template.renderWord({
-                word: word.text,
-                isActive: i === activeIndex,
-                isPast: i < activeIndex,
+                word: renderedText,
+                isActive: isActive || forceHighlight,
+                isPast,
                 frame,
                 fps,
                 wordStartFrame,

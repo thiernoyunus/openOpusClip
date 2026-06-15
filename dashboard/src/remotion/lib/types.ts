@@ -5,11 +5,25 @@ export interface CaptionWord {
   text: string;
   startMs: number;
   endMs: number;
+  /**
+   * Optional emoji attached to this word (AI-inserted or manual). Rendered
+   * right after the word text inside the same animated span. Optional →
+   * existing caption data is unaffected (back-compat).
+   */
+  emoji?: string;
+  /**
+   * When true, this word is a highlighted keyword and gets the active-word
+   * highlight treatment even when it isn't the word currently being spoken.
+   * Optional → existing caption data is unaffected (back-compat).
+   */
+  highlight?: boolean;
 }
 
 // --- Subtitle config ---
 export type SubtitleAnimation = "none" | "word-highlight" | "pop" | "karaoke";
 export type SubtitlePosition = "top" | "middle" | "bottom";
+
+export type SubtitleShadow = "none" | "small" | "medium" | "large";
 
 export interface SubtitleStyle {
   fontFamily: string;
@@ -26,12 +40,28 @@ export interface SubtitleStyle {
    * when absent the renderer derives a "classic" template from `animation`.
    */
   template?: string;
+  // --- Tier 2 customization overrides (all optional → back-compat). ---
+  /** Per-word font weight 100–900. When unset each template uses its designed weight. */
+  fontWeight?: number;
+  /** Override the template's baked uppercase behavior. */
+  uppercase?: boolean;
+  /** Drop shadow applied to the whole caption block (size preset). */
+  shadow?: SubtitleShadow;
+  /** Drop shadow color (defaults to black). */
+  shadowColor?: string;
 }
 
 export interface SubtitleConfig {
   captions: CaptionWord[];
   position: SubtitlePosition;
   style: SubtitleStyle;
+  /**
+   * Free-drag caption placement. Normalized 0..1, center-anchored, relative to
+   * the 9:16 frame. When BOTH are present they override `position`; when absent
+   * the top/middle/bottom preset is used (back-compat default).
+   */
+  x?: number;
+  y?: number;
 }
 
 // --- Hook config ---
@@ -142,6 +172,12 @@ export interface TransitionsConfig {
   fadeIn: boolean;
   fadeOut: boolean;
   cutCrossfade: boolean;
+  /**
+   * Style of the smooth cut at internal boundaries. 'dip' = dip-to-black
+   * (current behavior), 'zoom' = brief zoom punch on the footage. Back-compat:
+   * when undefined and cutCrossfade is true, treat as 'dip'.
+   */
+  cutStyle?: "dip" | "zoom";
 }
 
 export interface BrollItem {
@@ -191,6 +227,8 @@ export const captionWordSchema = z.object({
   text: z.string(),
   startMs: z.number(),
   endMs: z.number(),
+  emoji: z.string().optional(),
+  highlight: z.boolean().optional(),
 });
 
 export const subtitleStyleSchema = z.object({
@@ -204,12 +242,20 @@ export const subtitleStyleSchema = z.object({
   bgOpacity: z.number().min(0).max(1),
   animation: z.enum(["none", "word-highlight", "pop", "karaoke"]),
   template: z.string().optional(),
+  fontWeight: z.number().optional(),
+  uppercase: z.boolean().optional(),
+  shadow: z.enum(["none", "small", "medium", "large"]).optional(),
+  shadowColor: z.string().optional(),
 });
 
 export const subtitleConfigSchema = z.object({
   captions: z.array(captionWordSchema),
   position: z.enum(["top", "middle", "bottom"]),
   style: subtitleStyleSchema,
+  // Free-drag placement (normalized, center-anchored). Optional → existing
+  // configs without x/y still validate and fall back to `position`.
+  x: z.number().min(0).max(1).optional(),
+  y: z.number().min(0).max(1).optional(),
 });
 
 export const hookConfigSchema = z.object({
@@ -288,6 +334,7 @@ export const transitionsConfigSchema = z.object({
   fadeIn: z.boolean(),
   fadeOut: z.boolean(),
   cutCrossfade: z.boolean(),
+  cutStyle: z.enum(["dip", "zoom"]).optional(),
 });
 
 export const brollItemSchema = z.object({
