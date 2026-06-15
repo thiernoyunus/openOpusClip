@@ -108,6 +108,22 @@ export const editorReducer = (state, action) => {
             });
             return withHistory({ ...state.framing, segments });
         }
+        case 'SPLIT_SEGMENT': {
+            // Razor split: divide the segment under the playhead into two
+            // independent halves so each can get its own layout/reframe. The
+            // frame is a SOURCE frame and must fall strictly inside a segment.
+            const { frame } = action;
+            const MIN_LEN = 10; // frames
+            const segs = state.framing.segments;
+            const idx = segs.findIndex((s) => s.startFrame < frame && frame < s.endFrame);
+            if (idx === -1) return state;
+            const seg = segs[idx];
+            if (frame - seg.startFrame < MIN_LEN || seg.endFrame - frame < MIN_LEN) return state;
+            const left = { ...seg, endFrame: frame };
+            const right = { ...seg, startFrame: frame, id: `${seg.id}-s${Date.now().toString(36)}` };
+            const segments = [...segs.slice(0, idx), left, right, ...segs.slice(idx + 1)];
+            return withHistory({ ...state.framing, segments });
+        }
         case 'SET_CLIP_BOUNDS': {
             // Trim (inward) or extend (outward into the padded source).
             // Invariant: segments always cover exactly [clipIn, clipOut].
@@ -129,27 +145,15 @@ export const editorReducer = (state, action) => {
         }
         case 'ADD_CUT': {
             const f = state.framing;
-            const start = Math.max(action.startFrame, f.clipInFrame);
-            const end = Math.min(action.endFrame, f.clipOutFrame);
-            if (end - start < 2) return state;
-            // merge with overlapping/adjacent cuts (within 2 frames)
-            const merged = [];
-            let cur = { startFrame: start, endFrame: end };
-            for (const c of [...f.cuts].sort((a, b) => a.startFrame - b.startFrame)) {
-                if (c.endFrame >= cur.startFrame - 2 && c.startFrame <= cur.endFrame + 2) {
-                    cur = {
-                        startFrame: Math.min(cur.startFrame, c.startFrame),
-                        endFrame: Math.max(cur.endFrame, c.endFrame),
-                    };
-                } else {
-                    merged.push(c);
-                }
-            }
-            merged.push(cur);
-            merged.sort((a, b) => a.startFrame - b.startFrame);
-            // never let cuts consume the whole clip
-            const kept = f.clipOutFrame - f.clipInFrame - merged.reduce((acc, c) => acc + (c.endFrame - c.startFrame), 0);
-            if (kept < 10) return state;
+            const merged = mergeCuts(f.cuts, [{ startFrame: action.startFrame, endFrame: action.endFrame }], f.clipInFrame, f.clipOutFrame);
+            if (merged === null) return state;
+            return withHistory({ ...f, cuts: merged });
+        }
+        case 'ADD_CUTS': {
+            // Apply many cuts in ONE history entry (e.g. speech cleanup).
+            const f = state.framing;
+            const merged = mergeCuts(f.cuts, action.cuts ?? [], f.clipInFrame, f.clipOutFrame);
+            if (merged === null) return state;
             return withHistory({ ...f, cuts: merged });
         }
         case 'REMOVE_CUT': {
@@ -310,6 +314,39 @@ export function buildFillKeyframes(framing, segment, trackId) {
         });
     }
     return keyframes;
+}
+
+/**
+ * Fold one or more new cut ranges into the existing cut list. Clamps each
+ * addition to [clipIn, clipOut], drops ranges shorter than 2 frames, merges
+ * any cuts that overlap or sit within 2 frames of each other, and refuses
+ * (returns null) if the result would leave fewer than 10 kept frames so a cut
+ * can never consume the whole clip. Shared by ADD_CUT and ADD_CUTS so both
+ * paths use identical merge/clamp logic.
+ */
+function mergeCuts(existing, additions, clipIn, clipOut) {
+    const clamped = (additions ?? [])
+        .map((c) => ({
+            startFrame: Math.max(c.startFrame, clipIn),
+            endFrame: Math.min(c.endFrame, clipOut),
+        }))
+        .filter((c) => c.endFrame - c.startFrame >= 2);
+    if (clamped.length === 0) return null;
+    const merged = [];
+    let cur = null;
+    for (const c of [...existing, ...clamped].sort((a, b) => a.startFrame - b.startFrame)) {
+        if (cur && c.startFrame <= cur.endFrame + 2) {
+            cur.endFrame = Math.max(cur.endFrame, c.endFrame);
+        } else {
+            if (cur) merged.push(cur);
+            cur = { startFrame: c.startFrame, endFrame: c.endFrame };
+        }
+    }
+    if (cur) merged.push(cur);
+    // never let cuts consume the whole clip
+    const kept = clipOut - clipIn - merged.reduce((acc, c) => acc + (c.endFrame - c.startFrame), 0);
+    if (kept < 10) return null;
+    return merged;
 }
 
 /**

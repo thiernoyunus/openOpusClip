@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Play, Pause, SkipBack, X } from 'lucide-react';
+import { Play, Pause, SkipBack, X, SplitSquareHorizontal } from 'lucide-react';
 import { EDITOR_FPS } from './EditorCanvas';
 import { useFilmstrip, useWaveform } from './useMediaStrips';
 import { outputDurationFrames, outputToSource, sourceToOutput } from '../../remotion/lib/edl';
@@ -112,6 +112,18 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
         else p.play();
     }, [playerRef]);
 
+    // Razor split: divide the segment under the playhead into two independent
+    // segments. Only possible when the playhead sits strictly inside a segment
+    // with at least 10 frames left on each side (mirrors SPLIT_SEGMENT).
+    const splitFrame = outputToSource(framing, frame, EDITOR_FPS);
+    const canSplit = framing.segments.some(
+        (s) => splitFrame - s.startFrame >= 10 && s.endFrame - splitFrame >= 10
+    );
+    const handleSplit = useCallback(() => {
+        const srcFrame = outputToSource(framing, frame, EDITOR_FPS);
+        dispatch({ type: 'SPLIT_SEGMENT', frame: srcFrame });
+    }, [framing, frame, dispatch]);
+
     const seekToSourceFrame = useCallback(
         (srcFrame) => {
             const p = playerRef.current;
@@ -199,6 +211,19 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                     aria-label={playing ? 'Pause' : 'Play'}
                 >
                     {playing ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
+                </button>
+                <button
+                    onClick={handleSplit}
+                    disabled={!canSplit}
+                    title="Split segment at playhead"
+                    aria-label="Split segment at playhead"
+                    className={`w-8 h-8 rounded-md flex items-center justify-center transition-colors ${
+                        canSplit
+                            ? 'text-muted hover:text-fg hover:bg-white/5'
+                            : 'text-zinc-700 cursor-not-allowed'
+                    }`}
+                >
+                    <SplitSquareHorizontal size={15} />
                 </button>
                 <span className="text-xs text-muted tabular-nums">
                     {fmt(frame)} <span className="text-zinc-600">/</span> {fmt(durationInFrames)}
