@@ -1,6 +1,18 @@
 # OpenShorts Video Editor — Part 3: Opus Parity (Performance + AI Features)
 
-> Status: **planned** (drafted 2026-06-15). Parts 1 & 2 (docs/video-editor-plan.md, docs/video-editor-plan-2.md) are shipped on `main`: non-destructive framing, layouts, tracker, manual reframe, transcript, captions/templates, timeline strips, EDL trim/cut, transcript-driven cuts, transitions, text overlays, music, screenshare/gameplay, b-roll (Pexels), export.
+> Status: **largely shipped** on branch `editor-opus-parity` (2026-06-15). Parts 1 & 2 (docs/video-editor-plan.md, docs/video-editor-plan-2.md) are on `main`: non-destructive framing, layouts, tracker, manual reframe, transcript, captions/templates, timeline strips, EDL trim/cut, transcript-driven cuts, transitions, text overlays, music, screenshare/gameplay, b-roll (Pexels), export.
+>
+> ### Implementation status (this doc), branch `editor-opus-parity`
+> - **Phase 0** — investigated. The split/cut code is ALREADY on `main` and in the running copy (`~/Documents/openshorts`); its `dist/` build is just stale (Jun 13). No "missing code" — needs a rebuild + the new razor Split makes it discoverable. See §0 note.
+> - **Phase 1 (perf)** — DONE, commit `9d06a1c`: 540×960 preview, memoized `<Word>`/binary-search transcript, memoized filmstrip/waveform, `React.memo` panels, cached drag rect.
+> - **Phase 2a** — DONE, commit `e5a12d6`: Speech Cleanup (filler/pause→cuts, `ADD_CUTS`) + razor Split (`SPLIT_SEGMENT`).
+> - **Phase 2b** — DONE, commit `0cb054e`: AI emoji + keyword highlight (Gemini `get_caption_enhancements` + `POST /api/captions/enhance` + per-word render). Manual emoji picker deferred. AI path NOT runtime-tested (no key in env).
+> - **Phase 2c** — DONE, commit `67752de`: drag-to-reposition captions on canvas (`CaptionDragOverlay`, subtitle `x`/`y`).
+> - **Phase 3 (transitions)** — DONE, commit `aeae551`: zoom cut-transition (`TransitionZoom`, `cutStyle:'dip'|'zoom'`).
+> - **Phase 3 (AI b-roll)** — DONE, commit `1c775c2`: auto-placement (Gemini `get_broll_suggestions` + `POST /api/broll/suggest` + Pexels orchestration). NOT runtime-tested.
+> - **Still open**: "Add a Section" (richer extend — needs full-source transcript availability; basic extend already works via timeline trim handles into padding), manual emoji picker, text-overlay radius/width controls, Phase 4 (AI Voiceover, Export to XML).
+> - All gates green as a unit: dashboard eslint 0 errors, vite build OK, render-service `tsc --noEmit` clean, both remotion copies byte-identical, python ast clean.
+> - **Runtime caveats to verify with live keys**: the two Gemini endpoints (`/api/captions/enhance`, `/api/broll/suggest`) were build/lint/syntax-verified only. The emoji `response_schema` uses `additionalProperties` (a free-form map) which Gemini's structured-output validator may reject — it degrades gracefully to "no enhancements" but should be tested; b-roll uses the safer array-of-objects schema.
 > This doc specs the remaining gap to reach Opus Clip parity, ranked by user-felt pain. Written so ANY model/person can continue cold.
 > Source of truth for "what Opus does": `help.opus.pro/docs` "Edit Your Clips" article set (read 2026-06-15) + live editor screenshots.
 
