@@ -1,15 +1,17 @@
-import React from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   AbsoluteFill,
   Sequence,
   useCurrentFrame,
   useVideoConfig,
-  spring,
   interpolate,
+  delayRender,
+  continueRender,
 } from "remotion";
 import type { SubtitleConfig } from "../lib/types";
 import { groupCaptionsIntoBlocks, getActiveWordIndex } from "../lib/captions";
-import { getFontStack } from "../lib/fonts";
+import { getFontStack, captionFontFaces, BUNDLED_CAPTION_FONTS } from "../lib/fonts";
+import { getCaptionTemplate, resolveTemplateId } from "../lib/captionTemplates";
 
 interface SubtitlesProps {
   config: SubtitleConfig;
@@ -21,17 +23,48 @@ const POSITION_MAP: Record<string, React.CSSProperties> = {
   bottom: { bottom: "10%", top: "auto" },
 };
 
+/** How long a block lingers after its last word, clamped to the next block. */
+const TAIL_MS = 320;
+/** Block fade in/out length, in frames. */
+const FADE_FRAMES = 4;
+
+/** Injects bundled caption @font-face rules and blocks render until they load. */
+const FontLoader: React.FC = () => {
+  const [handle] = useState(() => delayRender("caption-fonts"));
+
+  const load = useCallback(async () => {
+    try {
+      await Promise.all(
+        BUNDLED_CAPTION_FONTS.map((f) => document.fonts.load(`700 64px "${f}"`))
+      );
+    } catch {
+      // fall through — render with whatever resolved rather than hanging
+    }
+    continueRender(handle);
+  }, [handle]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return <style>{captionFontFaces}</style>;
+};
+
 export const Subtitles: React.FC<SubtitlesProps> = ({ config }) => {
   const { fps } = useVideoConfig();
-  const blocks = groupCaptionsIntoBlocks(config.captions);
+  const template = getCaptionTemplate(resolveTemplateId(config.style));
+  const blocks = groupCaptionsIntoBlocks(config.captions, template.grouping);
 
   return (
     <AbsoluteFill>
+      <FontLoader />
       {blocks.map((block, i) => {
         const startFrame = Math.round((block.startMs / 1000) * fps);
+        const nextStartMs = blocks[i + 1]?.startMs ?? Infinity;
+        const effectiveEndMs = Math.min(nextStartMs, block.endMs + TAIL_MS);
         const durationFrames = Math.max(
           1,
-          Math.round(((block.endMs - block.startMs) / 1000) * fps)
+          Math.round(((effectiveEndMs - block.startMs) / 1000) * fps)
         );
 
         return (
@@ -44,7 +77,7 @@ export const Subtitles: React.FC<SubtitlesProps> = ({ config }) => {
             <SubtitleBlock
               block={block}
               config={config}
-              blockStartMs={block.startMs}
+              durationFrames={durationFrames}
             />
           </Sequence>
         );
@@ -56,36 +89,41 @@ export const Subtitles: React.FC<SubtitlesProps> = ({ config }) => {
 interface SubtitleBlockProps {
   block: ReturnType<typeof groupCaptionsIntoBlocks>[number];
   config: SubtitleConfig;
-  blockStartMs: number;
+  durationFrames: number;
 }
 
 const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   block,
   config,
-  blockStartMs,
+  durationFrames,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { style, position } = config;
 
-  // Current time relative to composition start (sequence-relative frame)
-  const currentTimeMs = blockStartMs + (frame / fps) * 1000;
+  const template = getCaptionTemplate(resolveTemplateId(style));
+  const fontStack = getFontStack(template.font ?? style.fontFamily);
+  const uppercase = template.uppercase ?? false;
+
+  const currentTimeMs = block.startMs + (frame / fps) * 1000;
   const activeIndex = getActiveWordIndex(block.words, currentTimeMs);
 
   const positionStyle = POSITION_MAP[position] ?? POSITION_MAP.bottom;
-  const fontStack = getFontStack(style.fontFamily);
+  const containerStyle = template.containerStyle?.(style) ?? {};
 
-  // Background box style
-  const hasBg = style.bgOpacity > 0;
-  const bgStyle: React.CSSProperties = hasBg
-    ? {
-        backgroundColor: `${style.bgColor}${Math.round(style.bgOpacity * 255)
-          .toString(16)
-          .padStart(2, "0")}`,
-        borderRadius: 8,
-        padding: "8px 16px",
-      }
-    : {};
+  // Block-level fade so captions enter/leave smoothly instead of popping.
+  // Short blocks need a smaller fade, otherwise the in/out points collide and
+  // produce a non-increasing input range (interpolate throws on that).
+  const fade = Math.min(FADE_FRAMES, Math.floor((durationFrames - 1) / 2));
+  const opacity =
+    fade >= 1
+      ? interpolate(
+          frame,
+          [0, fade, durationFrames - fade, durationFrames],
+          [0, 1, 1, 0],
+          { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+        )
+      : 1;
 
   return (
     <div
@@ -95,6 +133,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
         right: 0,
         display: "flex",
         justifyContent: "center",
+        opacity,
         ...positionStyle,
       }}
     >
@@ -103,126 +142,40 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           display: "flex",
           flexWrap: "wrap",
           justifyContent: "center",
-          // Word gap must scale with the font or words visually run together
-          gap: `${Math.round(style.fontSize * 0.12)}px ${Math.round(style.fontSize * 0.3)}px`,
-          maxWidth: "85%",
-          ...bgStyle,
+          alignItems: "center",
+          gap: `${Math.round(style.fontSize * 0.12)}px ${Math.round(
+            style.fontSize * 0.28
+          )}px`,
+          maxWidth: "88%",
+          ...containerStyle,
         }}
       >
-        {block.words.map((word, i) => (
-          <WordSpan
-            key={i}
-            word={word.text}
-            isActive={i === activeIndex}
-            style={style}
-            fontStack={fontStack}
-            animation={style.animation}
-            frame={frame}
-            fps={fps}
-            wordStartMs={word.startMs}
-            blockStartMs={blockStartMs}
-          />
-        ))}
+        {block.words.map((word, i) => {
+          const wordStartFrame = Math.round(
+            ((word.startMs - block.startMs) / 1000) * fps
+          );
+          const wordEndFrame = Math.round(
+            ((word.endMs - block.startMs) / 1000) * fps
+          );
+          return (
+            <React.Fragment key={i}>
+              {template.renderWord({
+                word: word.text,
+                isActive: i === activeIndex,
+                isPast: i < activeIndex,
+                frame,
+                fps,
+                wordStartFrame,
+                wordEndFrame,
+                style,
+                fontStack,
+                uppercase,
+                seed: Math.round(word.startMs),
+              })}
+            </React.Fragment>
+          );
+        })}
       </div>
     </div>
-  );
-};
-
-interface WordSpanProps {
-  word: string;
-  isActive: boolean;
-  style: SubtitleConfig["style"];
-  fontStack: string;
-  animation: SubtitleConfig["style"]["animation"];
-  frame: number;
-  fps: number;
-  wordStartMs: number;
-  blockStartMs: number;
-}
-
-const WordSpan: React.FC<WordSpanProps> = ({
-  word,
-  isActive,
-  style,
-  fontStack,
-  animation,
-  frame,
-  fps,
-  wordStartMs,
-  blockStartMs,
-}) => {
-  const wordStartFrame = Math.round(
-    ((wordStartMs - blockStartMs) / 1000) * fps
-  );
-
-  let transform = "";
-  let color = style.fontColor;
-  let extraStyle: React.CSSProperties = {};
-
-  if (isActive) {
-    color = style.highlightColor;
-
-    switch (animation) {
-      case "pop": {
-        const scale = spring({
-          frame: frame - wordStartFrame,
-          fps,
-          config: { mass: 0.5, stiffness: 300, damping: 12 },
-          durationInFrames: 10,
-        });
-        const scaleValue = interpolate(scale, [0, 1], [1, 1.25]);
-        transform = `scale(${scaleValue})`;
-        break;
-      }
-      case "karaoke": {
-        extraStyle = {
-          backgroundColor: style.highlightColor,
-          color: style.bgColor || "#000000",
-          borderRadius: 4,
-          padding: "2px 6px",
-        };
-        break;
-      }
-      case "word-highlight": {
-        extraStyle = {
-          textShadow: `0 0 12px ${style.highlightColor}, 0 0 24px ${style.highlightColor}40`,
-        };
-        break;
-      }
-      default:
-        break;
-    }
-  }
-
-  // Text stroke via textShadow (CSS paint-order not reliable in Remotion)
-  const strokeShadow =
-    style.borderWidth > 0
-      ? [
-          `${style.borderWidth}px 0 0 ${style.borderColor}`,
-          `-${style.borderWidth}px 0 0 ${style.borderColor}`,
-          `0 ${style.borderWidth}px 0 ${style.borderColor}`,
-          `0 -${style.borderWidth}px 0 ${style.borderColor}`,
-        ].join(", ")
-      : "none";
-
-  return (
-    <span
-      style={{
-        fontFamily: fontStack,
-        fontSize: style.fontSize,
-        fontWeight: 700,
-        color: animation === "karaoke" && isActive ? undefined : color,
-        textShadow:
-          animation !== "karaoke"
-            ? [strokeShadow, extraStyle.textShadow].filter(Boolean).join(", ")
-            : strokeShadow,
-        transform,
-        display: "inline-block",
-        transition: "none",
-        ...extraStyle,
-      }}
-    >
-      {word}
-    </span>
   );
 };

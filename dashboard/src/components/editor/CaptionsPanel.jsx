@@ -1,16 +1,48 @@
 import React, { useState } from 'react';
-import { Type, Bookmark, Check } from 'lucide-react';
-import { defaultSubtitleConfig, CAPTION_PRESETS, saveDefaultCaptionStyle } from './useEditorState';
+import { Type, Bookmark, Check, Sparkles } from 'lucide-react';
+import { defaultSubtitleConfig, saveDefaultCaptionStyle } from './useEditorState';
+import { CAPTION_TEMPLATES, resolveTemplateId, getCaptionTemplate } from '../../remotion/lib/captionTemplates';
+import { SUBTITLE_FONTS } from '../../remotion/lib/fonts';
 
 const POSITIONS = ['top', 'middle', 'bottom'];
-const ANIMATIONS = ['none', 'word-highlight', 'pop', 'karaoke'];
-const HIGHLIGHTS = ['#FFDD00', '#3dd68c', '#FF5C5C', '#5CA8FF', '#FFFFFF'];
+const HIGHLIGHTS = ['#FFDD00', '#3dd68c', '#FF5C5C', '#5CA8FF', '#00E5FF', '#FFD700', '#FFFFFF'];
+const FONT_OPTIONS = Object.keys(SUBTITLE_FONTS);
+
+const EFFECT_TEMPLATES = CAPTION_TEMPLATES.filter((t) => t.category === 'effects');
+const CLASSIC_TEMPLATES = CAPTION_TEMPLATES.filter((t) => t.category === 'classic');
+
+/** Preview chip for a template, rendered with its own font/colors. */
+function TemplateButton({ tpl, active, onClick }) {
+    const ds = tpl.defaultStyle || {};
+    return (
+        <button
+            onClick={onClick}
+            className={`px-2 py-2 rounded-lg border transition-colors ${
+                active ? 'bg-white/10 border-white/30' : 'border-edge bg-surface2/50 hover:bg-white/5'
+            }`}
+        >
+            <span
+                className="block text-[14px] leading-none"
+                style={{
+                    fontFamily: SUBTITLE_FONTS[ds.fontFamily] ?? ds.fontFamily ?? 'inherit',
+                    color: ds.fontColor || '#FFFFFF',
+                    fontWeight: 800,
+                    textTransform: tpl.uppercase ? 'uppercase' : 'none',
+                    textShadow: ds.borderWidth ? `0 0 1px ${ds.borderColor || '#000'}` : 'none',
+                }}
+            >
+                Abc
+            </span>
+            <span className="block text-[10px] text-muted mt-1 truncate">{tpl.label}</span>
+        </button>
+    );
+}
 
 /**
- * Right-rail Captions tab: enable/disable burned captions, pick a style
- * preset, and adjust position / size / animation / highlight color. The
- * config lives at framing.subtitles so it persists with Save and is burned
- * into the Export.
+ * Right-rail Captions tab: enable/disable captions, pick a template (classic
+ * animations or animated effect styles ported from HyperFrames), and adjust
+ * font / position / size / highlight. Config lives at framing.subtitles so it
+ * persists with Save and is baked into the Export.
  */
 export default function CaptionsPanel({ framing, captions, dispatch }) {
     const subs = framing.subtitles || null;
@@ -21,6 +53,16 @@ export default function CaptionsPanel({ framing, captions, dispatch }) {
             type: 'SET_SUBTITLES',
             subtitles: { ...subs, style: { ...subs.style, ...patch } },
         });
+
+    const applyTemplate = (tpl) =>
+        dispatch({
+            type: 'SET_SUBTITLES',
+            subtitles: { ...subs, style: { ...subs.style, ...tpl.defaultStyle } },
+        });
+
+    const currentId = subs ? resolveTemplateId(subs.style) : null;
+    const currentTpl = subs ? getCaptionTemplate(currentId) : null;
+    const fontLocked = !!(currentTpl && currentTpl.font);
 
     return (
         <div className="p-4">
@@ -52,30 +94,44 @@ export default function CaptionsPanel({ framing, captions, dispatch }) {
                 </p>
             ) : (
                 <div className="space-y-4">
-                    {/* Presets */}
+                    {/* Effect templates */}
                     <div>
-                        <span className="block text-[11px] text-muted mb-1.5">Style preset</span>
+                        <span className="flex items-center gap-1 text-[11px] text-muted mb-1.5">
+                            <Sparkles size={11} /> Effects
+                        </span>
                         <div className="grid grid-cols-3 gap-1.5">
-                            {CAPTION_PRESETS.map((p) => (
-                                <button
-                                    key={p.id}
-                                    onClick={() => setStyle(p.style)}
-                                    className="px-2 py-2 rounded-lg border border-edge bg-surface2/50 hover:bg-white/5 transition-colors"
-                                >
-                                    <span
-                                        className="block text-[13px] font-bold"
-                                        style={{
-                                            color: p.style.fontColor,
-                                            WebkitTextStroke: p.style.borderWidth ? `1px ${p.style.borderColor}` : undefined,
-                                            backgroundColor: p.style.bgOpacity ? p.style.bgColor : 'transparent',
-                                        }}
-                                    >
-                                        Abc
-                                    </span>
-                                    <span className="block text-[10px] text-muted mt-1">{p.label}</span>
-                                </button>
+                            {EFFECT_TEMPLATES.map((t) => (
+                                <TemplateButton key={t.id} tpl={t} active={currentId === t.id} onClick={() => applyTemplate(t)} />
                             ))}
                         </div>
+                    </div>
+
+                    {/* Classic templates */}
+                    <div>
+                        <span className="block text-[11px] text-muted mb-1.5">Classic</span>
+                        <div className="grid grid-cols-3 gap-1.5">
+                            {CLASSIC_TEMPLATES.map((t) => (
+                                <TemplateButton key={t.id} tpl={t} active={currentId === t.id} onClick={() => applyTemplate(t)} />
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Font */}
+                    <div>
+                        <span className="block text-[11px] text-muted mb-1.5">Font</span>
+                        <select
+                            value={subs.style.fontFamily}
+                            disabled={fontLocked}
+                            onChange={(e) => setStyle({ fontFamily: e.target.value })}
+                            className="w-full bg-surface2 border border-edge rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-white/30 [color-scheme:dark] disabled:opacity-50"
+                        >
+                            {FONT_OPTIONS.map((f) => (
+                                <option key={f} value={f}>{f}</option>
+                            ))}
+                        </select>
+                        {fontLocked && (
+                            <p className="text-[10px] text-zinc-500 mt-1">This effect uses its own font ({currentTpl.font}).</p>
+                        )}
                     </div>
 
                     {/* Position */}
@@ -108,31 +164,17 @@ export default function CaptionsPanel({ framing, captions, dispatch }) {
                         <input
                             type="range"
                             min={32}
-                            max={84}
+                            max={96}
                             value={subs.style.fontSize}
                             onChange={(e) => setStyle({ fontSize: Number(e.target.value) })}
                             className="w-full accent-white"
                         />
                     </div>
 
-                    {/* Animation */}
-                    <div>
-                        <span className="block text-[11px] text-muted mb-1.5">Animation</span>
-                        <select
-                            value={subs.style.animation}
-                            onChange={(e) => setStyle({ animation: e.target.value })}
-                            className="w-full bg-surface2 border border-edge rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-white/30 [color-scheme:dark]"
-                        >
-                            {ANIMATIONS.map((a) => (
-                                <option key={a} value={a}>{a}</option>
-                            ))}
-                        </select>
-                    </div>
-
                     {/* Highlight color */}
                     <div>
                         <span className="block text-[11px] text-muted mb-1.5">Highlight</span>
-                        <div className="flex gap-1.5">
+                        <div className="flex flex-wrap gap-1.5">
                             {HIGHLIGHTS.map((c) => (
                                 <button
                                     key={c}
