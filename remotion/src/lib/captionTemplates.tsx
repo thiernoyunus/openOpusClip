@@ -620,6 +620,17 @@ const ChromeShineWord: React.FC<WordRenderArgs> = ({ word, frame, fps, wordStart
   return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 400, textTransform: "uppercase", display: "inline-block", transform: `translateY(${y.toFixed(1)}px) scale(${sc.toFixed(3)})`, opacity: t < 0 ? 0 : 1, backgroundImage: "linear-gradient(110deg,#7a7a7a 0%,#ffffff 42%,#e9e9e9 50%,#8f8f8f 58%,#ffffff 100%)", backgroundSize: "250% 100%", backgroundPosition: `${pos.toFixed(0)}% 0`, WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent", color: "transparent", WebkitTextStroke: `${Math.max(1, style.borderWidth || 2)}px ${style.borderColor || "#111111"}`, filter: "drop-shadow(0 3px 6px rgba(0,0,0,0.5))" }}>{word}</span>;
 };
 
+// apple — Apple keynote/marketing style: each word blur-fades up into place
+const AppleWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack }) => {
+  const t = frame - wordStartFrame;
+  if (t < 0) return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, opacity: 0, display: "inline-block" }}>{word}</span>;
+  const e = interpolate(t, [0, Math.max(1, Math.round(0.45 * fps))], [0, 1], { extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
+  const blur = (1 - e) * 10;
+  const ty = (1 - e) * 14;
+  const scale = interpolate(e, [0, 1], [0.96, 1]);
+  return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: 600, letterSpacing: "-0.02em", display: "inline-block", opacity: e, filter: blur > 0.1 ? `blur(${blur.toFixed(1)}px)` : "none", transform: `translateY(${ty.toFixed(1)}px) scale(${scale.toFixed(3)})`, color: isActive ? style.highlightColor : style.fontColor, textShadow: strokeShadow(style) || "0 2px 12px rgba(0,0,0,0.45)" }}>{word}</span>;
+};
+
 // --- trending viral styles (TikTok/Reels/Shorts 2026) -----------------------
 
 // hormozi — Montserrat Black all-caps, thick outline, spoken word pops in color
@@ -803,6 +814,15 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     grouping: { maxWords: 3, maxChars: 18 },
     defaultStyle: { template: "chrome-shine", animation: "none", fontFamily: "Anton", fontSize: 84, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#111111", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <ChromeShineWord {...args} />,
+  },
+  {
+    id: "apple",
+    label: "Apple",
+    category: "effects",
+    font: "Inter",
+    grouping: { maxWords: 4, maxChars: 26 },
+    defaultStyle: { template: "apple", animation: "none", fontFamily: "Inter", fontSize: 62, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    renderWord: (args) => <AppleWord {...args} />,
   },
   {
     id: "glitch-rgb",
