@@ -4,7 +4,12 @@ import { Sparkles } from 'lucide-react';
 const TOGGLES = [
     { key: 'fadeIn', label: 'Fade in', desc: 'Ease in from black at the start' },
     { key: 'fadeOut', label: 'Fade out', desc: 'Ease out to black at the end' },
-    { key: 'cutCrossfade', label: 'Smooth cuts', desc: 'Soft dip-to-black at each cut' },
+    { key: 'cutCrossfade', label: 'Smooth cuts', desc: 'Soft transition at each cut' },
+];
+
+const CUT_STYLES = [
+    { key: 'dip', label: 'Dip to black', desc: 'Brief fade through black' },
+    { key: 'zoom', label: 'Zoom', desc: 'Quick zoom punch' },
 ];
 
 /** Right-rail Transitions tab: clip-level fade in/out + smooth cut dips. */
@@ -43,6 +48,32 @@ function TransitionsPanel({ framing, dispatch }) {
                     </button>
                 ))}
             </div>
+
+            {/* Cut style picker — only when smooth cuts are enabled. */}
+            {t.cutCrossfade && (
+                <div className="mt-3">
+                    <span className="block text-[10px] font-medium text-muted uppercase tracking-wide mb-1.5">
+                        Cut style
+                    </span>
+                    <div className="grid grid-cols-2 gap-1.5">
+                        {CUT_STYLES.map((cs) => {
+                            const active = (t.cutStyle || 'dip') === cs.key;
+                            return (
+                                <button
+                                    key={cs.key}
+                                    onClick={() => dispatch({ type: 'SET_TRANSITIONS', patch: { cutStyle: cs.key } })}
+                                    className={`px-3 py-2 rounded-lg border text-left transition-colors ${
+                                        active ? 'bg-white/10 border-white/25' : 'bg-surface2/50 border-edge hover:bg-white/5'
+                                    }`}
+                                >
+                                    <span className="block text-xs font-medium text-fg">{cs.label}</span>
+                                    <span className="block text-[10px] text-muted">{cs.desc}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

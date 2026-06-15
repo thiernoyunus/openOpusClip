@@ -29,7 +29,9 @@ export const TransitionOverlay: React.FC<{ framing: FramingConfig }> = ({
   if (t.fadeOut && frame > total - FADE) {
     opacity = Math.max(opacity, (frame - (total - FADE)) / FADE);
   }
-  if (t.cutCrossfade) {
+  // Dip-to-black only when smooth cuts are on AND the style is dip (default).
+  // The 'zoom' cut style is handled by TransitionZoom instead.
+  if (t.cutCrossfade && t.cutStyle !== "zoom") {
     const ranges = placedRanges(framing, fps);
     for (let i = 1; i < ranges.length; i++) {
       const boundary = ranges[i].outStart;

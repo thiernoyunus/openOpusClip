@@ -160,6 +160,12 @@ export interface TransitionsConfig {
   fadeIn: boolean;
   fadeOut: boolean;
   cutCrossfade: boolean;
+  /**
+   * Style of the smooth cut at internal boundaries. 'dip' = dip-to-black
+   * (current behavior), 'zoom' = brief zoom punch on the footage. Back-compat:
+   * when undefined and cutCrossfade is true, treat as 'dip'.
+   */
+  cutStyle?: "dip" | "zoom";
 }
 
 export interface BrollItem {
@@ -314,6 +320,7 @@ export const transitionsConfigSchema = z.object({
   fadeIn: z.boolean(),
   fadeOut: z.boolean(),
   cutCrossfade: z.boolean(),
+  cutStyle: z.enum(["dip", "zoom"]).optional(),
 });
 
 export const brollItemSchema = z.object({
