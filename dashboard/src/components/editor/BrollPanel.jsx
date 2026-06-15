@@ -1,12 +1,26 @@
 import React, { useState } from 'react';
-import { Clapperboard, Search, Trash2, Loader2, Plus, KeyRound } from 'lucide-react';
+import { Clapperboard, Search, Trash2, Loader2, Plus, KeyRound, Sparkles } from 'lucide-react';
+import { getApiUrl } from '../../config';
+
+const MAX_BROLL = 3;
+
+// Pick a reasonable HD portrait video file from a Pexels video result.
+// Shared by manual insert and AI auto-insert so the picking logic lives once.
+const pickPexelsFile = (video) =>
+    video.video_files.find((f) => f.quality === 'hd' && f.height >= f.width) ||
+    video.video_files.find((f) => f.height >= f.width) ||
+    video.video_files[0];
 
 /**
  * Right-rail B-Roll tab: search Pexels for portrait stock video and insert a
  * 4s clip at the playhead (max 3). The Pexels key lives in localStorage; the
  * search runs client-side. Inserts store SOURCE-frame spans (EDL-mapped).
+ *
+ * Also offers "Auto-add AI B-Roll": Gemini analyzes the caption transcript and
+ * suggests contextual keywords + timing, which are turned into Pexels clips and
+ * inserted automatically (Opus-parity feature, built on the manual flow).
  */
-function BrollPanel({ framing, dispatch, getCurrentSourceFrame }) {
+function BrollPanel({ framing, dispatch, getCurrentSourceFrame, captions = [] }) {
     const broll = framing.broll || [];
     const srcFps = framing.source.fps;
     const [key, setKey] = useState(() => localStorage.getItem('pexels_key') || '');
@@ -14,10 +28,23 @@ function BrollPanel({ framing, dispatch, getCurrentSourceFrame }) {
     const [results, setResults] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
+    const [aiLoading, setAiLoading] = useState(false);
+    const [aiError, setAiError] = useState(null);
 
     const saveKey = (v) => {
         setKey(v);
         localStorage.setItem('pexels_key', v);
+    };
+
+    // Fetch portrait stock videos for a keyword from Pexels (shared shape).
+    const searchPexels = async (q, perPage = 12) => {
+        const res = await fetch(
+            `https://api.pexels.com/videos/search?query=${encodeURIComponent(q)}&orientation=portrait&per_page=${perPage}`,
+            { headers: { Authorization: key } }
+        );
+        if (!res.ok) throw new Error(`Pexels error (${res.status})`);
+        const data = await res.json();
+        return data.videos || [];
     };
 
     const search = async () => {
@@ -25,13 +52,7 @@ function BrollPanel({ framing, dispatch, getCurrentSourceFrame }) {
         setLoading(true);
         setError(null);
         try {
-            const res = await fetch(
-                `https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&orientation=portrait&per_page=12`,
-                { headers: { Authorization: key } }
-            );
-            if (!res.ok) throw new Error(`Pexels error (${res.status})`);
-            const data = await res.json();
-            setResults(data.videos || []);
+            setResults(await searchPexels(query));
         } catch (e) {
             setError(e.message);
         } finally {
@@ -40,18 +61,77 @@ function BrollPanel({ framing, dispatch, getCurrentSourceFrame }) {
     };
 
     const insert = (video) => {
-        if (broll.length >= 3) return;
-        // pick a reasonable HD portrait file
-        const file =
-            video.video_files.find((f) => f.quality === 'hd' && f.height >= f.width) ||
-            video.video_files.find((f) => f.height >= f.width) ||
-            video.video_files[0];
+        if (broll.length >= MAX_BROLL) return;
+        const file = pickPexelsFile(video);
         const start = getCurrentSourceFrame();
         const end = Math.min(
             start + Math.round(4 * srcFps),
             framing.clipOutFrame ?? framing.source.durationFrames
         );
         dispatch({ type: 'ADD_BROLL', item: { id: `broll-${video.id}-${start}`, url: file.link, startFrame: start, endFrame: end } });
+    };
+
+    // AI auto-placement: ask Gemini for contextual b-roll (keyword + timing),
+    // then turn each suggestion into a Pexels clip and insert it at its moment.
+    const autoAdd = async () => {
+        if (captions.length === 0 || !key || broll.length >= MAX_BROLL) return;
+        const geminiKey = localStorage.getItem('gemini_key');
+        if (!geminiKey) {
+            setAiError('Set your Gemini API key in Settings');
+            return;
+        }
+        setAiLoading(true);
+        setAiError(null);
+        try {
+            const res = await fetch(getApiUrl('/api/broll/suggest'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': geminiKey },
+                body: JSON.stringify({ words: captions.map((w) => ({ text: w.text, startMs: w.startMs })) }),
+            });
+            if (!res.ok) throw new Error(`Suggestion failed (${res.status})`);
+            const { suggestions = [] } = await res.json();
+            if (suggestions.length === 0) {
+                setAiError('No b-roll suggestions for this clip');
+                return;
+            }
+
+            const clipIn = framing.clipInFrame ?? 0;
+            const clipOut = framing.clipOutFrame ?? framing.source.durationFrames;
+            let added = broll.length;
+            let inserted = 0;
+
+            for (const s of suggestions) {
+                if (added >= MAX_BROLL) break;
+                let videos;
+                try {
+                    videos = await searchPexels(s.keyword, 5);
+                } catch {
+                    continue; // skip a keyword that fails to search; keep going
+                }
+                if (!videos.length) continue;
+                const file = pickPexelsFile(videos[0]);
+                if (!file) continue;
+                const startFrame = clipIn + Math.round((s.startMs / 1000) * srcFps);
+                const endFrame = Math.min(startFrame + Math.round((s.durationMs / 1000) * srcFps), clipOut);
+                dispatch({
+                    type: 'ADD_BROLL',
+                    item: {
+                        id: `broll-ai-${videos[0].id}-${startFrame}-${added}`,
+                        url: file.link,
+                        startFrame,
+                        endFrame,
+                    },
+                });
+                added += 1;
+                inserted += 1;
+            }
+
+            if (inserted === 0) setAiError('No matching stock clips found');
+        } catch (e) {
+            setAiError(e.message);
+        } finally {
+            setAiLoading(false);
+        }
     };
 
     const fmt = (f) => `${((f - (framing.clipInFrame ?? 0)) / srcFps).toFixed(1)}s`;
@@ -95,6 +175,26 @@ function BrollPanel({ framing, dispatch, getCurrentSourceFrame }) {
                 </button>
             </div>
 
+            <button
+                onClick={autoAdd}
+                disabled={aiLoading || captions.length === 0 || broll.length >= MAX_BROLL}
+                title={
+                    captions.length === 0
+                        ? 'Captions are needed for AI b-roll'
+                        : broll.length >= MAX_BROLL
+                            ? `Maximum ${MAX_BROLL} b-roll clips reached`
+                            : 'Let AI analyze the transcript and place contextual b-roll'
+                }
+                className="w-full mb-3 flex items-center justify-center gap-1.5 rounded-lg bg-surface2 border border-edge text-xs font-medium text-fg py-1.5 hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+                {aiLoading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                {aiLoading ? 'Analyzing transcript…' : 'Auto-add AI B-Roll'}
+            </button>
+
+            {captions.length === 0 && (
+                <p className="text-[11px] text-muted mb-2">Captions are needed for AI b-roll auto-placement.</p>
+            )}
+            {aiError && <p className="text-[11px] text-red-400 mb-2">{aiError}</p>}
             {error && <p className="text-[11px] text-red-400 mb-2">{error}</p>}
 
             {broll.length > 0 && (

@@ -366,6 +366,140 @@ Return ONLY JSON of this exact shape:
 
         return {"emojis": emojis, "highlights": highlights}
 
+    def get_broll_suggestions(self, words_with_ms: list[dict]) -> list[dict]:
+        """
+        Text-only Gemini call: given the ordered caption words with their
+        millisecond start offsets (relative to clip start), suggest UP TO 3
+        contextual b-roll inserts. For each insert the model picks a concise
+        visual search keyword (good for stock-video search), the startMs (snapped
+        to one of the provided word startMs values where the concept is spoken),
+        and a durationMs between 2000 and 5000.
+
+        Returns [{"keyword": str, "startMs": int, "durationMs": int}, ...].
+        Robust to malformed responses — returns [] on any error/empty input.
+        """
+        if not words_with_ms:
+            return []
+
+        # Build the numbered, time-stamped transcript and the set of valid
+        # startMs values the model is allowed to snap to.
+        lines: list[str] = []
+        valid_ms: set[int] = set()
+        for w in words_with_ms:
+            if not isinstance(w, dict):
+                continue
+            text = str(w.get("text", "")).strip()
+            try:
+                ms = int(w.get("startMs"))
+            except (ValueError, TypeError):
+                continue
+            valid_ms.add(ms)
+            lines.append(f"{ms}: {text}")
+
+        if not lines:
+            return []
+
+        numbered = "\n".join(lines)
+
+        prompt = f"""You are a short-form video editor choosing B-ROLL inserts. You are given the spoken words of a vertical (9:16) short, one per line as "START_MS: WORD", where START_MS is the millisecond offset from the start of the clip.
+
+WORDS:
+{numbered}
+
+Suggest UP TO 3 contextual b-roll inserts — overlay stock-video clips that visually reinforce what is being said. Be selective and tasteful (most shorts need 0-3, not more).
+
+For EACH insert provide:
+1. "keyword": a concise visual search phrase for a stock-video library (2-4 words, concrete and filmable, e.g. "city skyline", "ocean waves", "stock market chart", "people running"). NO sentences, NO abstract concepts.
+2. "startMs": the moment the related concept is spoken. It MUST be exactly one of the START_MS values shown above.
+3. "durationMs": how long the insert should stay on screen, an integer between 2000 and 5000.
+
+Rules:
+- Only suggest inserts where a concrete visual clearly matches the words. If nothing fits, return an empty array — that is fine.
+- "startMs" MUST be copied verbatim from one of the START_MS values above.
+- At most 3 inserts.
+
+Return ONLY a JSON array of this exact shape:
+[
+  {{ "keyword": "city skyline", "startMs": 1200, "durationMs": 3000 }}
+]"""
+
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=[prompt],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema={
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "keyword": {"type": "string"},
+                                "startMs": {"type": "integer"},
+                                "durationMs": {"type": "integer"},
+                            },
+                            "required": ["keyword", "startMs", "durationMs"],
+                        },
+                    },
+                ),
+            )
+        except Exception as e:
+            print(f"❌ B-roll suggestion request failed: {e}")
+            return []
+
+        text = response.text if response and getattr(response, "text", None) else ""
+        if not text:
+            return []
+
+        # Defensive cleanup: strip markdown fences / trailing junk, then parse.
+        try:
+            if text.startswith("```json"):
+                text = text[7:]
+            elif text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+            start_idx = text.find("[")
+            end_idx = text.rfind("]")
+            if start_idx != -1 and end_idx != -1:
+                text = text[start_idx:end_idx + 1]
+            data = json.loads(text)
+        except (json.JSONDecodeError, TypeError) as e:
+            print(f"❌ Failed to parse b-roll suggestions JSON: {e}")
+            return []
+
+        if not isinstance(data, list):
+            return []
+
+        # Normalize / validate each suggestion, clamp duration, snap startMs to a
+        # real word offset, and cap the list at 3.
+        suggestions: list[dict] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            keyword = item.get("keyword")
+            if not isinstance(keyword, str) or not keyword.strip():
+                continue
+            try:
+                start_ms = int(item.get("startMs"))
+                duration_ms = int(item.get("durationMs"))
+            except (ValueError, TypeError):
+                continue
+            # Snap startMs to the nearest valid word offset if not exact.
+            if start_ms not in valid_ms:
+                start_ms = min(valid_ms, key=lambda m: abs(m - start_ms))
+            duration_ms = max(2000, min(5000, duration_ms))
+            suggestions.append({
+                "keyword": keyword.strip(),
+                "startMs": start_ms,
+                "durationMs": duration_ms,
+            })
+            if len(suggestions) >= 3:
+                break
+
+        return suggestions
+
     @staticmethod
     def _split_filter_chain(filter_string: str) -> list[str]:
         """Split a -vf filter chain on commas, respecting single-quoted substrings."""
