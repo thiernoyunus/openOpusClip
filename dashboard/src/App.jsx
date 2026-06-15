@@ -390,7 +390,18 @@ function App() {
         }
       }
 
-      if (!cancelled) setProcessingJobIds(nextIds);
+      // Keep the SAME array reference when the active job set is unchanged.
+      // Returning a new array every poll would re-trigger this effect (whose
+      // deps include processingJobIds), which immediately re-polls — a storm
+      // that re-renders the whole app as fast as fetches resolve and wedges
+      // the tab. Only churn the reference when the set actually changes.
+      if (!cancelled) {
+        setProcessingJobIds((prev) =>
+          prev.length === nextIds.length && prev.every((v, i) => v === nextIds[i])
+            ? prev
+            : nextIds
+        );
+      }
     };
 
     pollProcessingJobs();

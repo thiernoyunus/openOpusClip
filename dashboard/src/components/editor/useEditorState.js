@@ -365,8 +365,9 @@ const CAPTION_DEFAULT_KEY = 'openshorts_caption_style_default';
 const BUILTIN_CAPTION_STYLE = {
     position: 'bottom',
     style: {
+        template: 'classic-pop',
         fontFamily: 'Inter',
-        fontSize: 52,
+        fontSize: 56,
         fontColor: '#FFFFFF',
         highlightColor: '#FFDD00',
         borderColor: '#000000',
@@ -398,24 +399,9 @@ export function defaultSubtitleConfig(captions) {
     return { captions, position, style };
 }
 
-/** Caption style presets surfaced in the Captions tab. */
-export const CAPTION_PRESETS = [
-    {
-        id: 'clean',
-        label: 'Clean',
-        style: { fontFamily: 'Inter', fontSize: 52, fontColor: '#FFFFFF', highlightColor: '#FFDD00', borderColor: '#000000', borderWidth: 3, bgColor: '#000000', bgOpacity: 0, animation: 'pop' },
-    },
-    {
-        id: 'bold',
-        label: 'Bold',
-        style: { fontFamily: 'Inter', fontSize: 62, fontColor: '#FFFFFF', highlightColor: '#3dd68c', borderColor: '#000000', borderWidth: 5, bgColor: '#000000', bgOpacity: 0, animation: 'karaoke' },
-    },
-    {
-        id: 'bar',
-        label: 'Bar',
-        style: { fontFamily: 'Inter', fontSize: 48, fontColor: '#FFFFFF', highlightColor: '#FFFFFF', borderColor: '#000000', borderWidth: 0, bgColor: '#000000', bgOpacity: 0.65, animation: 'word-highlight' },
-    },
-];
+// Caption styles are now defined as templates in
+// dashboard/src/remotion/lib/captionTemplates.tsx (CAPTION_TEMPLATES) and
+// surfaced by CaptionsPanel — the old CAPTION_PRESETS list lived here.
 
 /** Center crop with a given pixel aspect, in normalized coords. */
 export function centerCropRect(panelAspect, srcW, srcH) {

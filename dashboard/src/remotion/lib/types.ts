@@ -21,6 +21,11 @@ export interface SubtitleStyle {
   bgColor: string;
   bgOpacity: number;
   animation: SubtitleAnimation;
+  /**
+   * Caption template id (see captionTemplates.tsx). Optional for back-compat:
+   * when absent the renderer derives a "classic" template from `animation`.
+   */
+  template?: string;
 }
 
 export interface SubtitleConfig {
@@ -198,6 +203,7 @@ export const subtitleStyleSchema = z.object({
   bgColor: z.string(),
   bgOpacity: z.number().min(0).max(1),
   animation: z.enum(["none", "word-highlight", "pop", "karaoke"]),
+  template: z.string().optional(),
 });
 
 export const subtitleConfigSchema = z.object({

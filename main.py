@@ -830,7 +830,8 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
     
     frame_number = 0
     current_scene_index = 0
-    
+    pipe_broke = False  # set if FFmpeg dies mid-stream (write hits a closed pipe)
+
     # Pre-calculate scene boundaries
     scene_boundaries = []
     for s_start, s_end in scenes:
@@ -944,19 +945,40 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
                 else:
                     output_frame = cv2.resize(frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LANCZOS4)
 
-            ffmpeg_process.stdin.write(output_frame.tobytes())
+            # Guard against any wrong-sized/typed frame desyncing the raw stream.
+            if output_frame.shape[0] != OUTPUT_HEIGHT or output_frame.shape[1] != OUTPUT_WIDTH:
+                output_frame = cv2.resize(output_frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LANCZOS4)
+            if output_frame.dtype != np.uint8:
+                output_frame = output_frame.astype(np.uint8)
+
+            # If FFmpeg already died, stop and surface ITS error below instead of
+            # letting an opaque BrokenPipeError bubble up with no context.
+            try:
+                ffmpeg_process.stdin.write(np.ascontiguousarray(output_frame).tobytes())
+            except BrokenPipeError:
+                pipe_broke = True
+                break
+
             frame_number += 1
             pbar.update(1)
-    
-    ffmpeg_process.stdin.close()
-    stderr_output = ffmpeg_process.stderr.read().decode()
+
+    try:
+        ffmpeg_process.stdin.close()
+    except BrokenPipeError:
+        pass
+    stderr_output = ffmpeg_process.stderr.read().decode(errors="replace")
     ffmpeg_process.wait()
     cap.release()
 
-    if ffmpeg_process.returncode != 0:
-        print("\n   ❌ FFmpeg frame processing failed.")
-        print("   Stderr:", stderr_output)
-        return False
+    if pipe_broke or ffmpeg_process.returncode != 0:
+        print(f"\n   ❌ FFmpeg frame processing failed (exit code {ffmpeg_process.returncode}).")
+        print("   FFmpeg stderr:\n" + (stderr_output.strip() or "(empty)"))
+        # Raise with the real cause so it lands in the job log, instead of a bare
+        # BrokenPipeError that hides why FFmpeg exited.
+        raise RuntimeError(
+            "FFmpeg encoder exited early during frame processing. "
+            "Cause (FFmpeg stderr):\n" + (stderr_output.strip()[-2000:] or "(no stderr captured)")
+        )
 
     print("\n   🔊 Step 5: Extracting audio...")
     audio_extract_command = [

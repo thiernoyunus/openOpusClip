@@ -59,10 +59,14 @@ def generate_srt_from_video(video_path, output_path, max_chars=20, max_duration=
     return generate_srt(transcript, 0, duration, output_path, max_chars, max_duration)
 
 
-def generate_srt(transcript, clip_start, clip_end, output_path, max_chars=20, max_duration=2.0):
+def generate_srt(transcript, clip_start, clip_end, output_path, max_chars=20, max_duration=2.0, add_cta=False):
     """
     Generates an SRT file from the transcript for a specific time range.
     Groups words into short lines suitable for vertical video.
+
+    add_cta: when True, appends a "follow for more" call-to-action to the last
+    2 seconds. Off by default — it was previously forced onto every clip, which
+    looked spammy and unexpected.
     """
     
     words = []
@@ -119,12 +123,13 @@ def generate_srt(transcript, clip_start, clip_end, output_path, max_chars=20, ma
         srt_content += format_srt_block(index, block_start, block_end, text)
         index += 1
 
-    # CTA block: "follow for more" in the last 2 seconds of the clip
-    clip_duration = clip_end - clip_start
-    cta_start = max(0, clip_duration - 2.0)
-    cta_end = clip_duration
-    if cta_end > cta_start:
-        srt_content += format_srt_block(index, cta_start, cta_end, "follow for more such content 🔥")
+    # Optional CTA block: "follow for more" in the last 2 seconds of the clip.
+    if add_cta:
+        clip_duration = clip_end - clip_start
+        cta_start = max(0, clip_duration - 2.0)
+        cta_end = clip_duration
+        if cta_end > cta_start:
+            srt_content += format_srt_block(index, cta_start, cta_end, "follow for more such content 🔥")
 
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(srt_content)

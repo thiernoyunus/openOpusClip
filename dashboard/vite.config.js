@@ -10,6 +10,9 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     server: {
+      // Honor a harness/host-assigned port (e.g. preview tooling) when PORT is
+      // set; otherwise fall back to Vite's default (5173).
+      port: process.env.PORT ? Number(process.env.PORT) : undefined,
       allowedHosts: [
         'openshorts.app',
         'www.openshorts.app'
