@@ -11,6 +11,8 @@ export interface CaptionWord {
 export type SubtitleAnimation = "none" | "word-highlight" | "pop" | "karaoke";
 export type SubtitlePosition = "top" | "middle" | "bottom";
 
+export type SubtitleShadow = "none" | "small" | "medium" | "large";
+
 export interface SubtitleStyle {
   fontFamily: string;
   fontSize: number;
@@ -26,6 +28,15 @@ export interface SubtitleStyle {
    * when absent the renderer derives a "classic" template from `animation`.
    */
   template?: string;
+  // --- Tier 2 customization overrides (all optional → back-compat). ---
+  /** Per-word font weight 100–900. When unset each template uses its designed weight. */
+  fontWeight?: number;
+  /** Override the template's baked uppercase behavior. */
+  uppercase?: boolean;
+  /** Drop shadow applied to the whole caption block (size preset). */
+  shadow?: SubtitleShadow;
+  /** Drop shadow color (defaults to black). */
+  shadowColor?: string;
 }
 
 export interface SubtitleConfig {
@@ -204,6 +215,10 @@ export const subtitleStyleSchema = z.object({
   bgOpacity: z.number().min(0).max(1),
   animation: z.enum(["none", "word-highlight", "pop", "karaoke"]),
   template: z.string().optional(),
+  fontWeight: z.number().optional(),
+  uppercase: z.boolean().optional(),
+  shadow: z.enum(["none", "small", "medium", "large"]).optional(),
+  shadowColor: z.string().optional(),
 });
 
 export const subtitleConfigSchema = z.object({

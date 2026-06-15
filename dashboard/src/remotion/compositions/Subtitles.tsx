@@ -8,7 +8,7 @@ import {
   delayRender,
   continueRender,
 } from "remotion";
-import type { SubtitleConfig } from "../lib/types";
+import type { SubtitleConfig, SubtitleStyle } from "../lib/types";
 import { groupCaptionsIntoBlocks, getActiveWordIndex } from "../lib/captions";
 import { getFontStack, captionFontFaces, BUNDLED_CAPTION_FONTS } from "../lib/fonts";
 import { getCaptionTemplate, resolveTemplateId } from "../lib/captionTemplates";
@@ -22,6 +22,22 @@ const POSITION_MAP: Record<string, React.CSSProperties> = {
   middle: { top: "45%", bottom: "auto" },
   bottom: { bottom: "10%", top: "auto" },
 };
+
+// Drop-shadow size presets (offsetY/blur in px). Applied as a CSS `filter` on the
+// whole caption block, so it layers over every template uniformly without touching
+// any per-word renderer. `none`/undefined → no filter.
+const SHADOW_MAP: Record<string, { oy: number; blur: number }> = {
+  small: { oy: 2, blur: 4 },
+  medium: { oy: 4, blur: 10 },
+  large: { oy: 8, blur: 20 },
+};
+
+function shadowFilter(style: SubtitleStyle): string | undefined {
+  const preset = style.shadow && SHADOW_MAP[style.shadow];
+  if (!preset) return undefined;
+  const color = style.shadowColor ?? "#000000";
+  return `drop-shadow(0 ${preset.oy}px ${preset.blur}px ${color})`;
+}
 
 /** How long a block lingers after its last word, clamped to the next block. */
 const TAIL_MS = 320;
@@ -103,7 +119,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
 
   const template = getCaptionTemplate(resolveTemplateId(style));
   const fontStack = getFontStack(template.font ?? style.fontFamily);
-  const uppercase = template.uppercase ?? false;
+  const uppercase = style.uppercase ?? template.uppercase ?? false;
 
   const currentTimeMs = block.startMs + (frame / fps) * 1000;
   const activeIndex = getActiveWordIndex(block.words, currentTimeMs);
@@ -134,6 +150,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
         display: "flex",
         justifyContent: "center",
         opacity,
+        filter: shadowFilter(style),
         ...positionStyle,
       }}
     >

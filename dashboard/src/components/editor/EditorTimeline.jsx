@@ -15,6 +15,56 @@ const fmt = (frames) => {
 const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three', four: 'Four' };
 
 /**
+ * The thumbnail filmstrip. Memoized so it doesn't re-render every playback
+ * frame (only `frame` changes then, and that lives in the parent). It only
+ * re-renders when the thumbnails or the scrub handler identity change.
+ */
+const Filmstrip = React.memo(function Filmstrip({ thumbs, onPointerDown }) {
+    return (
+        <div className="relative h-12 flex bg-black cursor-pointer" onPointerDown={onPointerDown}>
+            {thumbs.length === 0 ? (
+                <div className="w-full h-full bg-surface2/30 animate-pulse" />
+            ) : (
+                thumbs.map((src, i) => (
+                    <img
+                        key={i}
+                        src={src}
+                        alt=""
+                        draggable={false}
+                        className="h-full object-cover pointer-events-none"
+                        style={{ width: `${100 / thumbs.length}%` }}
+                    />
+                ))
+            )}
+        </div>
+    );
+});
+
+/**
+ * The audio waveform. Memoized for the same reason as Filmstrip — the bars are
+ * expensive to rebuild and don't depend on the playhead frame.
+ */
+const Waveform = React.memo(function Waveform({ peaks, onPointerDown }) {
+    return (
+        <div className="relative h-8 flex items-center gap-px px-px bg-canvas cursor-pointer" onPointerDown={onPointerDown}>
+            {peaks === null ? (
+                <div className="w-full h-3 bg-surface2/30 animate-pulse rounded" />
+            ) : peaks.length === 0 ? (
+                <span className="w-full text-center text-[10px] text-zinc-600">no audio</span>
+            ) : (
+                peaks.map((v, i) => (
+                    <div
+                        key={i}
+                        className="flex-1 bg-zinc-500/80 rounded-sm pointer-events-none"
+                        style={{ height: `${Math.max(6, v * 100)}%` }}
+                    />
+                ))
+            )}
+        </div>
+    );
+});
+
+/**
  * Opus-style timeline: layout-chip row per framing segment with draggable
  * boundaries, a thumbnail filmstrip, an audio waveform, scrub-to-seek, and a
  * playhead synced to the Player.
@@ -25,6 +75,10 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
     // drag: {kind:'boundary', boundaryIndex, frame} | {kind:'trim', edge:'in'|'out', frame}
     const [drag, setDrag] = useState(null);
     const stripRef = useRef(null);
+    // The strip's bounding rect, cached at drag start so we don't call the
+    // layout-thrashing getBoundingClientRect() on every pointermove. Null when
+    // not dragging (a plain scrub click measures fresh).
+    const dragRectRef = useRef(null);
 
     const totalSrcFrames = framing.source.durationFrames;
     const clipIn = framing.clipInFrame ?? 0;
@@ -71,7 +125,9 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
 
     const sourceFrameAtClientX = useCallback(
         (clientX) => {
-            const rect = stripRef.current.getBoundingClientRect();
+            // During a drag, reuse the rect cached at drag start; for a plain
+            // scrub click (no cached rect) measure fresh.
+            const rect = dragRectRef.current ?? stripRef.current.getBoundingClientRect();
             const fraction = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
             return Math.round(fraction * totalSrcFrames);
         },
@@ -83,6 +139,8 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
     const startDrag = (payload) => (e) => {
         e.preventDefault();
         e.stopPropagation();
+        // Cache the strip rect once for the whole drag (see dragRectRef).
+        dragRectRef.current = stripRef.current?.getBoundingClientRect() ?? null;
         setDrag(payload);
         try {
             e.target.setPointerCapture?.(e.pointerId);
@@ -93,7 +151,10 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
         setDrag((d) => ({ ...d, frame: sourceFrameAtClientX(e.clientX) }));
     };
     const endDrag = () => {
-        if (!drag) return;
+        if (!drag) {
+            dragRectRef.current = null;
+            return;
+        }
         if (drag.kind === 'boundary') {
             dispatch({ type: 'SET_BOUNDARY', boundaryIndex: drag.boundaryIndex, frame: drag.frame });
         } else if (drag.kind === 'trim') {
@@ -102,13 +163,17 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                 ...(drag.edge === 'in' ? { clipInFrame: drag.frame } : { clipOutFrame: drag.frame }),
             });
         }
+        dragRectRef.current = null;
         setDrag(null);
     };
 
-    const scrubTo = (e) => {
-        if (drag) return;
-        seekToSourceFrame(sourceFrameAtClientX(e.clientX));
-    };
+    const scrubTo = useCallback(
+        (e) => {
+            if (drag) return;
+            seekToSourceFrame(sourceFrameAtClientX(e.clientX));
+        },
+        [drag, seekToSourceFrame, sourceFrameAtClientX]
+    );
 
     // Playhead lives on the SOURCE axis (the strips show source content)
     const playheadSrc = outputToSource(framing, frame, EDITOR_FPS);
@@ -198,40 +263,11 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                     })}
                 </div>
 
-                {/* Filmstrip */}
-                <div className="relative h-12 flex bg-black cursor-pointer" onPointerDown={scrubTo}>
-                    {thumbs.length === 0 ? (
-                        <div className="w-full h-full bg-surface2/30 animate-pulse" />
-                    ) : (
-                        thumbs.map((src, i) => (
-                            <img
-                                key={i}
-                                src={src}
-                                alt=""
-                                draggable={false}
-                                className="h-full object-cover pointer-events-none"
-                                style={{ width: `${100 / thumbs.length}%` }}
-                            />
-                        ))
-                    )}
-                </div>
+                {/* Filmstrip (memoized: doesn't re-render every playback frame) */}
+                <Filmstrip thumbs={thumbs} onPointerDown={scrubTo} />
 
-                {/* Waveform */}
-                <div className="relative h-8 flex items-center gap-px px-px bg-canvas cursor-pointer" onPointerDown={scrubTo}>
-                    {peaks === null ? (
-                        <div className="w-full h-3 bg-surface2/30 animate-pulse rounded" />
-                    ) : peaks.length === 0 ? (
-                        <span className="w-full text-center text-[10px] text-zinc-600">no audio</span>
-                    ) : (
-                        peaks.map((v, i) => (
-                            <div
-                                key={i}
-                                className="flex-1 bg-zinc-500/80 rounded-sm pointer-events-none"
-                                style={{ height: `${Math.max(6, v * 100)}%` }}
-                            />
-                        ))
-                    )}
-                </div>
+                {/* Waveform (memoized: doesn't re-render every playback frame) */}
+                <Waveform peaks={peaks} onPointerDown={scrubTo} />
 
                 {/* Removed content: dim everything outside [clipIn, clipOut] */}
                 {liveClipIn > 0 && (

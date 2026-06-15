@@ -8,7 +8,7 @@ const TOGGLES = [
 ];
 
 /** Right-rail Transitions tab: clip-level fade in/out + smooth cut dips. */
-export default function TransitionsPanel({ framing, dispatch }) {
+function TransitionsPanel({ framing, dispatch }) {
     const t = framing.transitions || { fadeIn: false, fadeOut: false, cutCrossfade: false };
     return (
         <div className="p-4">
@@ -46,3 +46,7 @@ export default function TransitionsPanel({ framing, dispatch }) {
         </div>
     );
 }
+
+// Memoized: re-renders only when its own props change, not on every editor
+// dispatch or tab switch (props from EditorView are stable).
+export default React.memo(TransitionsPanel);

@@ -7,7 +7,7 @@ import { getApiUrl } from '../../config';
  * dir), set its volume and how much the original clip audio is ducked. Config
  * lives at framing.music and is mixed in by the composition + export.
  */
-export default function AudioPanel({ framing, jobId, clipIndex, dispatch }) {
+function AudioPanel({ framing, jobId, clipIndex, dispatch }) {
     const music = framing.music || null;
     const fileRef = useRef(null);
     const [uploading, setUploading] = useState(false);
@@ -87,3 +87,7 @@ export default function AudioPanel({ framing, jobId, clipIndex, dispatch }) {
         </div>
     );
 }
+
+// Memoized: re-renders only when its own props change, not on every editor
+// dispatch or tab switch (props from EditorView are stable).
+export default React.memo(AudioPanel);

@@ -67,7 +67,7 @@ const OPTIONS = [
  * Three / Four). Multi-person options disable when the selected scene has
  * fewer concurrent face tracks than panels.
  */
-export default function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl }) {
+function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl }) {
     const [showCropModal, setShowCropModal] = useState(false);
     const selectedSegments = framing.segments.filter((s) => selectedIds.includes(s.id));
     const primary = selectedSegments[0] || null;
@@ -229,3 +229,7 @@ export default function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl 
         </div>
     );
 }
+
+// Memoized: re-renders only when its own props change, not on every editor
+// dispatch or tab switch (props from EditorView are stable).
+export default React.memo(LayoutPanel);

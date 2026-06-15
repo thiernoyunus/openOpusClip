@@ -6,7 +6,7 @@ import { Clapperboard, Search, Trash2, Loader2, Plus, KeyRound } from 'lucide-re
  * 4s clip at the playhead (max 3). The Pexels key lives in localStorage; the
  * search runs client-side. Inserts store SOURCE-frame spans (EDL-mapped).
  */
-export default function BrollPanel({ framing, dispatch, getCurrentSourceFrame }) {
+function BrollPanel({ framing, dispatch, getCurrentSourceFrame }) {
     const broll = framing.broll || [];
     const srcFps = framing.source.fps;
     const [key, setKey] = useState(() => localStorage.getItem('pexels_key') || '');
@@ -129,3 +129,7 @@ export default function BrollPanel({ framing, dispatch, getCurrentSourceFrame })
         </div>
     );
 }
+
+// Memoized: re-renders only when its own props change, not on every editor
+// dispatch or tab switch (props from EditorView are stable).
+export default React.memo(BrollPanel);
