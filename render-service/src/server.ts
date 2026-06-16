@@ -109,7 +109,7 @@ app.post("/render", (req, res) => {
           ? { ...props.framing.music, url: resolveUrl(props.framing.music.url) }
           : props.framing.music,
         broll: props.framing.broll
-          ? props.framing.broll.map((b) => ({ ...b, url: resolveUrl(b.url) }))
+          ? props.framing.broll.map((b: { url: string }) => ({ ...b, url: resolveUrl(b.url) }))
           : props.framing.broll,
       }
     : props.framing;
