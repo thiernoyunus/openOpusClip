@@ -5,6 +5,7 @@ import {
   useCurrentFrame,
   useVideoConfig,
   interpolate,
+  Easing,
   delayRender,
   continueRender,
 } from "remotion";
@@ -69,7 +70,16 @@ const FontLoader: React.FC = () => {
 export const Subtitles: React.FC<SubtitlesProps> = ({ config }) => {
   const { fps } = useVideoConfig();
   const template = getCaptionTemplate(resolveTemplateId(config.style));
-  const blocks = groupCaptionsIntoBlocks(config.captions, template.grouping);
+  // A user "Display words" override wins over the template grouping; bump
+  // maxChars alongside it so the word count actually drives the block size.
+  const grouping = config.style.maxWords
+    ? {
+        ...template.grouping,
+        maxWords: config.style.maxWords,
+        maxChars: config.style.maxWords * 14,
+      }
+    : template.grouping;
+  const blocks = groupCaptionsIntoBlocks(config.captions, grouping);
 
   return (
     <AbsoluteFill>
@@ -137,7 +147,6 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
         // percentage maxWidth resolves predictably and long captions wrap
         // the same way they do in the preset layouts.
         width: "88%",
-        transform: "translate(-50%, -50%)",
         display: "flex",
         justifyContent: "center",
       }
@@ -151,24 +160,48 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
       };
   const containerStyle = template.containerStyle?.(style) ?? {};
 
+  // Block entrance animation (layers over the per-word template animation).
+  // The composed transform also carries the free-drag centering when placed.
+  const entrance = style.captionAnimation ?? "fade";
+  const introDur = Math.max(1, Math.round(0.3 * fps));
+  const introP = interpolate(frame, [0, introDur], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.out(Easing.cubic),
+  });
+  const slide =
+    entrance === "slide-up" || entrance === "slide-up-zoom"
+      ? `translateY(${((1 - introP) * 40).toFixed(1)}px)`
+      : "";
+  const zoom =
+    entrance === "zoom-in" || entrance === "slide-up-zoom"
+      ? `scale(${(0.85 + 0.15 * introP).toFixed(3)})`
+      : "";
+  const transform =
+    [freePlaced ? "translate(-50%, -50%)" : "", slide, zoom]
+      .filter(Boolean)
+      .join(" ") || undefined;
+
   // Block-level fade so captions enter/leave smoothly instead of popping.
   // Short blocks need a smaller fade, otherwise the in/out points collide and
   // produce a non-increasing input range (interpolate throws on that).
+  // "none" entrance opts out of the fade entirely (hard cut).
   const fade = Math.min(FADE_FRAMES, Math.floor((durationFrames - 1) / 2));
   const opacity =
-    fade >= 1
-      ? interpolate(
+    entrance === "none" || fade < 1
+      ? 1
+      : interpolate(
           frame,
           [0, fade, durationFrames - fade, durationFrames],
           [0, 1, 1, 0],
           { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-        )
-      : 1;
+        );
 
   return (
     <div
       style={{
         ...outerStyle,
+        transform,
         opacity,
         filter: shadowFilter(style),
       }}
@@ -180,9 +213,15 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           justifyContent: "center",
           alignItems: "center",
           gap: `${Math.round(style.fontSize * 0.12)}px ${Math.round(
-            style.fontSize * 0.28
+            style.fontSize * 0.28 * (style.wordSpacing ?? 1)
           )}px`,
           maxWidth: "88%",
+          // letter-spacing is inherited, so this reaches every word span that
+          // doesn't set its own tracking. ponytail: a few effect styles bake
+          // their own letterSpacing and won't follow this slider.
+          ...(style.letterSpacing != null
+            ? { letterSpacing: `${style.letterSpacing}em` }
+            : {}),
           ...containerStyle,
         }}
       >
@@ -206,7 +245,11 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           const forceHighlight = highlighted && !isActive && frame >= wordStartFrame;
           // Append the emoji to the word text so it lives inside the same
           // animated span the template renders (timing/animation still apply).
-          const renderedText = word.emoji ? `${word.text} ${word.emoji}` : word.text;
+          const text =
+            style.punctuation === false
+              ? word.text.replace(/[.,!?;:…]+$/u, "")
+              : word.text;
+          const renderedText = word.emoji ? `${text} ${word.emoji}` : text;
           return (
             <React.Fragment key={i}>
               {template.renderWord({

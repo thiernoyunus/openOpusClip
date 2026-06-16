@@ -25,6 +25,13 @@ const SHADOW_OPTIONS = [
     { value: 'medium', label: 'Medium' },
     { value: 'large', label: 'Large' },
 ];
+const CAPTION_ANIM_OPTIONS = [
+    { v: 'none', l: 'None' },
+    { v: 'fade', l: 'Fade' },
+    { v: 'slide-up', l: 'Slide up' },
+    { v: 'zoom-in', l: 'Zoom in' },
+    { v: 'slide-up-zoom', l: 'Slide + Zoom' },
+];
 
 const EFFECT_TEMPLATES = CAPTION_TEMPLATES.filter((t) => t.category === 'effects');
 const CLASSIC_TEMPLATES = CAPTION_TEMPLATES.filter((t) => t.category === 'classic');
@@ -144,6 +151,26 @@ function Seg({ options, value, onChange }) {
                     {o.label}
                 </button>
             ))}
+        </div>
+    );
+}
+
+/** Labeled range slider with a live value readout. */
+function RangeRow({ label, value, min, max, step = 1, fmt, onChange }) {
+    return (
+        <div>
+            <span className="block text-[11px] text-muted mb-1.5">
+                {label} <span className="text-zinc-500 tabular-nums">({fmt ? fmt(value) : value})</span>
+            </span>
+            <input
+                type="range"
+                min={min}
+                max={max}
+                step={step}
+                value={value}
+                onChange={(e) => onChange(Number(e.target.value))}
+                className="w-full accent-white"
+            />
         </div>
     );
 }
@@ -273,6 +300,8 @@ function CaptionsPanel({ framing, captions, dispatch }) {
     // --- Customize sub-panel --------------------------------------------------
     if (subs && customizing) {
         const st = subs.style;
+        const setEffectParam = (key, v) =>
+            setStyle({ effectParams: { ...(st.effectParams || {}), [key]: v } });
         const effUppercase = st.uppercase ?? currentTpl.uppercase ?? false;
         const effShadow = st.shadow ?? 'none';
         const bgOn = (st.bgOpacity ?? 0) > 0;
@@ -378,6 +407,67 @@ function CaptionsPanel({ framing, captions, dispatch }) {
                             </div>
                         )}
                     </div>
+
+                    {/* Caption layout + spacing */}
+                    <div className="pt-2 border-t border-edge/60 space-y-4">
+                        <RangeRow
+                            label="Display words"
+                            value={st.maxWords ?? currentTpl.grouping?.maxWords ?? 4}
+                            min={1}
+                            max={6}
+                            onChange={(v) => setStyle({ maxWords: v })}
+                        />
+                        <RangeRow
+                            label="Letter spacing"
+                            value={st.letterSpacing ?? 0}
+                            min={-0.05}
+                            max={0.3}
+                            step={0.01}
+                            fmt={(v) => `${Number(v).toFixed(2)}em`}
+                            onChange={(v) => setStyle({ letterSpacing: v })}
+                        />
+                        <RangeRow
+                            label="Word spacing"
+                            value={st.wordSpacing ?? 1}
+                            min={0.5}
+                            max={2.5}
+                            step={0.1}
+                            fmt={(v) => `${Number(v).toFixed(1)}×`}
+                            onChange={(v) => setStyle({ wordSpacing: v })}
+                        />
+                        <div>
+                            <span className="block text-[11px] text-muted mb-1.5">Punctuation</span>
+                            <Toggle value={st.punctuation !== false} onChange={(v) => setStyle({ punctuation: v })} />
+                        </div>
+                    </div>
+
+                    {/* Animation */}
+                    <div>
+                        <span className="block text-[11px] text-muted mb-1.5">Caption animation</span>
+                        <select
+                            value={st.captionAnimation ?? 'fade'}
+                            onChange={(e) => setStyle({ captionAnimation: e.target.value })}
+                            className="w-full bg-surface2 border border-edge rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-white/30 [color-scheme:dark]"
+                        >
+                            {CAPTION_ANIM_OPTIONS.map((o) => (
+                                <option key={o.v} value={o.v}>{o.l}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Per-style tunables (e.g. typewriter/matrix speed) */}
+                    {currentTpl.extras?.map((ex) => (
+                        <RangeRow
+                            key={ex.key}
+                            label={ex.label}
+                            value={st.effectParams?.[ex.key] ?? ex.default}
+                            min={ex.min}
+                            max={ex.max}
+                            step={ex.step}
+                            fmt={(v) => `${Number(v).toFixed(1)}×`}
+                            onChange={(v) => setEffectParam(ex.key, v)}
+                        />
+                    ))}
 
                     {/* Background box */}
                     <div>
