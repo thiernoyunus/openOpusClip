@@ -101,6 +101,11 @@ function BrollPanel({ framing, dispatch, getCurrentSourceFrame, captions = [] })
 
             const clipIn = framing.clipInFrame ?? 0;
             const clipOut = framing.clipOutFrame ?? framing.source.durationFrames;
+            // Suggestion startMs are anchored at the ORIGINAL clip start
+            // (captionsOriginFrame), not the mutable clipInFrame — convert from
+            // the origin so head trims don't misplace b-roll, then clamp/filter
+            // against the current [clipIn, clipOut] bounds below.
+            const captionsOrigin = framing.captionsOriginFrame ?? clipIn;
             let added = broll.length;
             let inserted = 0;
 
@@ -111,7 +116,7 @@ function BrollPanel({ framing, dispatch, getCurrentSourceFrame, captions = [] })
                 // trimmed) clip, or whose clamped span is too short to be
                 // useful — otherwise we'd waste a b-roll slot on an invalid
                 // (end <= start) or near-zero-length item.
-                const startFrame = clipIn + Math.round((s.startMs / 1000) * srcFps);
+                const startFrame = captionsOrigin + Math.round((s.startMs / 1000) * srcFps);
                 const endFrame = Math.min(startFrame + Math.round((s.durationMs / 1000) * srcFps), clipOut);
                 if (startFrame < clipIn || startFrame >= clipOut || endFrame - startFrame < MIN_BROLL_FRAMES) {
                     continue;

@@ -5,8 +5,10 @@
  * whole cleanup is one undo step, and the cuts are fully reversible through the
  * existing cut/restore UI.
  *
- * Captions are `{ text, startMs, endMs }` with ms RELATIVE TO CLIP START. A
- * word maps to a source frame via `clipInFrame + round((ms/1000) * source.fps)`
+ * Captions are `{ text, startMs, endMs }` with ms relative to the ORIGINAL clip
+ * start. A word maps to a source frame via
+ * `captionsOriginFrame + round((ms/1000) * source.fps)` — the immutable origin,
+ * NOT the mutable clipInFrame, so trimming the head doesn't misplace the cuts
  * (the same formula TranscriptPanel's wordToSource uses).
  */
 
@@ -46,11 +48,13 @@ function cleanWord(text) {
 
 /** Word's [start, end] in SOURCE frames. */
 function wordToSourceFrames(word, framing) {
-    const clipIn = framing.clipInFrame ?? 0;
+    // Caption ms are anchored at the ORIGINAL clip start (captionsOriginFrame),
+    // not the mutable clipInFrame — otherwise head-trimming shifts every cut.
+    const origin = framing.captionsOriginFrame ?? framing.clipInFrame ?? 0;
     const fps = framing.source.fps;
     return {
-        start: clipIn + Math.round((word.startMs / 1000) * fps),
-        end: clipIn + Math.round((word.endMs / 1000) * fps),
+        start: origin + Math.round((word.startMs / 1000) * fps),
+        end: origin + Math.round((word.endMs / 1000) * fps),
     };
 }
 
@@ -104,6 +108,9 @@ export function detectPauseCuts(captions, framing, thresholdMs = 400) {
     if (!captions || captions.length < 2) return [];
     const clipIn = framing.clipInFrame ?? 0;
     const clipOut = framing.clipOutFrame ?? framing.source.durationFrames;
+    // Conversion base is the immutable caption origin; the cut is then clamped
+    // to the CURRENT clip bounds [clipIn, clipOut].
+    const origin = framing.captionsOriginFrame ?? clipIn;
     const fps = framing.source.fps;
     const MARGIN_MS = 80;
     const cuts = [];
@@ -115,8 +122,8 @@ export function detectPauseCuts(captions, framing, thresholdMs = 400) {
         const gapStartMs = word.endMs + MARGIN_MS;
         const gapEndMs = next.startMs - MARGIN_MS;
         if (gapEndMs <= gapStartMs) continue;
-        const startFrame = Math.max(clipIn, clipIn + Math.round((gapStartMs / 1000) * fps));
-        const endFrame = Math.min(clipOut, clipIn + Math.round((gapEndMs / 1000) * fps));
+        const startFrame = Math.max(clipIn, origin + Math.round((gapStartMs / 1000) * fps));
+        const endFrame = Math.min(clipOut, origin + Math.round((gapEndMs / 1000) * fps));
         if (endFrame > startFrame) cuts.push({ startFrame, endFrame });
     }
     return cuts;
