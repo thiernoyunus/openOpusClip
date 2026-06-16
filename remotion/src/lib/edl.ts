@@ -137,8 +137,8 @@ export const sourceToOutput = (
 };
 
 /**
- * Remap caption words (ms relative to clipInFrame, i.e. original clip start)
- * onto the output timeline, dropping words whose midpoint was cut out.
+ * Remap caption words (ms relative to captionsOriginFrame, the original clip
+ * start) onto the output timeline, dropping words whose midpoint was cut out.
  */
 export const remapCaptions = (
   captions: CaptionWord[] | undefined,
@@ -147,7 +147,11 @@ export const remapCaptions = (
 ): CaptionWord[] => {
   if (!captions) return [];
   const srcFps = framing.source.fps;
-  const { startFrame: clipIn } = clipBounds(framing);
+  // Caption ms are relative to the ORIGINAL clip start (captionsOriginFrame),
+  // captured once at generation time. Using the mutable clipInFrame here would
+  // shift every subtitle whenever the head is trimmed. Back-compat: fall back
+  // to clipInFrame when the origin wasn't recorded.
+  const clipIn = framing.captionsOriginFrame ?? clipBounds(framing).startFrame;
   const out: CaptionWord[] = [];
   for (const w of captions) {
     const midMs = (w.startMs + w.endMs) / 2;

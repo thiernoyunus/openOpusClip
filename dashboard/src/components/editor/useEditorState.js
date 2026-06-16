@@ -396,6 +396,10 @@ export function normalizeFraming(framing) {
         version: 2,
         clipInFrame: framing.clipInFrame ?? 0,
         clipOutFrame: framing.clipOutFrame ?? framing.source.durationFrames,
+        // Pin the caption origin at load time. New clips already carry it from
+        // the backend; older files predate the field, so default to the current
+        // (not-yet-trimmed) clipInFrame so subsequent trims don't shift captions.
+        captionsOriginFrame: framing.captionsOriginFrame ?? framing.clipInFrame ?? 0,
         cuts: framing.cuts ?? [],
         subtitles: framing.subtitles ?? null,
         textOverlays: framing.textOverlays ?? [],

@@ -199,6 +199,13 @@ export interface FramingConfig {
    */
   clipInFrame?: number;
   clipOutFrame?: number;
+  /**
+   * The clipInFrame value captured when the caption transcript was generated
+   * (the ORIGINAL clip start). Caption word ms are relative to this immutable
+   * source frame, not the mutable clipInFrame, so trimming the head doesn't
+   * shift subtitles. Optional/back-compat: consumers fall back to clipInFrame.
+   */
+  captionsOriginFrame?: number;
   cuts?: SourceCut[];
   subtitles?: SubtitleConfig | null;
   textOverlays?: TextOverlay[];
@@ -358,6 +365,7 @@ export const framingConfigSchema = z.object({
   // v2 EDL + feature payloads — optional so v1 files still validate
   clipInFrame: z.number().int().min(0).optional(),
   clipOutFrame: z.number().int().positive().optional(),
+  captionsOriginFrame: z.number().int().min(0).optional(),
   cuts: z.array(sourceCutSchema).optional(),
   subtitles: subtitleConfigSchema.nullable().optional(),
   textOverlays: z.array(textOverlaySchema).optional(),

@@ -1072,6 +1072,10 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
             },
             'clipInFrame': offset,
             'clipOutFrame': offset + total_frames,
+            # Immutable caption origin: word ms are relative to the original clip
+            # start (== this initial clipInFrame). Recorded separately so trimming
+            # the head later doesn't shift the subtitles.
+            'captionsOriginFrame': offset,
             'cuts': [],
             'segments': segments_out,
             'faceTracks': face_tracks_out,
