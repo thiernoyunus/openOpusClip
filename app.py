@@ -803,7 +803,7 @@ async def enhance_captions(
             editor = VideoEditor(api_key=final_api_key)
             return editor.get_caption_enhancements(req.words)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, run_enhance)
         return result or {"emojis": {}, "highlights": []}
     except Exception as e:
@@ -843,7 +843,7 @@ async def suggest_broll(
             words = [{"text": w.text, "startMs": w.startMs} for w in req.words]
             return editor.get_broll_suggestions(words)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, run_suggest)
         return {"suggestions": result or []}
     except Exception as e:
@@ -1005,12 +1005,17 @@ def _validate_framing(framing: dict) -> Optional[str]:
         return "clipInFrame/clipOutFrame must be integers"
     if not (0 <= clip_in < clip_out <= duration):
         return "clip bounds out of range"
+    origin = framing.get("captionsOriginFrame")
+    if origin is not None and (isinstance(origin, bool) or not isinstance(origin, int) or not (0 <= origin <= duration)):
+        return "captionsOriginFrame out of range"
     cuts = framing.get("cuts", [])
     if not isinstance(cuts, list):
         return "cuts must be a list"
     prev_cut_end = clip_in
     kept = clip_out - clip_in
     for i, cut in enumerate(cuts):
+        if not isinstance(cut, dict):
+            return f"cuts[{i}] must be an object"
         cs, ce = cut.get("startFrame"), cut.get("endFrame")
         if not isinstance(cs, int) or not isinstance(ce, int) or ce <= cs:
             return f"cuts[{i}] has an invalid frame range"
@@ -1132,6 +1137,8 @@ async def apply_render(req: ApplyRenderRequest):
 @app.post("/api/clips/{job_id}/{clip_index}/audio")
 async def upload_clip_audio(job_id: str, clip_index: int, file: UploadFile = File(...)):
     """Store an uploaded music track in the job dir for the editor (E6)."""
+    if not all(c.isalnum() or c in "-_" for c in job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
     output_dir = os.path.join(OUTPUT_DIR, job_id)
     if not os.path.isdir(output_dir):
         raise HTTPException(status_code=404, detail="Job not found")

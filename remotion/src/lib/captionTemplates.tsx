@@ -388,7 +388,7 @@ function entrySpring(t: number, fps: number): number {
 const HighlightWord: React.FC<WordRenderArgs> = ({ word, isActive, isPast, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
   const on = frame >= wordStartFrame;
   const t = frame - wordStartFrame;
-  const scaleX = on ? interpolate(t, [0, Math.round(0.15 * fps)], [0, 1], { extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) }) : 0;
+  const scaleX = on ? interpolate(t, [0, Math.max(1, Math.round(0.15 * fps))], [0, 1], { extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) }) : 0;
   const marker = style.highlightColor || "#FFE94E";
   return (
     <span style={{ position: "relative", display: "inline-block", fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 800, textTransform: uppercase ? "uppercase" : "none", letterSpacing: "0.02em", color: on ? "#141414" : style.fontColor, textShadow: on ? "none" : "0 4px 14px rgba(0,0,0,0.45)", padding: "0 6px" }}>
@@ -463,14 +463,14 @@ const KineticSlamWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps,
   if (t < 0) return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, opacity: 0, display: "inline-block" }}>{word}</span>;
   const p = spring({ frame: t, fps, config: { mass: 0.6, stiffness: 200, damping: 9 }, durationInFrames: 16 });
   const y = interpolate(p, [0, 1], [-120, 0]);
-  const opacity = interpolate(t, [0, Math.round(0.06 * fps)], [0, 1], { extrapolateRight: "clamp" });
+  const opacity = interpolate(t, [0, Math.max(1, Math.round(0.06 * fps))], [0, 1], { extrapolateRight: "clamp" });
   return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 400, textTransform: uppercase ? "uppercase" : "none", display: "inline-block", transform: `translateY(${y}px)`, opacity, color: isActive ? style.highlightColor : style.fontColor, textShadow: "0 6px 18px rgba(0,0,0,0.5)" }}>{word}</span>;
 };
 
 // clip-wipe — each word is wiped in left-to-right
 const ClipWipeWord: React.FC<WordRenderArgs> = ({ word, isActive, isPast, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
   const t = frame - wordStartFrame;
-  const reveal = t < 0 ? 100 : interpolate(t, [0, Math.round(0.3 * fps)], [100, 0], { extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
+  const reveal = t < 0 ? 100 : interpolate(t, [0, Math.max(1, Math.round(0.3 * fps))], [100, 0], { extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
   const color = isActive ? style.highlightColor || "#FFD700" : isPast ? "rgba(255,255,255,0.45)" : style.fontColor;
   return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 800, textTransform: uppercase ? "uppercase" : "none", display: "inline-block", clipPath: `inset(0 ${reveal}% 0 0)`, color, textShadow: "0 4px 14px rgba(0,0,0,0.5)" }}>{word}</span>;
 };
@@ -484,7 +484,7 @@ const BlendDifferenceWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, 
 // parallax-layers — bold serif with a scaled echo behind for depth
 const ParallaxLayersWord: React.FC<WordRenderArgs> = ({ word, frame, fps, wordStartFrame, style, fontStack }) => {
   const t = frame - wordStartFrame;
-  const opacity = interpolate(t, [0, Math.round(0.18 * fps)], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const opacity = interpolate(t, [0, Math.max(1, Math.round(0.18 * fps))], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   const c = style.fontColor || "#E50914";
   return (
     <span style={{ position: "relative", display: "inline-block", fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 400, lineHeight: 1, color: c, opacity, WebkitTextStroke: `2px ${c}` }}>
@@ -524,7 +524,7 @@ function darken(color: string, factor: number): string {
 const GlossyGradientWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
   const t = frame - wordStartFrame;
   const float = Math.sin(frame / fps * 1.6 + wordStartFrame) * 3;
-  const intro = interpolate(t, [0, Math.round(0.3 * fps)], [12, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
+  const intro = interpolate(t, [0, Math.max(1, Math.round(0.3 * fps))], [12, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
   const grad = isActive ? "linear-gradient(180deg,#FFFFFF 0%,#EAF2FF 100%)" : "linear-gradient(180deg,#FFFFFF 0%,#BFD9FF 100%)";
   const glow = isActive ? 0.9 : 0.4;
   return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 800, textTransform: uppercase ? "uppercase" : "none", letterSpacing: "-0.02em", display: "inline-block", transform: `translateY(${(float + intro).toFixed(2)}px) scale(${isActive ? 1.05 : 1})`, opacity: isActive ? 1 : 0.72, backgroundImage: grad, WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent", color: "transparent", filter: `drop-shadow(0 0 8px rgba(190,217,255,${glow})) drop-shadow(0 4px 18px rgba(120,160,255,${glow * 0.5}))` }}>{word}</span>;

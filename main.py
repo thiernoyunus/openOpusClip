@@ -1072,6 +1072,10 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
             },
             'clipInFrame': offset,
             'clipOutFrame': offset + total_frames,
+            # Immutable caption origin: word ms are relative to the original clip
+            # start (== this initial clipInFrame). Recorded separately so trimming
+            # the head later doesn't shift the subtitles.
+            'captionsOriginFrame': offset,
             'cuts': [],
             'segments': segments_out,
             'faceTracks': face_tracks_out,
@@ -1420,7 +1424,7 @@ if __name__ == '__main__':
                 # If the padded cut failed, fall back to keeping the unpadded
                 # cut as the editor source (no extend headroom, offset 0) so a
                 # valid _source.mp4 always exists for the framing coordinates.
-                if padded_result.returncode != 0 or not os.path.exists(clip_source_path) or os.path.getsize(clip_source_path) == 0:
+                if (padded_result.returncode != 0 or not os.path.exists(clip_source_path) or os.path.getsize(clip_source_path) == 0) and os.path.exists(clip_cut_path):
                     print(f"   ⚠️  Padded source cut failed for clip {i+1}; using unpadded cut as editor source.")
                     shutil.copyfile(clip_cut_path, clip_source_path)
                     pad_start = start  # offset collapses to 0
@@ -1428,14 +1432,17 @@ if __name__ == '__main__':
                 framing_source_override = None
                 if os.path.exists(clip_source_path):
                     src_cap = cv2.VideoCapture(clip_source_path)
-                    padded_frames = int(src_cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                    src_fps = src_cap.get(cv2.CAP_PROP_FPS) or 30.0
-                    src_cap.release()
-                    framing_source_override = {
-                        'file': os.path.basename(clip_source_path),
-                        'durationFrames': padded_frames,
-                        'offsetFrames': int(round((start - pad_start) * src_fps)),
-                    }
+                    if src_cap.isOpened():
+                        padded_frames = int(src_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                        src_fps = src_cap.get(cv2.CAP_PROP_FPS) or 30.0
+                        src_cap.release()
+                        framing_source_override = {
+                            'file': os.path.basename(clip_source_path),
+                            'durationFrames': padded_frames,
+                            'offsetFrames': int(round((start - pad_start) * src_fps)),
+                        }
+                    else:
+                        src_cap.release()
 
                 # Process vertical (bakes from the unpadded cut; framing.json is
                 # written in padded-source coordinates via the override)

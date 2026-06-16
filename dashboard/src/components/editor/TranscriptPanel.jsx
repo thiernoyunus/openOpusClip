@@ -64,14 +64,18 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
 
     const srcFps = framing.source.fps;
     const clipIn = framing.clipInFrame ?? 0;
+    // Caption ms are anchored at the ORIGINAL clip start (captionsOriginFrame),
+    // not the mutable clipInFrame — convert from the origin so head trims don't
+    // shift word↔frame mapping, segment dividers, or transcript cuts.
+    const captionsOrigin = framing.captionsOriginFrame ?? clipIn;
 
-    // Word -> source frames (captions are ms relative to the clip start)
+    // Word -> source frames (captions are ms relative to the original clip start)
     const wordToSource = useCallback(
         (word) => ({
-            start: clipIn + Math.round((word.startMs / 1000) * srcFps),
-            end: clipIn + Math.round((word.endMs / 1000) * srcFps),
+            start: captionsOrigin + Math.round((word.startMs / 1000) * srcFps),
+            end: captionsOrigin + Math.round((word.endMs / 1000) * srcFps),
         }),
-        [clipIn, srcFps]
+        [captionsOrigin, srcFps]
     );
 
     // Which cut (if any) each word falls inside, by its midpoint. Precomputed
@@ -80,12 +84,12 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     const cutIndexByWord = useMemo(() => {
         const cuts = framing.cuts ?? [];
         return captions.map((word) => {
-            const start = clipIn + Math.round((word.startMs / 1000) * srcFps);
-            const end = clipIn + Math.round((word.endMs / 1000) * srcFps);
+            const start = captionsOrigin + Math.round((word.startMs / 1000) * srcFps);
+            const end = captionsOrigin + Math.round((word.endMs / 1000) * srcFps);
             const mid = (start + end) / 2;
             return cuts.findIndex((c) => mid >= c.startFrame && mid < c.endFrame);
         });
-    }, [captions, framing.cuts, clipIn, srcFps]);
+    }, [captions, framing.cuts, captionsOrigin, srcFps]);
 
     useEffect(() => {
         const p = playerRef.current;
@@ -98,11 +102,14 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     const segmentStarts = useMemo(() => {
         if (!framing) return [];
         return framing.segments.map((s) => ({
-            ms: ((s.startFrame - clipIn) / srcFps) * 1000,
+            // Express segment starts on the same origin-anchored ms axis as
+            // word.startMs so the interleaved dividers land between the right
+            // words after a head trim.
+            ms: ((s.startFrame - captionsOrigin) / srcFps) * 1000,
             layout: s.layout,
             id: s.id,
         }));
-    }, [framing, clipIn, srcFps]);
+    }, [framing, captionsOrigin, srcFps]);
 
     const rows = useMemo(() => {
         const out = [];
