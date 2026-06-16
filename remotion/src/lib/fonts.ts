@@ -17,11 +17,9 @@ export const notoSerifFontFace = `
 
 /**
  * Caption fonts bundled locally as variable TTFs. These render identically in
- * the in-browser preview/export (dashboard/public) and the headless render
- * service (remotion/public). Variable axes let one file cover every weight.
- *
- * IMPORTANT: this file is duplicated at remotion/src/lib/fonts.ts — keep both
- * copies in sync, and keep the .ttf files in both public/fonts dirs.
+ * the in-browser preview/export and the headless render service. Variable axes
+ * let one file cover every weight. The .ttf files live in remotion/public/fonts;
+ * dashboard/public/fonts is a symlink to it, so there is a single copy.
  */
 export const captionFontFaces = `
 @font-face {

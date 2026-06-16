@@ -45,12 +45,27 @@ from botocore.config import Config
 import json
 import time as time_module
 
-# Simple in-memory cache for gallery clips
-_clips_cache = {
-    "data": None,
-    "timestamp": 0
-}
-CACHE_TTL_SECONDS = 300  # 5 minutes
+class _TTLCache:
+    """Single-slot in-memory cache with TTL.
+    ponytail: one slot per gallery list is all these endpoints need."""
+    def __init__(self, ttl=300):
+        self.ttl = ttl
+        self._data = None
+        self._ts = 0
+
+    def get(self):
+        if self._data is not None and time_module.time() - self._ts < self.ttl:
+            return self._data
+        return None
+
+    def set(self, data):
+        self._data = data
+        self._ts = time_module.time()
+
+    def clear(self):
+        self._data = None
+
+_clips_cache = _TTLCache()
 
 def get_s3_client():
     """Returns an authenticated S3 client."""
@@ -94,15 +109,11 @@ def list_all_clips(bucket_name=None, limit=50, force_refresh=False):
         limit: Maximum number of clips to return (default 50 for speed)
         force_refresh: If True, bypass cache
     """
-    global _clips_cache
-    
-    # Check cache first
-    now = time_module.time()
-    if not force_refresh and _clips_cache["data"] is not None:
-        if now - _clips_cache["timestamp"] < CACHE_TTL_SECONDS:
-            cached = _clips_cache["data"]
+    if not force_refresh:
+        cached = _clips_cache.get()
+        if cached is not None:
             return cached[:limit] if limit else cached
-    
+
     if not bucket_name:
         bucket_name = os.environ.get('AWS_S3_BUCKET', 'my-clips-bucket')
 
@@ -184,9 +195,8 @@ def list_all_clips(bucket_name=None, limit=50, force_refresh=False):
         logger.error(f"Error listing bucket: {e}")
         return []
     
-    # Update cache with full results (keep for pagination later)
-    _clips_cache["data"] = all_clips
-    _clips_cache["timestamp"] = now
+    # Cache full results (slice per-request on read for pagination)
+    _clips_cache.set(all_clips)
 
     return all_clips[:limit] if limit else all_clips
 
@@ -303,10 +313,7 @@ def list_actor_gallery():
 
 # ── SaaS Video Gallery (public S3) ──────────────────────────────────
 
-_video_gallery_cache = {
-    "data": None,
-    "timestamp": 0,
-}
+_video_gallery_cache = _TTLCache()
 
 def upload_video_to_gallery(video_path, actor_image_path, metadata, video_id=None):
     """
@@ -361,8 +368,7 @@ def upload_video_to_gallery(video_path, actor_image_path, metadata, video_id=Non
 
         logger.info(f"Uploaded video gallery: {video_id}")
 
-        # Invalidate cache
-        _video_gallery_cache["data"] = None
+        _video_gallery_cache.clear()
 
         return results
 
@@ -376,12 +382,9 @@ def list_video_gallery(limit=50, force_refresh=False):
     List all UGC videos from the public S3 bucket.
     Returns list of metadata dicts, newest first.
     """
-    global _video_gallery_cache
-
-    now = time_module.time()
-    if not force_refresh and _video_gallery_cache["data"] is not None:
-        if now - _video_gallery_cache["timestamp"] < CACHE_TTL_SECONDS:
-            cached = _video_gallery_cache["data"]
+    if not force_refresh:
+        cached = _video_gallery_cache.get()
+        if cached is not None:
             return cached[:limit] if limit else cached
 
     bucket_name = os.environ.get('AWS_S3_PUBLIC_BUCKET', 'my-public-bucket')
@@ -421,8 +424,7 @@ def list_video_gallery(limit=50, force_refresh=False):
         logger.error(f"Failed to list video gallery: {e}")
         return []
 
-    _video_gallery_cache["data"] = videos
-    _video_gallery_cache["timestamp"] = now
+    _video_gallery_cache.set(videos)
 
     return videos[:limit] if limit else videos
 

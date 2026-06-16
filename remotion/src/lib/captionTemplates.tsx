@@ -11,8 +11,6 @@ import type { GroupingOptions } from "./captions";
  * word to `renderWord`. Classic templates reproduce the original 4 animations;
  * the "effects" templates are ports of the HeyGen HyperFrames caption styles
  * (GSAP timelines re-expressed as Remotion frame math).
- *
- * IMPORTANT: duplicated at remotion/src/lib/captionTemplates.tsx — keep in sync.
  */
 
 export interface WordRenderArgs {
