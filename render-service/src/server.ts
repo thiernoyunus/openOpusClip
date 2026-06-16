@@ -99,6 +99,21 @@ app.post("/render", (req, res) => {
     ? resolveUrl(props.sourceVideoUrl)
     : null;
 
+  // Nested framing assets (music, b-roll) are also stored as relative
+  // /videos/... URLs and must be absolutized for the SSR renderer, otherwise
+  // they resolve against the wrong host and are silently dropped on export.
+  const resolvedFraming = props.framing
+    ? {
+        ...props.framing,
+        music: props.framing.music
+          ? { ...props.framing.music, url: resolveUrl(props.framing.music.url) }
+          : props.framing.music,
+        broll: props.framing.broll
+          ? props.framing.broll.map((b) => ({ ...b, url: resolveUrl(b.url) }))
+          : props.framing.broll,
+      }
+    : props.framing;
+
   // Fire and forget - render runs in background
   executeRender({
     renderId,
@@ -114,7 +129,7 @@ app.post("/render", (req, res) => {
       hook: props.hook ?? null,
       effects: props.effects ?? null,
       sourceVideoUrl: resolvedSourceVideoUrl,
-      framing: props.framing ?? null,
+      framing: resolvedFraming ?? null,
     },
   }).catch((err) => {
     console.error(`[render] Unhandled error for ${renderId}:`, err);

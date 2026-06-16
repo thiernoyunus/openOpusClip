@@ -21,7 +21,7 @@ export function useFilmstrip(sourceUrl, count = 14) {
 
         const capture = async () => {
             const W = 96;
-            const H = Math.max(1, Math.round(W * (video.videoHeight / video.videoWidth)));
+            const H = video.videoWidth > 0 ? Math.max(1, Math.round(W * (video.videoHeight / video.videoWidth))) : 54;
             canvas.width = W;
             canvas.height = H;
             const ctx = canvas.getContext('2d');
@@ -74,6 +74,10 @@ export function useWaveform(sourceUrl, buckets = 240) {
             .then((buf) => ctx.decodeAudioData(buf))
             .then((audio) => {
                 if (cancelled) return;
+                if (audio.numberOfChannels === 0) {
+                    setPeaks([]);
+                    return;
+                }
                 const wave = audio.getChannelData(0);
                 if (!wave || wave.length === 0) {
                     setPeaks([]);

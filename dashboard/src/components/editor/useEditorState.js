@@ -203,6 +203,14 @@ export const editorReducer = (state, action) => {
                 // in place; only true single-crop layouts convert to a tracked fill
                 if (['split', 'three', 'four', 'screenshare', 'gameplay'].includes(s.layout) && !s.manualCrop) {
                     const faceIds = [...(s.trackedFaceIds || [])];
+                    // Fill any holes before the assigned panel so the array is
+                    // dense — a sparse array serializes holes to null and fails
+                    // schema validation.
+                    for (let i = 0; i < action.panelIdx; i += 1) {
+                        if (faceIds[i] === undefined) {
+                            faceIds[i] = s.trackedFaceIds?.[0] ?? action.trackId;
+                        }
+                    }
                     faceIds[action.panelIdx] = action.trackId;
                     return { ...s, trackedFaceIds: faceIds };
                 }

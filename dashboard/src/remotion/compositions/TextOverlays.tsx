@@ -38,7 +38,7 @@ export const TextOverlays: React.FC<{ framing: FramingConfig }> = ({
               textAlign: "center",
               fontFamily: getFontStack("Inter"),
               fontWeight: 800,
-              fontSize: SIZE_PX[o.size],
+              fontSize: SIZE_PX[o.size] || 64,
               lineHeight: 1.15,
               color: o.color,
               padding: o.bg ? "0.2em 0.5em" : 0,

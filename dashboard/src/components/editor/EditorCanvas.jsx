@@ -21,13 +21,14 @@ const EditorCanvas = forwardRef(function EditorCanvas(
             framing,
             durationInFrames,
             fps: EDITOR_FPS,
-            // Preview renders at half resolution (540x960) for performance —
-            // the composition scales everything by compositionWidth/Height, so
-            // it looks identical, just with 1/4 the pixels per frame. Export
-            // stays at full 1080x1920 (set in EditorView.handleExport + the
-            // render service).
-            width: 540,
-            height: 960,
+            // Preview renders at full 1080x1920 — the same resolution as export
+            // (EditorView.handleExport + the render service). The Player
+            // rasterizes at display size regardless of compositionWidth/Height,
+            // so a half-res composition saved nothing and only broke WYSIWYG:
+            // pixel-sized overlay styles (caption fontSize/stroke/radii,
+            // TextOverlay px sizes) occupied twice their relative space.
+            width: 1080,
+            height: 1920,
             subtitles,
             hook: null,
             effects: null,
@@ -37,18 +38,18 @@ const EditorCanvas = forwardRef(function EditorCanvas(
 
     return (
         <div className="relative h-full aspect-[9/16] rounded-xl overflow-hidden border border-edge bg-black shadow-2xl">
-            {/* PREVIEW resolution is 540x960 (half of export's 1080x1920). The
-                CSS width/height:100% scales it back up to fill the canvas, so it
-                looks the same size but live-renders far fewer pixels per frame.
-                Export resolution is unchanged — see EditorView.handleExport. */}
+            {/* PREVIEW renders at the full 1080x1920 export resolution so the
+                preview is true WYSIWYG. The CSS width/height:100% scales it to
+                fill the canvas. Export resolution matches — see
+                EditorView.handleExport. */}
             <Player
                 ref={playerRef}
                 component={ShortVideo}
                 inputProps={inputProps}
                 durationInFrames={durationInFrames}
                 fps={EDITOR_FPS}
-                compositionWidth={540}
-                compositionHeight={960}
+                compositionWidth={1080}
+                compositionHeight={1920}
                 style={{ width: '100%', height: '100%' }}
                 clickToPlay={false}
                 spaceKeyToPlayOrPause={false}

@@ -62,6 +62,10 @@ function BrollPanel({ framing, dispatch, getCurrentSourceFrame, captions = [] })
 
     const insert = (video) => {
         if (broll.length >= MAX_BROLL) return;
+        if (!video.video_files || video.video_files.length === 0) {
+            setError('No video files found for this selection.');
+            return;
+        }
         const file = pickPexelsFile(video);
         const start = getCurrentSourceFrame();
         const end = Math.min(
@@ -100,8 +104,18 @@ function BrollPanel({ framing, dispatch, getCurrentSourceFrame, captions = [] })
             let added = broll.length;
             let inserted = 0;
 
+            const MIN_BROLL_FRAMES = 10;
             for (const s of suggestions) {
                 if (added >= MAX_BROLL) break;
+                // Skip suggestions whose moment falls outside the (possibly
+                // trimmed) clip, or whose clamped span is too short to be
+                // useful — otherwise we'd waste a b-roll slot on an invalid
+                // (end <= start) or near-zero-length item.
+                const startFrame = clipIn + Math.round((s.startMs / 1000) * srcFps);
+                const endFrame = Math.min(startFrame + Math.round((s.durationMs / 1000) * srcFps), clipOut);
+                if (startFrame < clipIn || startFrame >= clipOut || endFrame - startFrame < MIN_BROLL_FRAMES) {
+                    continue;
+                }
                 let videos;
                 try {
                     videos = await searchPexels(s.keyword, 5);
@@ -111,8 +125,6 @@ function BrollPanel({ framing, dispatch, getCurrentSourceFrame, captions = [] })
                 if (!videos.length) continue;
                 const file = pickPexelsFile(videos[0]);
                 if (!file) continue;
-                const startFrame = clipIn + Math.round((s.startMs / 1000) * srcFps);
-                const endFrame = Math.min(startFrame + Math.round((s.durationMs / 1000) * srcFps), clipOut);
                 dispatch({
                     type: 'ADD_BROLL',
                     item: {

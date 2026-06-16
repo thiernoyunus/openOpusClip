@@ -137,6 +137,7 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
 
     const sourceFrameAtClientX = useCallback(
         (clientX) => {
+            if (!stripRef.current) return 0;
             // During a drag, reuse the rect cached at drag start; for a plain
             // scrub click (no cached rect) measure fresh.
             const rect = dragRectRef.current ?? stripRef.current.getBoundingClientRect();

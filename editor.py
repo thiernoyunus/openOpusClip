@@ -282,7 +282,7 @@ Rules:
 
 Return ONLY JSON of this exact shape:
 {{
-  "emojis": {{ "3": "🔥", "10": "🚀" }},
+  "emojis": [{{ "index": 3, "emoji": "🔥" }}, {{ "index": 10, "emoji": "🚀" }}],
   "highlights": [3, 7, 10]
 }}"""
 
@@ -296,9 +296,15 @@ Return ONLY JSON of this exact shape:
                         "type": "object",
                         "properties": {
                             "emojis": {
-                                "type": "object",
-                                # word index (as string) -> emoji
-                                "additionalProperties": {"type": "string"},
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "index": {"type": "integer"},
+                                        "emoji": {"type": "string"},
+                                    },
+                                    "required": ["index", "emoji"],
+                                },
                             },
                             "highlights": {
                                 "type": "array",
@@ -340,16 +346,18 @@ Return ONLY JSON of this exact shape:
 
         # Normalize and clamp to valid in-range indices so the frontend can
         # merge by index without extra validation.
-        raw_emojis = data.get("emojis") or {}
+        raw_emojis = data.get("emojis") or []
         emojis: dict[str, str] = {}
-        if isinstance(raw_emojis, dict):
-            for k, v in raw_emojis.items():
-                try:
-                    idx = int(k)
-                except (ValueError, TypeError):
+        if isinstance(raw_emojis, list):
+            for item in raw_emojis:
+                if not isinstance(item, dict):
                     continue
-                if 0 <= idx < total and isinstance(v, str) and v.strip():
-                    emojis[str(idx)] = v.strip()
+                idx = item.get("index")
+                val = item.get("emoji")
+                if not isinstance(idx, int) or isinstance(idx, bool):
+                    continue
+                if 0 <= idx < total and isinstance(val, str) and val.strip():
+                    emojis[str(idx)] = val.strip()
 
         raw_highlights = data.get("highlights") or []
         highlights: list[int] = []

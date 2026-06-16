@@ -141,10 +141,11 @@ export const sourceToOutput = (
  * onto the output timeline, dropping words whose midpoint was cut out.
  */
 export const remapCaptions = (
-  captions: CaptionWord[],
+  captions: CaptionWord[] | undefined,
   framing: FramingConfig,
   fps: number
 ): CaptionWord[] => {
+  if (!captions) return [];
   const srcFps = framing.source.fps;
   const { startFrame: clipIn } = clipBounds(framing);
   const out: CaptionWord[] = [];
@@ -158,6 +159,7 @@ export const remapCaptions = (
     const startOut = sourceToOutput(framing, startSrc, fps) ?? midOut;
     const endOut = sourceToOutput(framing, endSrc, fps) ?? midOut;
     out.push({
+      ...w,
       text: w.text,
       startMs: (startOut / fps) * 1000,
       endMs: Math.max((endOut / fps) * 1000, (startOut / fps) * 1000 + 60),

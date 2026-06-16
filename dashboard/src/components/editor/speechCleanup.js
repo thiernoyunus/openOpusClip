@@ -63,9 +63,29 @@ export function detectFillerCuts(captions, framing) {
     const clipIn = framing.clipInFrame ?? 0;
     const clipOut = framing.clipOutFrame ?? framing.source.durationFrames;
     const cuts = [];
-    for (const word of captions) {
+    for (let i = 0; i < captions.length; i += 1) {
+        const word = captions[i];
         const cleaned = cleanWord(word.text);
-        if (!cleaned || !FILLER_WORDS.has(cleaned)) continue;
+        if (!cleaned) continue;
+
+        // Two-word phrase look-ahead ("you know", "i mean", "kind of",
+        // "sort of"): when the cleaned current+next words form a filler phrase,
+        // cut BOTH words and skip the next index.
+        if (i < captions.length - 1) {
+            const nextCleaned = cleanWord(captions[i + 1].text);
+            const phrase = `${cleaned} ${nextCleaned}`;
+            if (FILLER_WORDS.has(phrase)) {
+                const { start } = wordToSourceFrames(word, framing);
+                const { end } = wordToSourceFrames(captions[i + 1], framing);
+                const startFrame = Math.max(clipIn, start - 1);
+                const endFrame = Math.min(clipOut, end + 1);
+                if (endFrame > startFrame) cuts.push({ startFrame, endFrame });
+                i += 1;
+                continue;
+            }
+        }
+
+        if (!FILLER_WORDS.has(cleaned)) continue;
         const { start, end } = wordToSourceFrames(word, framing);
         const startFrame = Math.max(clipIn, start - 1);
         const endFrame = Math.min(clipOut, end + 1);
