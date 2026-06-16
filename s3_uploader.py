@@ -54,8 +54,11 @@ class _TTLCache:
         self._ts = 0
 
     def get(self):
-        if self._data is not None and time_module.time() - self._ts < self.ttl:
-            return self._data
+        # Snapshot the ref so a concurrent clear()/set() can't flip it between
+        # the None-check and the return (no lock needed for a single read).
+        data = self._data
+        if data is not None and time_module.time() - self._ts < self.ttl:
+            return data
         return None
 
     def set(self, data):
