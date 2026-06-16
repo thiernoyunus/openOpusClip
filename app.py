@@ -803,7 +803,7 @@ async def enhance_captions(
             editor = VideoEditor(api_key=final_api_key)
             return editor.get_caption_enhancements(req.words)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, run_enhance)
         return result or {"emojis": {}, "highlights": []}
     except Exception as e:
@@ -843,7 +843,7 @@ async def suggest_broll(
             words = [{"text": w.text, "startMs": w.startMs} for w in req.words]
             return editor.get_broll_suggestions(words)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, run_suggest)
         return {"suggestions": result or []}
     except Exception as e:

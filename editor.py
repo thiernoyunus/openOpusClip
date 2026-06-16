@@ -282,7 +282,7 @@ Rules:
 
 Return ONLY JSON of this exact shape:
 {{
-  "emojis": {{ "3": "🔥", "10": "🚀" }},
+  "emojis": [ {{ "index": 3, "emoji": "🔥" }}, {{ "index": 10, "emoji": "🚀" }} ],
   "highlights": [3, 7, 10]
 }}"""
 
@@ -292,13 +292,22 @@ Return ONLY JSON of this exact shape:
                 contents=[prompt],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
+                    # emojis is an array of {index, emoji} (NOT a free-form map):
+                    # Gemini's structured-output validator can reject objects that
+                    # rely on additionalProperties. Mapped back to a dict below.
                     response_schema={
                         "type": "object",
                         "properties": {
                             "emojis": {
-                                "type": "object",
-                                # word index (as string) -> emoji
-                                "additionalProperties": {"type": "string"},
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "index": {"type": "integer"},
+                                        "emoji": {"type": "string"},
+                                    },
+                                    "required": ["index", "emoji"],
+                                },
                             },
                             "highlights": {
                                 "type": "array",
@@ -339,17 +348,22 @@ Return ONLY JSON of this exact shape:
             return empty
 
         # Normalize and clamp to valid in-range indices so the frontend can
-        # merge by index without extra validation.
-        raw_emojis = data.get("emojis") or {}
+        # merge by index without extra validation. The model returns a list of
+        # {index, emoji}; map it back to the {index_str: emoji} dict the
+        # frontend expects. (Tolerate a legacy dict shape too, just in case.)
+        raw_emojis = data.get("emojis") or []
         emojis: dict[str, str] = {}
-        if isinstance(raw_emojis, dict):
-            for k, v in raw_emojis.items():
-                try:
-                    idx = int(k)
-                except (ValueError, TypeError):
-                    continue
-                if 0 <= idx < total and isinstance(v, str) and v.strip():
-                    emojis[str(idx)] = v.strip()
+        emoji_pairs = (
+            raw_emojis.items() if isinstance(raw_emojis, dict)
+            else [(it.get("index"), it.get("emoji")) for it in raw_emojis if isinstance(it, dict)]
+        )
+        for k, v in emoji_pairs:
+            try:
+                idx = int(k)
+            except (ValueError, TypeError):
+                continue
+            if 0 <= idx < total and isinstance(v, str) and v.strip():
+                emojis[str(idx)] = v.strip()
 
         raw_highlights = data.get("highlights") or []
         highlights: list[int] = []

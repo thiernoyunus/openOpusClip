@@ -158,7 +158,9 @@ export const remapCaptions = (
     const startOut = sourceToOutput(framing, startSrc, fps) ?? midOut;
     const endOut = sourceToOutput(framing, endSrc, fps) ?? midOut;
     out.push({
-      text: w.text,
+      // Spread keeps per-word metadata (emoji, highlight, …) through the
+      // remap; only the timing is rewritten onto the output timeline.
+      ...w,
       startMs: (startOut / fps) * 1000,
       endMs: Math.max((endOut / fps) * 1000, (startOut / fps) * 1000 + 60),
     });

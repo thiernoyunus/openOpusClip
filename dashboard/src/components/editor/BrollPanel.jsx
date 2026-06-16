@@ -102,6 +102,13 @@ function BrollPanel({ framing, dispatch, getCurrentSourceFrame, captions = [] })
 
             for (const s of suggestions) {
                 if (added >= MAX_BROLL) break;
+                // Gemini sees the full transcript, so a suggested startMs can
+                // fall after the trimmed clipOut. Drop anything outside
+                // [clipIn, clipOut) (or too short) before spending a Pexels
+                // search or a b-roll slot on an item BrollLayer would discard.
+                const startFrame = clipIn + Math.round((s.startMs / 1000) * srcFps);
+                const endFrame = Math.min(startFrame + Math.round((s.durationMs / 1000) * srcFps), clipOut);
+                if (startFrame < clipIn || startFrame >= clipOut || endFrame - startFrame < 10) continue;
                 let videos;
                 try {
                     videos = await searchPexels(s.keyword, 5);
@@ -111,8 +118,6 @@ function BrollPanel({ framing, dispatch, getCurrentSourceFrame, captions = [] })
                 if (!videos.length) continue;
                 const file = pickPexelsFile(videos[0]);
                 if (!file) continue;
-                const startFrame = clipIn + Math.round((s.startMs / 1000) * srcFps);
-                const endFrame = Math.min(startFrame + Math.round((s.durationMs / 1000) * srcFps), clipOut);
                 dispatch({
                     type: 'ADD_BROLL',
                     item: {
