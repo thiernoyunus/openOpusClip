@@ -31,7 +31,7 @@ function AudioPanel({ framing, jobId, clipIndex, dispatch }) {
             setUploading(false);
             // Reset the input so re-uploading the same file after removing it
             // still fires onChange.
-            if (e.target) e.target.value = '';
+            if (e?.target) e.target.value = '';
         }
     };
 

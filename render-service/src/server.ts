@@ -105,11 +105,16 @@ app.post("/render", (req, res) => {
   const resolvedFraming = props.framing
     ? {
         ...props.framing,
-        music: props.framing.music
-          ? { ...props.framing.music, url: resolveUrl(props.framing.music.url) }
-          : props.framing.music,
-        broll: props.framing.broll
-          ? props.framing.broll.map((b: { url: string }) => ({ ...b, url: resolveUrl(b.url) }))
+        music:
+          props.framing.music &&
+          typeof props.framing.music === "object" &&
+          typeof props.framing.music.url === "string"
+            ? { ...props.framing.music, url: resolveUrl(props.framing.music.url) }
+            : props.framing.music,
+        broll: Array.isArray(props.framing.broll)
+          ? props.framing.broll.map((b: { url?: unknown }) =>
+              b && typeof b.url === "string" ? { ...b, url: resolveUrl(b.url) } : b
+            )
           : props.framing.broll,
       }
     : props.framing;

@@ -1006,7 +1006,7 @@ def _validate_framing(framing: dict) -> Optional[str]:
     if not (0 <= clip_in < clip_out <= duration):
         return "clip bounds out of range"
     origin = framing.get("captionsOriginFrame")
-    if origin is not None and (not isinstance(origin, int) or not (0 <= origin <= duration)):
+    if origin is not None and (isinstance(origin, bool) or not isinstance(origin, int) or not (0 <= origin <= duration)):
         return "captionsOriginFrame out of range"
     cuts = framing.get("cuts", [])
     if not isinstance(cuts, list):
