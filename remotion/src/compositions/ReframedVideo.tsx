@@ -1,6 +1,6 @@
 import React from "react";
 import { AbsoluteFill, Sequence, useCurrentFrame, useVideoConfig } from "remotion";
-import { Audio, Video } from "@remotion/media";
+import { Video } from "@remotion/media";
 import type {
   CropRect,
   CameraKeyframe,
@@ -193,191 +193,156 @@ export const panelsForLayout = (
   }
 };
 
-// --- rendering ---------------------------------------------------------------
+// --- rendering ---
+// Every <Video> sets `_experimentalInitiallyDrawCachedFrame` so a freshly
+// mounted panel paints the last cached frame instead of black. Layout switches
+// in the editor Player remount these Videos (different subtree per layout), and
+// a fresh @remotion/media Video is black until it decodes — this hides that
+// flash. Render/export is unaffected (it's a Player-only first-frame hint).
+// ponytail: deliberately NOT reusing elements / decoupling audio here — that
+// path froze the live frame loop (see memory: layout-switch-black-flash).
 
-/** Inner <Video> style that scales+offsets a crop region to cover a panel. */
-const cropInner = (
-  crop: CropRect,
-  panel: PanelRect,
-  srcW: number,
-  srcH: number
-): React.CSSProperties => {
+const CroppedVideo: React.FC<{
+  src: string;
+  crop: CropRect;
+  panel: PanelRect;
+  srcW: number;
+  srcH: number;
+  muted: boolean;
+  trimBefore: number;
+  volume?: number;
+}> = ({ src, crop, panel, srcW, srcH, muted, trimBefore, volume = 1 }) => {
   // Scale the source so the crop region covers the panel, then offset so the
   // crop region is centered in the panel. GPU-cheap (transform only).
   const scale = Math.max(
     panel.width / (crop.w * srcW),
     panel.height / (crop.h * srcH)
   );
-  return {
-    left: -(crop.x * srcW * scale) + (panel.width - crop.w * srcW * scale) / 2,
-    top: -(crop.y * srcH * scale) + (panel.height - crop.h * srcH * scale) / 2,
-    width: srcW * scale,
-    height: srcH * scale,
-  };
+  const videoW = srcW * scale;
+  const videoH = srcH * scale;
+  const offsetX = -(crop.x * srcW * scale) + (panel.width - crop.w * srcW * scale) / 2;
+  const offsetY = -(crop.y * srcH * scale) + (panel.height - crop.h * srcH * scale) / 2;
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: panel.left,
+        top: panel.top,
+        width: panel.width,
+        height: panel.height,
+        overflow: "hidden",
+        backgroundColor: "#000",
+      }}
+    >
+      <Video
+        src={src}
+        _experimentalInitiallyDrawCachedFrame
+        muted={muted}
+        volume={volume}
+        trimBefore={trimBefore}
+        style={{
+          position: "absolute",
+          left: offsetX,
+          top: offsetY,
+          width: videoW,
+          height: videoH,
+          maxWidth: "none",
+          maxHeight: "none",
+        }}
+      />
+    </div>
+  );
 };
 
-/** Inner <Video> style fitting the whole source frame inside a panel (contain). */
-const containInner = (
-  panel: PanelRect,
-  srcW: number,
-  srcH: number
-): React.CSSProperties => {
+/** Whole source frame fit (contained) inside a panel — for screen/gameplay capture. */
+const ContentPanel: React.FC<{
+  src: string;
+  panel: PanelRect;
+  srcW: number;
+  srcH: number;
+  trimBefore: number;
+}> = ({ src, panel, srcW, srcH, trimBefore }) => {
   const scale = Math.min(panel.width / srcW, panel.height / srcH);
   const videoW = srcW * scale;
   const videoH = srcH * scale;
-  return {
-    left: (panel.width - videoW) / 2,
-    top: (panel.height - videoH) / 2,
-    width: videoW,
-    height: videoH,
-  };
-};
-
-interface Layer {
-  /**
-   * Stable across layouts: the main speaker crop is always "crop-0", so
-   * switching fill↔split↔fit↔… keeps the SAME <Video> element mounted instead
-   * of remounting it. A freshly mounted @remotion/media Video paints black
-   * until it decodes the current frame, which is exactly the black flash seen
-   * in the Player on every layout change. (Export/SSR is unaffected — it
-   * decodes each frame on demand regardless of mount churn.)
-   */
-  key: string;
-  wrap: React.CSSProperties; // positioned, overflow-hidden panel box
-  inner: React.CSSProperties; // the <Video> position/size/transform/filter
-}
-
-/**
- * One video layer: an overflow-hidden panel box with a single muted <Video>.
- * All layers are muted — audio is played by a single stable <Audio> in
- * RangeContent so layout switches (which mount/unmount panels) never disturb it.
- */
-const VideoLayer: React.FC<{
-  src: string;
-  layer: Layer;
-  trimBefore: number;
-}> = ({ src, layer, trimBefore }) => (
-  <div
-    style={{
-      position: "absolute",
-      overflow: "hidden",
-      backgroundColor: "#000",
-      ...layer.wrap,
-    }}
-  >
-    <Video
-      src={src}
-      muted
-      trimBefore={trimBefore}
+  return (
+    <div
       style={{
         position: "absolute",
-        maxWidth: "none",
-        maxHeight: "none",
-        ...layer.inner,
+        left: panel.left,
+        top: panel.top,
+        width: panel.width,
+        height: panel.height,
+        overflow: "hidden",
+        backgroundColor: "#000",
       }}
-    />
-  </div>
-);
+    >
+      <Video
+        src={src}
+        _experimentalInitiallyDrawCachedFrame
+        muted
+        trimBefore={trimBefore}
+        style={{
+          position: "absolute",
+          left: (panel.width - videoW) / 2,
+          top: (panel.height - videoH) / 2,
+          width: videoW,
+          height: videoH,
+          maxWidth: "none",
+          maxHeight: "none",
+        }}
+      />
+    </div>
+  );
+};
 
-/**
- * Build the ordered video layers for a segment at a given source frame. Every
- * layout produces a list of {@link Layer}s with stable keys so the Player can
- * reuse video elements across layout switches (see Layer.key).
- */
-const buildLayers = (
-  segment: FramingSegment | null,
-  sourceFrame: number,
-  width: number,
-  height: number,
-  faceTracks: FaceTrack[],
-  source: FramingConfig["source"]
-): Layer[] => {
-  const full: PanelRect = { left: 0, top: 0, width, height };
-  const fullWrap = { left: 0, top: 0, width, height };
-
-  // Manual crop wins over everything (when a segment is selected).
-  if (segment?.manualCrop) {
-    return [
-      {
-        key: "crop-0",
-        wrap: fullWrap,
-        inner: cropInner(segment.manualCrop, full, source.width, source.height),
-      },
-    ];
-  }
-
-  // No segment (gap) or explicit "fit": full-width sharp over a blurred cover.
-  if (!segment || segment.layout === "fit") {
-    const fgHeight = width * (source.height / source.width);
-    return [
-      {
-        key: "fit-bg",
-        wrap: fullWrap,
-        inner: {
+const FitFrame: React.FC<{
+  src: string;
+  width: number;
+  height: number;
+  srcW: number;
+  srcH: number;
+  trimBefore: number;
+  volume?: number;
+}> = ({ src, width, height, srcW, srcH, trimBefore, volume = 1 }) => {
+  const fgHeight = width * (srcH / srcW);
+  return (
+    <AbsoluteFill style={{ backgroundColor: "#000" }}>
+      {/* blurred background, scaled to fill */}
+      <Video
+        src={src}
+        _experimentalInitiallyDrawCachedFrame
+        muted
+        trimBefore={trimBefore}
+        style={{
+          position: "absolute",
           left: "50%",
           top: "50%",
           height,
-          width: height * (source.width / source.height),
+          width: height * (srcW / srcH),
+          maxWidth: "none",
           transform: "translate(-50%, -50%) scale(1.15)",
           filter: "blur(40px) brightness(0.7)",
-        },
-      },
-      // Shares "crop-0" so it reuses the same <Video> across fit↔crop layouts.
-      {
-        key: "crop-0",
-        wrap: fullWrap,
-        inner: { left: 0, top: (height - fgHeight) / 2, width, height: fgHeight },
-      },
-    ];
-  }
-
-  if (segment.layout === "fill") {
-    const crop =
-      interpolateCrop(segment.cameraKeyframes, sourceFrame) ??
-      centerCrop(width / height, source.width, source.height);
-    return [
-      {
-        key: "crop-0",
-        wrap: fullWrap,
-        inner: cropInner(crop, full, source.width, source.height),
-      },
-    ];
-  }
-
-  // Multi-panel layouts: split / three / four / screenshare / gameplay.
-  // Content panels (screen/gameplay capture) show the whole frame. Keys are
-  // namespaced by role so the speaker crop is "crop-0" in every layout and
-  // survives the switch.
-  const panels = panelsForLayout(segment.layout, width, height);
-  let cropIdx = 0;
-  let contentIdx = 0;
-  return panels.map((panel, panelIndex) => {
-    const wrap = {
-      left: panel.left,
-      top: panel.top,
-      width: panel.width,
-      height: panel.height,
-    };
-    if (panel.content) {
-      return {
-        key: `content-${contentIdx++}`,
-        wrap,
-        inner: containInner(panel, source.width, source.height),
-      };
-    }
-    const trackId = segment.trackedFaceIds[panelIndex];
-    const track = faceTracks.find((t) => t.id === trackId);
-    const face = smoothedFaceRect(track, sourceFrame);
-    const panelAspect = panel.width / panel.height;
-    const crop = face
-      ? cropForFace(face, panelAspect, source.width, source.height)
-      : centerCrop(panelAspect, source.width, source.height);
-    return {
-      key: `crop-${cropIdx++}`,
-      wrap,
-      inner: cropInner(crop, panel, source.width, source.height),
-    };
-  });
+        }}
+      />
+      {/* sharp full-width foreground, vertically centered */}
+      <Video
+        src={src}
+        _experimentalInitiallyDrawCachedFrame
+        volume={volume}
+        trimBefore={trimBefore}
+        style={{
+          position: "absolute",
+          left: 0,
+          top: (height - fgHeight) / 2,
+          width,
+          height: fgHeight,
+          maxWidth: "none",
+        }}
+      />
+    </AbsoluteFill>
+  );
 };
 
 /**
@@ -408,30 +373,97 @@ const RangeContent: React.FC<{
     segments[segments.length - 1] ??
     null;
 
-  const layers = buildLayers(
-    segment,
-    sourceFrame,
-    width,
-    height,
-    faceTracks,
-    source
-  );
+  if (!segment) {
+    return (
+      <FitFrame src={src} width={width} height={height} srcW={source.width} srcH={source.height} trimBefore={trimBefore} volume={originalVolume} />
+    );
+  }
 
+  // Manual crop always wins, regardless of layout
+  if (segment.manualCrop) {
+    return (
+      <AbsoluteFill style={{ backgroundColor: "#000" }}>
+        <CroppedVideo
+          src={src}
+          crop={segment.manualCrop}
+          panel={{ left: 0, top: 0, width, height }}
+          srcW={source.width}
+          srcH={source.height}
+          muted={false}
+          trimBefore={trimBefore}
+          volume={originalVolume}
+        />
+      </AbsoluteFill>
+    );
+  }
+
+  if (segment.layout === "fit") {
+    return (
+      <FitFrame src={src} width={width} height={height} srcW={source.width} srcH={source.height} trimBefore={trimBefore} volume={originalVolume} />
+    );
+  }
+
+  if (segment.layout === "fill") {
+    const crop =
+      interpolateCrop(segment.cameraKeyframes, sourceFrame) ??
+      centerCrop(width / height, source.width, source.height);
+    return (
+      <AbsoluteFill style={{ backgroundColor: "#000" }}>
+        <CroppedVideo
+          src={src}
+          crop={crop}
+          panel={{ left: 0, top: 0, width, height }}
+          srcW={source.width}
+          srcH={source.height}
+          muted={false}
+          trimBefore={trimBefore}
+          volume={originalVolume}
+        />
+      </AbsoluteFill>
+    );
+  }
+
+  // Multi-panel layouts: split / three / four / screenshare / gameplay.
+  // Content panels (screen/gameplay capture) show the whole frame; the first
+  // non-content panel carries audio.
+  const panels = panelsForLayout(segment.layout, width, height);
+  const firstFacePanel = panels.findIndex((p) => !p.content);
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
-      {layers.map((layer) => (
-        <VideoLayer
-          key={layer.key}
-          src={src}
-          layer={layer}
-          trimBefore={trimBefore}
-        />
-      ))}
-      {/* Source audio: ONE stable element for the whole range, decoupled from
-          the layout. Every video layer above is muted, so switching layouts —
-          which mounts/unmounts video panels — can never re-seek or replay the
-          audio (the cause of the "repeated last word" on layout change). */}
-      <Audio src={src} trimBefore={trimBefore} volume={originalVolume} />
+      {panels.map((panel, i) => {
+        if (panel.content) {
+          return (
+            <ContentPanel
+              key={i}
+              src={src}
+              panel={panel}
+              srcW={source.width}
+              srcH={source.height}
+              trimBefore={trimBefore}
+            />
+          );
+        }
+        const trackId = segment.trackedFaceIds[i];
+        const track = faceTracks.find((t) => t.id === trackId);
+        const face = smoothedFaceRect(track, sourceFrame);
+        const panelAspect = panel.width / panel.height;
+        const crop = face
+          ? cropForFace(face, panelAspect, source.width, source.height)
+          : centerCrop(panelAspect, source.width, source.height);
+        return (
+          <CroppedVideo
+            key={i}
+            src={src}
+            crop={crop}
+            panel={panel}
+            srcW={source.width}
+            srcH={source.height}
+            muted={i !== firstFacePanel} // first face panel carries audio
+            trimBefore={trimBefore}
+            volume={originalVolume}
+          />
+        );
+      })}
     </AbsoluteFill>
   );
 };
