@@ -439,6 +439,15 @@ function CaptionsPanel({ framing, captions, dispatch }) {
                             <span className="block text-[11px] text-muted mb-1.5">Punctuation</span>
                             <Toggle value={st.punctuation !== false} onChange={(v) => setStyle({ punctuation: v })} />
                         </div>
+                        <div>
+                            <span className="block text-[11px] text-muted mb-1.5">Word stacking</span>
+                            <Toggle
+                                value={st.verticalStack ?? currentTpl.id === 'podcast'}
+                                onChange={(v) => setStyle({ verticalStack: v })}
+                                yes="Vertical"
+                                no="Horizontal"
+                            />
+                        </div>
                     </div>
 
                     {/* Animation */}

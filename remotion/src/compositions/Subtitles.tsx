@@ -134,6 +134,23 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   const currentTimeMs = block.startMs + (frame / fps) * 1000;
   const activeIndex = getActiveWordIndex(block.words, currentTimeMs);
 
+  // The block's "key" word for size-contrast templates (e.g. Podcast): a
+  // manually highlighted word wins, otherwise the longest word stands in.
+  const emphasisIndex = (() => {
+    const hi = block.words.findIndex((w) => w.highlight === true);
+    if (hi >= 0) return hi;
+    let idx = 0;
+    let len = -1;
+    block.words.forEach((w, j) => {
+      const l = w.text.replace(/[^\p{L}\p{N}]/gu, "").length;
+      if (l > len) {
+        len = l;
+        idx = j;
+      }
+    });
+    return idx;
+  })();
+
   // Free-drag placement wins when both x/y are set; otherwise fall back to the
   // top/middle/bottom preset (existing behavior, fully back-compat).
   const freePlaced =
@@ -159,6 +176,10 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
         ...(POSITION_MAP[position] ?? POSITION_MAP.bottom),
       };
   const containerStyle = template.containerStyle?.(style) ?? {};
+  // Generic vertical stacking: lay the words out in a centered column. Templates
+  // that draw their own stack (podcast's emphasis-aware layout) opt out and keep
+  // the row-wrap container.
+  const columnStack = !template.selfStacks && style.verticalStack === true;
 
   // Block entrance animation (layers over the per-word template animation).
   // The composed transform also carries the free-drag centering when placed.
@@ -209,6 +230,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
       <div
         style={{
           display: "flex",
+          flexDirection: columnStack ? "column" : "row",
           flexWrap: "wrap",
           justifyContent: "center",
           alignItems: "center",
@@ -264,6 +286,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
                 fontStack,
                 uppercase,
                 seed: Math.round(word.startMs),
+                isEmphasis: i === emphasisIndex,
               })}
             </React.Fragment>
           );

@@ -67,6 +67,11 @@ export interface SubtitleStyle {
   punctuation?: boolean;
   /** Per-template tunables (e.g. typewriter/matrix speed), keyed by control. */
   effectParams?: Record<string, number>;
+  /**
+   * Podcast template: stack the emphasized word on its own line (vertical) vs
+   * flow all words on one wrapped line (horizontal). Defaults to vertical.
+   */
+  verticalStack?: boolean;
 }
 
 export interface SubtitleConfig {
@@ -272,6 +277,7 @@ export const subtitleStyleSchema = z.object({
     .optional(),
   punctuation: z.boolean().optional(),
   effectParams: z.record(z.string(), z.number()).optional(),
+  verticalStack: z.boolean().optional(),
 });
 
 export const subtitleConfigSchema = z.object({

@@ -25,6 +25,7 @@ export interface WordRenderArgs {
   fontStack: string;
   uppercase: boolean;
   seed: number; // stable per-word seed for deterministic randomness
+  isEmphasis?: boolean; // the one "key" word in the block (drives size-contrast styles)
 }
 
 /** A per-template tunable surfaced as a slider in the customize panel. */
@@ -51,6 +52,12 @@ export interface CaptionTemplate {
   extras?: CaptionExtra[];
   /** Optional styling for the block wrapper (e.g. a background pill). */
   containerStyle?: (style: SubtitleStyle) => React.CSSProperties;
+  /**
+   * Template draws its own vertical-stack layout (so the shared scaffold must
+   * NOT switch the container to flex-column). Podcast does this to keep its
+   * emphasis-aware 3-line look; everything else uses the generic column stack.
+   */
+  selfStacks?: boolean;
   renderWord: (args: WordRenderArgs) => React.ReactNode;
 }
 
@@ -705,6 +712,50 @@ const MinimalWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, wor
   return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: isActive ? 800 : 600, display: "inline-block", transform: `scale(${scale})`, color: isActive ? style.highlightColor : style.fontColor, textShadow: "0 2px 8px rgba(0,0,0,0.45)" }}>{word}</span>;
 };
 
+// podcast — minimal viral podcast edit (SF-Pro-style): the key word is big and
+// bold, the rest small; every word fades + slides up into place as it's spoken,
+// over a duplicated drop shadow. Reverse-engineered from the "minimal text
+// animation" Premiere tutorial. Emphasis word = block's highlighted/longest word.
+const PodcastWord: React.FC<WordRenderArgs> = ({ word, isEmphasis, frame, fps, wordStartFrame, style, fontStack, uppercase }) => {
+  const t = frame - wordStartFrame;
+  // snappy bouncy pop on the word's timestamp (≈ GSAP back.out(1.7), ~0.15s):
+  // a short spring with low damping overshoots past 1 then settles.
+  const shown = t >= 0;
+  const p = shown
+    ? spring({ frame: t, fps, config: { mass: 0.5, stiffness: 220, damping: 10 }, durationInFrames: Math.max(1, Math.round(0.18 * fps)) })
+    : 0;
+  const scale = shown ? interpolate(p, [0, 1], [0.7, 1]) : 0.7;
+  const opacity = shown ? interpolate(t, [0, Math.max(1, Math.round(0.05 * fps))], [0, 1], { extrapolateRight: "clamp" }) : 0;
+  const size = isEmphasis ? style.fontSize : style.fontSize * 0.52;
+  // duplicated drop shadow for the bold "pop" the tutorial calls out
+  const shadow = "0 2px 7px rgba(0,0,0,0.55), 0 5px 18px rgba(0,0,0,0.45)";
+  return (
+    <span
+      style={{
+        // Vertical stack (default): the emphasis word claims a full flex row so
+        // the others wrap above/below it — the reference's stacked layout (e.g.
+        // giving / SPACE / to each other). Horizontal: everything flows on one
+        // wrapped line. Toggled per-clip via style.verticalStack.
+        flexBasis: isEmphasis && style.verticalStack !== false ? "100%" : "auto",
+        textAlign: "center",
+        fontFamily: fontStack,
+        fontSize: size,
+        fontWeight: isEmphasis ? 800 : 700,
+        textTransform: uppercase ? "uppercase" : "none",
+        lineHeight: 1,
+        letterSpacing: "-0.01em",
+        display: "inline-block",
+        opacity,
+        transform: `scale(${scale.toFixed(3)})`,
+        color: isEmphasis ? style.highlightColor || style.fontColor : style.fontColor,
+        textShadow: shadow,
+      }}
+    >
+      {word}
+    </span>
+  );
+};
+
 // --- registry ---------------------------------------------------------------
 
 export const CAPTION_TEMPLATES: CaptionTemplate[] = [
@@ -765,6 +816,16 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     grouping: { maxWords: 5, maxChars: 30 },
     defaultStyle: { template: "dynamic-minimal", animation: "none", fontFamily: "Inter", fontSize: 60, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <MinimalWord {...args} />,
+  },
+  {
+    id: "podcast",
+    label: "Podcast",
+    category: "effects",
+    font: "Inter",
+    grouping: { maxWords: 5, maxChars: 28 },
+    defaultStyle: { template: "podcast", animation: "none", fontFamily: "Inter", fontSize: 96, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    selfStacks: true,
+    renderWord: (args) => <PodcastWord {...args} />,
   },
   {
     id: "glossy-gradient",
