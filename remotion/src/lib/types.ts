@@ -49,6 +49,12 @@ export interface SubtitleStyle {
   shadow?: SubtitleShadow;
   /** Drop shadow color (defaults to black). */
   shadowColor?: string;
+  /**
+   * Podcast template: stack the emphasized word on its own line (vertical) vs
+   * flow all words on one wrapped line (horizontal). Defaults to vertical.
+   * Generic toggle for other templates too (column vs row), default horizontal.
+   */
+  verticalStack?: boolean;
 }
 
 export interface SubtitleConfig {
@@ -253,6 +259,7 @@ export const subtitleStyleSchema = z.object({
   uppercase: z.boolean().optional(),
   shadow: z.enum(["none", "small", "medium", "large"]).optional(),
   shadowColor: z.string().optional(),
+  verticalStack: z.boolean().optional(),
 });
 
 export const subtitleConfigSchema = z.object({

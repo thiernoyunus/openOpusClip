@@ -14,6 +14,25 @@ import TextPanel from './TextPanel';
 import AudioPanel from './AudioPanel';
 import BrollPanel from './BrollPanel';
 
+/** Save a video URL to the browser's Downloads folder (fetch→blob→<a download>). */
+async function downloadVideo(url, filename) {
+    try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('fetch failed');
+        const blobUrl = window.URL.createObjectURL(await res.blob());
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(blobUrl);
+        document.body.removeChild(a);
+    } catch {
+        window.open(url, '_blank'); // ponytail: last-resort, opens in a tab
+    }
+}
+
 const TABS = [
     { id: 'layout', label: 'Layout', icon: LayoutGrid },
     { id: 'captions', label: 'Captions', icon: Captions },
@@ -197,6 +216,10 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
             if (!applyRes.ok) throw new Error('Render finished but could not be applied to the clip.');
             const applied = await applyRes.json();
             onExported?.(applied.new_video_url);
+            // Deliver the export to the user's browser Downloads folder (the app
+            // also keeps a copy under output/, but the export should "land" where
+            // downloads go). Fetch→blob so it saves instead of navigating.
+            await downloadVideo(getApiUrl(applied.new_video_url), `clip-${index + 1}.mp4`);
         } catch (e) {
             showError(e.message);
         } finally {
