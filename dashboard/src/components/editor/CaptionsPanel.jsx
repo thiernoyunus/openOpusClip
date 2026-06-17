@@ -427,6 +427,18 @@ function CaptionsPanel({ framing, captions, dispatch }) {
                         </p>
                     </div>
 
+                    {/* Word stacking — vertical (column) vs horizontal (wrapped row).
+                        Default vertical for Podcast (emphasis-aware stack), horizontal otherwise. */}
+                    <div>
+                        <span className="block text-[11px] text-muted mb-1.5">Word stacking</span>
+                        <Toggle
+                            value={st.verticalStack ?? currentTpl.id === 'podcast'}
+                            onChange={(v) => setStyle({ verticalStack: v })}
+                            yes="Vertical"
+                            no="Horizontal"
+                        />
+                    </div>
+
                     {SaveDefaultButton}
                 </div>
             </div>
