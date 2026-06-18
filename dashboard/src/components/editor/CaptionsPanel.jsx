@@ -408,6 +408,28 @@ function CaptionsPanel({ framing, captions, dispatch }) {
                         )}
                     </div>
 
+                    {/* Glow */}
+                    <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[11px] text-muted">Glow</span>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={st.glow === true}
+                                    onChange={(e) => setStyle({ glow: e.target.checked })}
+                                    className="sr-only peer"
+                                />
+                                <div className="w-9 h-5 bg-surface2 border border-edge rounded-full peer peer-checked:bg-viral/70 after:content-[''] after:absolute after:top-[3px] after:left-[3px] after:bg-white after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:after:translate-x-4" />
+                            </label>
+                        </div>
+                        {st.glow && (
+                            <div className="space-y-3">
+                                <ColorField label="Glow color" value={st.glowColor ?? '#FFFFFF'} presets={TEXT_PRESETS} onChange={(c) => setStyle({ glowColor: c })} />
+                                <RangeRow label="Intensity" value={st.glowIntensity ?? 30} min={0} max={100} onChange={(v) => setStyle({ glowIntensity: v })} />
+                            </div>
+                        )}
+                    </div>
+
                     {/* Caption layout + spacing */}
                     <div className="pt-2 border-t border-edge/60 space-y-4">
                         <RangeRow

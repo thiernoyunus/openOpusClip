@@ -73,6 +73,12 @@ export interface SubtitleStyle {
    * Generic toggle for other templates too (column vs row), default horizontal.
    */
   verticalStack?: boolean;
+  /** Glow effect on the caption block (a colored blur halo behind the text). */
+  glow?: boolean;
+  /** Glow color (defaults to white). */
+  glowColor?: string;
+  /** Glow strength 0–100 (mapped to a font-size-relative blur). Default 30. */
+  glowIntensity?: number;
 }
 
 export interface SubtitleConfig {
@@ -286,6 +292,9 @@ export const subtitleStyleSchema = z.object({
   punctuation: z.boolean().optional(),
   effectParams: z.record(z.string(), z.number()).optional(),
   verticalStack: z.boolean().optional(),
+  glow: z.boolean().optional(),
+  glowColor: z.string().optional(),
+  glowIntensity: z.number().min(0).max(100).optional(),
 });
 
 export const subtitleConfigSchema = z.object({
