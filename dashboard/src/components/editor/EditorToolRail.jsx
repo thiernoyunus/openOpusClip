@@ -18,10 +18,9 @@ export default function EditorToolRail({ tabs, activeId, onSelect }) {
                     <button
                         key={tab.id}
                         onClick={() => onSelect(tab.id)}
-                        title={tab.label}
                         aria-label={tab.label}
                         aria-pressed={active}
-                        className={`relative h-11 w-full flex items-center justify-center transition-colors group ${
+                        className={`relative h-11 w-full flex items-center justify-center transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-viral/50 ${
                             active ? 'text-viral' : 'text-muted hover:text-fg hover:bg-white/5'
                         }`}
                     >

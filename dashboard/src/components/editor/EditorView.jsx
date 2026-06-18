@@ -337,7 +337,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                 <button
                                     onClick={() => setTrackerOn((v) => !v)}
                                     title="Click a person on the canvas to track them"
-                                    className={`absolute top-2.5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-medium transition-colors backdrop-blur-sm ${
+                                    className={`absolute top-2.5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-medium transition-colors backdrop-blur-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viral ${
                                         trackerOn
                                             ? 'bg-viral/20 border-viral/50 text-viral'
                                             : 'bg-surface2/70 border-edge text-muted hover:text-fg'
