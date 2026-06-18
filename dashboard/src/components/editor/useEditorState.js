@@ -74,6 +74,11 @@ export const editorReducer = (state, action) => {
         case 'SET_SUBTITLES': {
             // Caption config lives on the framing object (optional key) so it
             // rides the existing save/export paths. null disables captions.
+            // transient: live drag updates skip history so one drag = one undo
+            // step (committed on pointer release).
+            if (action.transient) {
+                return { ...state, framing: { ...state.framing, subtitles: action.subtitles }, dirty: true };
+            }
             return withHistory({ ...state.framing, subtitles: action.subtitles });
         }
         case 'EDIT_CAPTION_WORD': {
