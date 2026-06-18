@@ -373,6 +373,8 @@ async def process_endpoint(
         aspect_ratio = body.get("aspect_ratio", aspect_ratio)
 
     skip_flag = str(skip_analysis).lower() in ("1", "true", "yes")
+    # Keep in sync with main.ASPECT_PRESETS. Intentionally NOT importing main here:
+    # it would pull torch/mediapipe/cv2 into the API process for a 4-key dict.
     allowed_aspect_ratios = {"9:16", "1:1", "4:5", "16:9"}
     if aspect_ratio not in allowed_aspect_ratios:
         aspect_ratio = "9:16"

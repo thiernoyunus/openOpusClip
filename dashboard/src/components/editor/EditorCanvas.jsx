@@ -28,7 +28,11 @@ const EditorCanvas = forwardRef(function EditorCanvas(
     useLayoutEffect(() => {
         const el = wrapRef.current;
         if (!el) return;
-        const update = () => setAvail({ w: el.clientWidth, h: el.clientHeight });
+        const update = () => setAvail((prev) => {
+            const w = el.clientWidth;
+            const h = el.clientHeight;
+            return prev && prev.w === w && prev.h === h ? prev : { w, h };
+        });
         update();
         const ro = new ResizeObserver(update);
         ro.observe(el);

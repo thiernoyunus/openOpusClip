@@ -524,18 +524,23 @@ def create_general_frame(frame, output_width, output_height):
     # Blur background
     background = cv2.GaussianBlur(background, (51, 51), 0)
     
-    # 2. Foreground (Fit Width)
-    scale = output_width / orig_w
+    # 2. Foreground — CONTAIN within the output (fit width normally, but fall back
+    # to fitting height when the source is narrower than the target, e.g. a
+    # portrait/square upload with a 16:9 output — otherwise fg_h > output_height
+    # gives a negative offset and a NumPy broadcast error).
+    scale = min(output_width / orig_w, output_height / orig_h)
+    fg_w = int(orig_w * scale)
     fg_h = int(orig_h * scale)
-    foreground = cv2.resize(frame, (output_width, fg_h), interpolation=cv2.INTER_LANCZOS4)
-    
-    # 3. Overlay
+    foreground = cv2.resize(frame, (fg_w, fg_h), interpolation=cv2.INTER_LANCZOS4)
+
+    # 3. Overlay (centered both axes over the blurred background)
     y_offset = (output_height - fg_h) // 2
-    
+    x_offset = (output_width - fg_w) // 2
+
     # Clone background to avoid modifying it
     final_frame = background.copy()
-    final_frame[y_offset:y_offset+fg_h, :] = foreground
-    
+    final_frame[y_offset:y_offset+fg_h, x_offset:x_offset+fg_w] = foreground
+
     return final_frame
 
 def analyze_scenes_strategy(video_path, scenes):
