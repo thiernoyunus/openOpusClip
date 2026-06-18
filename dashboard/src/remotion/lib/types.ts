@@ -24,6 +24,12 @@ export type SubtitleAnimation = "none" | "word-highlight" | "pop" | "karaoke";
 export type SubtitlePosition = "top" | "middle" | "bottom";
 
 export type SubtitleShadow = "none" | "small" | "medium" | "large";
+export type SubtitleEntrance =
+  | "none"
+  | "fade"
+  | "slide-up"
+  | "zoom-in"
+  | "slide-up-zoom";
 
 export interface SubtitleStyle {
   fontFamily: string;
@@ -49,6 +55,18 @@ export interface SubtitleStyle {
   shadow?: SubtitleShadow;
   /** Drop shadow color (defaults to black). */
   shadowColor?: string;
+  /** Max words per on-screen block (overrides the template's grouping). */
+  maxWords?: number;
+  /** Extra spacing between letters, in em (inherited by word spans). */
+  letterSpacing?: number;
+  /** Multiplier on the horizontal gap between words (1 = template default). */
+  wordSpacing?: number;
+  /** Block entrance animation, layered over the per-word template animation. */
+  captionAnimation?: SubtitleEntrance;
+  /** When false, trailing punctuation is stripped from displayed words. */
+  punctuation?: boolean;
+  /** Per-template tunables (e.g. typewriter/matrix speed), keyed by control. */
+  effectParams?: Record<string, number>;
   /**
    * Podcast template: stack the emphasized word on its own line (vertical) vs
    * flow all words on one wrapped line (horizontal). Defaults to vertical.
@@ -259,6 +277,14 @@ export const subtitleStyleSchema = z.object({
   uppercase: z.boolean().optional(),
   shadow: z.enum(["none", "small", "medium", "large"]).optional(),
   shadowColor: z.string().optional(),
+  maxWords: z.number().int().min(1).max(8).optional(),
+  letterSpacing: z.number().optional(),
+  wordSpacing: z.number().optional(),
+  captionAnimation: z
+    .enum(["none", "fade", "slide-up", "zoom-in", "slide-up-zoom"])
+    .optional(),
+  punctuation: z.boolean().optional(),
+  effectParams: z.record(z.string(), z.number()).optional(),
   verticalStack: z.boolean().optional(),
 });
 

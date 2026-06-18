@@ -11,8 +11,6 @@ import type { GroupingOptions } from "./captions";
  * word to `renderWord`. Classic templates reproduce the original 4 animations;
  * the "effects" templates are ports of the HeyGen HyperFrames caption styles
  * (GSAP timelines re-expressed as Remotion frame math).
- *
- * IMPORTANT: duplicated at remotion/src/lib/captionTemplates.tsx — keep in sync.
  */
 
 export interface WordRenderArgs {
@@ -30,6 +28,16 @@ export interface WordRenderArgs {
   isEmphasis?: boolean; // the one "key" word in the block (drives size-contrast styles)
 }
 
+/** A per-template tunable surfaced as a slider in the customize panel. */
+export interface CaptionExtra {
+  key: string;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  default: number;
+}
+
 export interface CaptionTemplate {
   id: string;
   label: string;
@@ -40,6 +48,8 @@ export interface CaptionTemplate {
   grouping?: GroupingOptions;
   /** Applied to the style when this template is picked in the panel. */
   defaultStyle: Partial<SubtitleStyle>;
+  /** Per-template tunables surfaced as extra sliders (e.g. animation speed). */
+  extras?: CaptionExtra[];
   /** Optional styling for the block wrapper (e.g. a background pill). */
   containerStyle?: (style: SubtitleStyle) => React.CSSProperties;
   /**
@@ -256,7 +266,8 @@ const MatrixWord: React.FC<WordRenderArgs> = ({
   seed,
 }) => {
   const t = frame - wordStartFrame;
-  const dur = Math.max(1, Math.round(0.28 * fps));
+  const speed = style.effectParams?.decodeSpeed ?? 1;
+  const dur = Math.max(1, Math.round((0.28 * fps) / speed));
 
   let display: string;
   if (t < 0) {
@@ -669,9 +680,10 @@ const TypewriterWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, 
   const t = frame - wordStartFrame;
   if (t < 0) return <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 700, opacity: 0, display: "inline-block" }}>{word}</span>;
   const dur = Math.max(1, wordEndFrame - wordStartFrame);
+  const speed = style.effectParams?.typeSpeed ?? 1;
   // Split by code point so emojis / surrogate pairs aren't sliced in half.
   const chars = Array.from(word);
-  const shown = Math.min(chars.length, Math.floor((t / dur) * chars.length) + 1);
+  const shown = Math.min(chars.length, Math.floor((t / dur) * chars.length * speed) + 1);
   const blink = Math.floor(frame / Math.max(1, Math.round(0.4 * fps))) % 2 === 0;
   return (
     <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 700, display: "inline-block", color: isActive ? style.highlightColor : style.fontColor, textShadow: "0 3px 10px rgba(0,0,0,0.5)" }}>
@@ -783,6 +795,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Inter",
     grouping: { maxWords: 5, maxChars: 28 },
     defaultStyle: { template: "typewriter", animation: "none", fontFamily: "Inter", fontSize: 58, fontColor: "#FFFFFF", highlightColor: "#FFE000", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    extras: [{ key: "typeSpeed", label: "Type speed", min: 0.5, max: 3, step: 0.1, default: 1 }],
     renderWord: (args) => <TypewriterWord {...args} />,
   },
   {
@@ -930,6 +943,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
       bgColor: "#000000",
       bgOpacity: 0,
     },
+    extras: [{ key: "decodeSpeed", label: "Decode speed", min: 0.5, max: 2, step: 0.1, default: 1 }],
     renderWord: (args) => <MatrixWord {...args} />,
   },
   {

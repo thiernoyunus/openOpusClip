@@ -67,33 +67,30 @@ export function detectFillerCuts(captions, framing) {
     const clipIn = framing.clipInFrame ?? 0;
     const clipOut = framing.clipOutFrame ?? framing.source.durationFrames;
     const cuts = [];
+    const push = (startSrc, endSrc) => {
+        const startFrame = Math.max(clipIn, startSrc - 1);
+        const endFrame = Math.min(clipOut, endSrc + 1);
+        if (endFrame > startFrame) cuts.push({ startFrame, endFrame });
+    };
     for (let i = 0; i < captions.length; i += 1) {
-        const word = captions[i];
-        const cleaned = cleanWord(word.text);
+        const cleaned = cleanWord(captions[i].text);
         if (!cleaned) continue;
-
-        // Two-word phrase look-ahead ("you know", "i mean", "kind of",
-        // "sort of"): when the cleaned current+next words form a filler phrase,
-        // cut BOTH words and skip the next index.
+        // Look ahead one word so multi-word fillers ("you know", "i mean",
+        // "kind of", "sort of") match — they can never match a single token.
         if (i < captions.length - 1) {
-            const nextCleaned = cleanWord(captions[i + 1].text);
-            const phrase = `${cleaned} ${nextCleaned}`;
+            const phrase = `${cleaned} ${cleanWord(captions[i + 1].text)}`;
             if (FILLER_WORDS.has(phrase)) {
-                const { start } = wordToSourceFrames(word, framing);
+                const { start } = wordToSourceFrames(captions[i], framing);
                 const { end } = wordToSourceFrames(captions[i + 1], framing);
-                const startFrame = Math.max(clipIn, start - 1);
-                const endFrame = Math.min(clipOut, end + 1);
-                if (endFrame > startFrame) cuts.push({ startFrame, endFrame });
-                i += 1;
+                push(start, end);
+                i += 1; // consume both words of the phrase
                 continue;
             }
         }
-
-        if (!FILLER_WORDS.has(cleaned)) continue;
-        const { start, end } = wordToSourceFrames(word, framing);
-        const startFrame = Math.max(clipIn, start - 1);
-        const endFrame = Math.min(clipOut, end + 1);
-        if (endFrame > startFrame) cuts.push({ startFrame, endFrame });
+        if (FILLER_WORDS.has(cleaned)) {
+            const { start, end } = wordToSourceFrames(captions[i], framing);
+            push(start, end);
+        }
     }
     return cuts;
 }

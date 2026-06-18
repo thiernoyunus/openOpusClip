@@ -292,6 +292,9 @@ Return ONLY JSON of this exact shape:
                 contents=[prompt],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
+                    # emojis is an array of {index, emoji} (NOT a free-form map):
+                    # Gemini's structured-output validator can reject objects that
+                    # rely on additionalProperties. Mapped back to a dict below.
                     response_schema={
                         "type": "object",
                         "properties": {

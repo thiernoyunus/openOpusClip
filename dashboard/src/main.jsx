@@ -7,14 +7,22 @@ import Legal from './Legal.jsx'
 import EditorView from './components/editor/EditorView.jsx'
 
 // Dev harness: open /?editorDev=1 to mount the clip editor against local
-// fixtures (put demo-source.mp4 + demo.framing.json in
-// dashboard/public/dev-fixtures/ — gitignored). Lets you work on the editor
-// without processing a job first.
+// fixtures in dashboard/public/dev-fixtures/ (gitignored). Lets you work on the
+// editor without processing a job first.
+// Default (`static`) uses the user's real test clip (test-source.mp4 +
+// test.framing.json — a 45s 1080p proxy of the Dubai network video, mixed
+// layouts so layout-switch behavior can be exercised). `?editorDev=demo` falls
+// back to the original demo fixture.
 // /?editorDev=backend instead serves the fixture through the API (expects
 // output/dev/demo_clip_1_source.mp4 + demo_clip_1.framing.json on the
 // backend) so Save and Export can be exercised end-to-end.
 const EDITOR_DEV_FIXTURES = {
   static: {
+    framing_url: '/dev-fixtures/test.framing.json',
+    source_url: '/dev-fixtures/test-source.mp4',
+    video_title_for_youtube_short: 'Test clip (Dubai network)',
+  },
+  demo: {
     framing_url: '/dev-fixtures/demo.framing.json',
     source_url: '/dev-fixtures/demo-source.mp4',
     video_title_for_youtube_short: 'Editor dev fixture',

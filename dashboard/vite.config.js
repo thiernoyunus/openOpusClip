@@ -9,6 +9,14 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    // src/remotion is a symlink to ../../remotion/src (single source of truth,
+    // also bundled by render-service). dedupe forces these packages to resolve
+    // from dashboard/node_modules so the symlinked files don't drag in the root
+    // checkout's mismatched copies (avoids duplicate React + remotion skew).
+    resolve: {
+      dedupe: ['react', 'react-dom', 'remotion', '@remotion/media',
+        '@remotion/media-utils', '@remotion/player', '@remotion/web-renderer', 'zod'],
+    },
     server: {
       // Honor a harness/host-assigned port (e.g. preview tooling) when PORT is
       // set; otherwise fall back to Vite's default (5173).

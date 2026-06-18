@@ -194,6 +194,13 @@ export const panelsForLayout = (
 };
 
 // --- rendering ---
+// Every <Video> sets `_experimentalInitiallyDrawCachedFrame` so a freshly
+// mounted panel paints the last cached frame instead of black. Layout switches
+// in the editor Player remount these Videos (different subtree per layout), and
+// a fresh @remotion/media Video is black until it decodes — this hides that
+// flash. Render/export is unaffected (it's a Player-only first-frame hint).
+// ponytail: deliberately NOT reusing elements / decoupling audio here — that
+// path froze the live frame loop (see memory: layout-switch-black-flash).
 
 const CroppedVideo: React.FC<{
   src: string;
@@ -230,6 +237,7 @@ const CroppedVideo: React.FC<{
     >
       <Video
         src={src}
+        _experimentalInitiallyDrawCachedFrame
         muted={muted}
         volume={volume}
         trimBefore={trimBefore}
@@ -272,6 +280,7 @@ const ContentPanel: React.FC<{
     >
       <Video
         src={src}
+        _experimentalInitiallyDrawCachedFrame
         muted
         trimBefore={trimBefore}
         style={{
@@ -303,6 +312,7 @@ const FitFrame: React.FC<{
       {/* blurred background, scaled to fill */}
       <Video
         src={src}
+        _experimentalInitiallyDrawCachedFrame
         muted
         trimBefore={trimBefore}
         style={{
@@ -319,6 +329,7 @@ const FitFrame: React.FC<{
       {/* sharp full-width foreground, vertically centered */}
       <Video
         src={src}
+        _experimentalInitiallyDrawCachedFrame
         volume={volume}
         trimBefore={trimBefore}
         style={{

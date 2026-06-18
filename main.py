@@ -1400,7 +1400,12 @@ if __name__ == '__main__':
                     '-ss', str(start),
                     '-to', str(end),
                     '-i', input_video,
+                    # Dense keyframes (every 0.5s @30fps) so the web editor's
+                    # seeks decode fast — long GOPs cause a multi-second black
+                    # flash on layout switch in the live preview. Negligible
+                    # size cost; this cut also serves as the editor-source fallback.
                     '-c:v', 'libx264', '-crf', '12', '-preset', 'ultrafast',
+                    '-g', '15', '-keyint_min', '15', '-sc_threshold', '0',
                     '-c:a', 'aac',
                     clip_cut_path
                 ]
@@ -1415,7 +1420,10 @@ if __name__ == '__main__':
                     '-ss', str(pad_start),
                     '-to', str(pad_end),
                     '-i', input_video,
+                    # Dense keyframes so the editor (which seeks this padded
+                    # source constantly) repaints fast after a layout switch.
                     '-c:v', 'libx264', '-crf', '12', '-preset', 'ultrafast',
+                    '-g', '15', '-keyint_min', '15', '-sc_threshold', '0',
                     '-c:a', 'aac',
                     clip_source_path
                 ]
