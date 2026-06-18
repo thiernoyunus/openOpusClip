@@ -256,10 +256,10 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     const selCount = selRange ? selRange.hi - selRange.lo + 1 : 0;
 
     return (
-        <div className="w-[300px] shrink-0 border-r border-edge bg-surface flex flex-col min-h-0">
-            <div className="px-4 pt-4 pb-2 shrink-0 relative">
+        <div className="w-[280px] shrink-0 border-r border-edge bg-surface flex flex-col min-h-0">
+            <div className="px-3 pt-3 pb-2 shrink-0 relative">
                 <div className="flex items-center gap-1.5 text-xs text-muted">
-                    <FileText size={13} /> Transcript
+                    <FileText size={12} /> Transcript
                     <button
                         onClick={() => setCleanupOpen((v) => !v)}
                         disabled={captions.length === 0}

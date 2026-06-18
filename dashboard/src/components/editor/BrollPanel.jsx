@@ -155,9 +155,9 @@ function BrollPanel({ framing, dispatch, getCurrentSourceFrame, captions = [] })
 
     if (!key) {
         return (
-            <div className="p-4">
-                <h3 className="text-xs font-semibold text-fg uppercase tracking-wide mb-3 flex items-center gap-1.5">
-                    <Clapperboard size={13} /> B-Roll
+            <div className="p-3">
+                <h3 className="text-[11px] font-semibold text-fg uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                    <Clapperboard size={12} /> B-Roll
                 </h3>
                 <div className="flex items-start gap-1.5 text-[11px] text-muted mb-3">
                     <KeyRound size={12} className="mt-0.5 shrink-0" />
@@ -174,9 +174,9 @@ function BrollPanel({ framing, dispatch, getCurrentSourceFrame, captions = [] })
     }
 
     return (
-        <div className="p-4">
-            <h3 className="text-xs font-semibold text-fg uppercase tracking-wide mb-3 flex items-center gap-1.5">
-                <Clapperboard size={13} /> B-Roll
+        <div className="p-3">
+            <h3 className="text-[11px] font-semibold text-fg uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                <Clapperboard size={12} /> B-Roll
             </h3>
 
             <div className="flex gap-1.5 mb-3">

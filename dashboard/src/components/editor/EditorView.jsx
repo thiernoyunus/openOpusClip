@@ -6,6 +6,7 @@ import { outputDurationFrames, outputToSource } from '../../remotion/lib/edl';
 import EditorTopBar from './EditorTopBar';
 import EditorCanvas, { EDITOR_FPS } from './EditorCanvas';
 import EditorTimeline from './EditorTimeline';
+import EditorToolRail from './EditorToolRail';
 import LayoutPanel from './LayoutPanel';
 import TranscriptPanel from './TranscriptPanel';
 import CaptionsPanel from './CaptionsPanel';
@@ -318,22 +319,9 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                             dispatch={dispatch}
                         />
 
-                        {/* Canvas */}
-                        <div className="flex-1 min-w-0 bg-canvas flex flex-col items-center justify-center gap-3 p-6 min-h-0">
-                            <button
-                                onClick={() => setTrackerOn((v) => !v)}
-                                title="Click a person on the canvas to track them"
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[11px] font-medium transition-colors shrink-0 ${
-                                    trackerOn
-                                        ? 'bg-viral/20 border-viral/50 text-viral'
-                                        : 'bg-surface2/60 border-edge text-muted hover:text-fg'
-                                }`}
-                            >
-                                <Crosshair size={12} />
-                                Tracker: {trackerOn ? 'ON — click a person' : 'OFF'}
-                            </button>
-                            {/* The absolute box gives EditorCanvas's h-full a definite height
-                                (percentages don't resolve against flex-grown items) */}
+                        {/* Canvas — tracker toggle floats over the top so it
+                            doesn't steal vertical space from the preview. */}
+                        <div className="flex-1 min-w-0 bg-canvas flex flex-col items-center justify-center min-h-0 p-4 relative">
                             <div className="relative flex-1 min-h-0 w-full">
                                 <div className="absolute inset-0 flex items-center justify-center">
                                     <EditorCanvas
@@ -346,27 +334,24 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                         dispatch={dispatch}
                                     />
                                 </div>
+                                <button
+                                    onClick={() => setTrackerOn((v) => !v)}
+                                    title="Click a person on the canvas to track them"
+                                    className={`absolute top-2.5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-medium transition-colors backdrop-blur-sm ${
+                                        trackerOn
+                                            ? 'bg-viral/20 border-viral/50 text-viral'
+                                            : 'bg-surface2/70 border-edge text-muted hover:text-fg'
+                                    }`}
+                                >
+                                    <Crosshair size={12} />
+                                    {trackerOn ? 'Tracker: ON' : 'Tracker'}
+                                </button>
                             </div>
                         </div>
 
-                        {/* Tool rail with icon tabs */}
-                        <div className="w-[260px] shrink-0 border-l border-edge bg-surface flex flex-col min-h-0">
-                            <div className="grid grid-cols-6 border-b border-edge shrink-0">
-                                {TABS.map((tab) => (
-                                    <button
-                                        key={tab.id}
-                                        onClick={() => setActiveTab(tab.id)}
-                                        title={tab.label}
-                                        className={`flex flex-col items-center gap-0.5 py-2 text-[9px] font-medium transition-colors ${
-                                            activeTab === tab.id
-                                                ? 'text-fg border-b-2 border-fg -mb-px'
-                                                : 'text-muted hover:text-fg'
-                                        }`}
-                                    >
-                                        <tab.icon size={14} /> {tab.label}
-                                    </button>
-                                ))}
-                            </div>
+                        {/* Tool panel (scroll body only — the tab strip moved
+                            into the vertical icon rail on the far right). */}
+                        <div className="w-[300px] shrink-0 border-l border-edge bg-surface flex flex-col min-h-0">
                             <div className="flex-1 overflow-y-auto custom-scrollbar">
                                 {activeTab === 'layout' && (
                                     <LayoutPanel
@@ -393,6 +378,9 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                 )}
                             </div>
                         </div>
+
+                        {/* Vertical icon-only rail (far right edge) */}
+                        <EditorToolRail tabs={TABS} activeId={activeTab} onSelect={setActiveTab} />
                     </div>
 
                     <EditorTimeline

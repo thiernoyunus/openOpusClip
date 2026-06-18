@@ -97,8 +97,8 @@ function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl }) {
 
     return (
         <div>
-            <div className="p-4">
-                <h3 className="text-xs font-semibold text-fg uppercase tracking-wide mb-1">Layout</h3>
+            <div className="p-3">
+                <h3 className="text-[11px] font-semibold text-fg uppercase tracking-wide mb-1">Layout</h3>
                 {!primary ? (
                     <p className="text-xs text-muted mt-2">
                         Select a segment in the timeline to change its framing.
@@ -128,9 +128,9 @@ function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl }) {
                                                 ? `Only ${peopleAvailable} ${peopleAvailable === 1 ? 'person' : 'people'} detected in this scene`
                                                 : opt.desc
                                         }
-                                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-colors ${
+                                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-colors ${
                                             active
-                                                ? 'bg-white/10 border-white/25 text-fg'
+                                                ? 'bg-viral/15 border-viral/50 text-fg'
                                                 : disabled
                                                   ? 'bg-surface2/30 border-edge text-zinc-600 cursor-not-allowed'
                                                   : 'bg-surface2/50 border-edge text-fg hover:bg-white/5'
@@ -156,8 +156,8 @@ function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl }) {
 
                         {/* People / panel assignment (one dropdown per face panel) */}
                         {showPeopleAssignment && (
-                            <div className="mt-5">
-                                <h3 className="text-xs font-semibold text-fg uppercase tracking-wide mb-2">
+                            <div className="mt-4">
+                                <h3 className="text-[11px] font-semibold text-fg uppercase tracking-wide mb-2">
                                     {facePanels.length > 1 ? 'People' : 'Tracked person'}
                                 </h3>
                                 <div className="space-y-1.5">
@@ -190,11 +190,11 @@ function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl }) {
 
                         {/* Manual reframe */}
                         {selectedSegments.length === 1 && (
-                            <div className="mt-5">
-                                <h3 className="text-xs font-semibold text-fg uppercase tracking-wide mb-2">Manual reframe</h3>
+                            <div className="mt-4">
+                                <h3 className="text-[11px] font-semibold text-fg uppercase tracking-wide mb-2">Manual reframe</h3>
                                 <button
                                     onClick={() => setShowCropModal(true)}
-                                    className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg border border-edge bg-surface2/50 text-fg text-xs font-medium hover:bg-white/5 transition-colors"
+                                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-edge bg-surface2/50 text-fg text-xs font-medium hover:bg-white/5 transition-colors"
                                 >
                                     <Crop size={14} />
                                     {primary.manualCrop ? 'Adjust crop' : 'Set custom crop'}

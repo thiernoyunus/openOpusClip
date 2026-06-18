@@ -47,7 +47,7 @@ function TemplateButton({ tpl, active, onClick, onCustomize }) {
         <button
             onClick={onClick}
             className={`relative px-2 py-2 rounded-lg border transition-colors ${
-                active ? 'bg-white/10 border-white/30' : 'border-edge bg-surface2/50 hover:bg-white/5'
+                active ? 'bg-viral/15 border-viral/50' : 'border-edge bg-surface2/50 hover:bg-white/5'
             }`}
         >
             {active && onCustomize && (
@@ -123,7 +123,7 @@ function Toggle({ value, onChange, yes = 'Yes', no = 'No' }) {
                     onClick={() => onChange(v)}
                     className={`px-2 py-1.5 rounded-lg border text-[11px] transition-colors ${
                         value === v
-                            ? 'bg-white/10 border-white/25 text-fg'
+                            ? 'bg-viral/15 border-viral/50 text-fg'
                             : 'bg-surface2/50 border-edge text-muted hover:bg-white/5'
                     }`}
                 >
@@ -144,7 +144,7 @@ function Seg({ options, value, onChange }) {
                     onClick={() => onChange(o.value)}
                     className={`px-2 py-1.5 rounded-lg border text-[11px] capitalize transition-colors ${
                         value === o.value
-                            ? 'bg-white/10 border-white/25 text-fg'
+                            ? 'bg-viral/15 border-viral/50 text-fg'
                             : 'bg-surface2/50 border-edge text-muted hover:bg-white/5'
                     }`}
                 >
@@ -306,8 +306,8 @@ function CaptionsPanel({ framing, captions, dispatch }) {
         const effShadow = st.shadow ?? 'none';
         const bgOn = (st.bgOpacity ?? 0) > 0;
         return (
-            <div className="p-4">
-                <div className="flex items-center gap-2 mb-4">
+            <div className="p-3">
+                <div className="flex items-center gap-2 mb-3">
                     <button
                         onClick={() => setCustomizing(false)}
                         className="w-7 h-7 rounded-lg border border-edge bg-surface2/50 flex items-center justify-center text-muted hover:bg-white/5 transition-colors"
@@ -315,10 +315,10 @@ function CaptionsPanel({ framing, captions, dispatch }) {
                     >
                         <ArrowLeft size={14} />
                     </button>
-                    <h3 className="text-xs font-semibold text-fg truncate">Customize {currentTpl.label}</h3>
+                    <h3 className="text-[11px] font-semibold text-fg truncate uppercase tracking-wide">Customize {currentTpl.label}</h3>
                 </div>
 
-                <div className="space-y-4">
+                <div className="space-y-3">
                     {/* Font + weight */}
                     <div className="grid grid-cols-2 gap-2">
                         <div>
@@ -568,9 +568,9 @@ function CaptionsPanel({ framing, captions, dispatch }) {
 
     // --- Grid mode ------------------------------------------------------------
     return (
-        <div className="p-4">
+        <div className="p-3">
             <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-semibold text-fg uppercase tracking-wide">Captions</h3>
+                <h3 className="text-[11px] font-semibold text-fg uppercase tracking-wide">Captions</h3>
                 <label className="relative inline-flex items-center cursor-pointer">
                     <input
                         type="checkbox"
@@ -596,7 +596,7 @@ function CaptionsPanel({ framing, captions, dispatch }) {
                     Turn captions on to burn word-level subtitles into the clip.
                 </p>
             ) : (
-                <div className="space-y-4">
+                <div className="space-y-3">
                     {/* Effect templates */}
                     <div>
                         <span className="flex items-center gap-1 text-[11px] text-muted mb-1.5">
@@ -634,7 +634,7 @@ function CaptionsPanel({ framing, captions, dispatch }) {
                     {/* Customize entry */}
                     <button
                         onClick={() => setCustomizing(true)}
-                        className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-white/20 bg-white/5 text-fg text-[11px] font-medium hover:bg-white/10 transition-colors"
+                        className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-viral/40 bg-viral/10 text-fg text-[11px] font-medium hover:bg-viral/20 transition-colors"
                     >
                         <Pencil size={13} />
                         Customize {currentTpl?.label}

@@ -16,9 +16,9 @@ const CUT_STYLES = [
 function TransitionsPanel({ framing, dispatch }) {
     const t = framing.transitions || { fadeIn: false, fadeOut: false, cutCrossfade: false };
     return (
-        <div className="p-4">
-            <h3 className="text-xs font-semibold text-fg uppercase tracking-wide mb-1 flex items-center gap-1.5">
-                <Sparkles size={13} /> Transitions
+        <div className="p-3">
+            <h3 className="text-[11px] font-semibold text-fg uppercase tracking-wide mb-1 flex items-center gap-1.5">
+                <Sparkles size={12} /> Transitions
             </h3>
             <p className="text-[11px] text-muted mb-3">Applied across the whole clip.</p>
             <div className="space-y-1.5">
@@ -26,8 +26,8 @@ function TransitionsPanel({ framing, dispatch }) {
                     <button
                         key={tog.key}
                         onClick={() => dispatch({ type: 'SET_TRANSITIONS', patch: { [tog.key]: !t[tog.key] } })}
-                        className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border text-left transition-colors ${
-                            t[tog.key] ? 'bg-white/10 border-white/25' : 'bg-surface2/50 border-edge hover:bg-white/5'
+                        className={`w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg border text-left transition-colors ${
+                            t[tog.key] ? 'bg-viral/15 border-viral/50' : 'bg-surface2/50 border-edge hover:bg-white/5'
                         }`}
                     >
                         <span className="min-w-0">
@@ -63,7 +63,7 @@ function TransitionsPanel({ framing, dispatch }) {
                                     key={cs.key}
                                     onClick={() => dispatch({ type: 'SET_TRANSITIONS', patch: { cutStyle: cs.key } })}
                                     className={`px-3 py-2 rounded-lg border text-left transition-colors ${
-                                        active ? 'bg-white/10 border-white/25' : 'bg-surface2/50 border-edge hover:bg-white/5'
+                                        active ? 'bg-viral/15 border-viral/50' : 'bg-surface2/50 border-edge hover:bg-white/5'
                                     }`}
                                 >
                                     <span className="block text-xs font-medium text-fg">{cs.label}</span>
