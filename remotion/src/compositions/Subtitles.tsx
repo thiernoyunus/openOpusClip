@@ -52,7 +52,7 @@ function blockFilter(style: SubtitleStyle): string | undefined {
     // Map intensity 0–100 to a font-size-relative blur so the glow reads the
     // same across caption sizes. Two stacked shadows give a denser halo.
     const intensity = style.glowIntensity ?? 30;
-    const blur = (intensity / 100) * style.fontSize * 0.5;
+    const blur = (intensity / 100) * (style.fontSize ?? 56) * 0.5;
     parts.push(`drop-shadow(0 0 ${blur.toFixed(1)}px ${color})`);
     parts.push(`drop-shadow(0 0 ${(blur / 2).toFixed(1)}px ${color})`);
   }
@@ -204,7 +204,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   // Block entrance animation (layers over the per-word template animation).
   // The composed transform also carries the free-drag centering when placed.
   const entrance = style.captionAnimation ?? "fade";
-  const introDur = Math.max(1, Math.round(0.4 * fps));
+  const introDur = Math.min(durationFrames, Math.max(1, Math.round(0.4 * fps)));
   const introP = interpolate(frame, [0, introDur], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
