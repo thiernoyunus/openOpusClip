@@ -33,17 +33,37 @@ const SHADOW_MAP: Record<string, { oy: number; blur: number }> = {
   large: { oy: 8, blur: 20 },
 };
 
-function shadowFilter(style: SubtitleStyle): string | undefined {
+/**
+ * Combined CSS `filter` for the caption block: an optional drop-shadow preset
+ * plus an optional glow halo. Both layer over every template uniformly without
+ * touching any per-word renderer. Returns undefined when neither is set.
+ */
+function blockFilter(style: SubtitleStyle): string | undefined {
+  const parts: string[] = [];
+
   const preset = style.shadow && SHADOW_MAP[style.shadow];
-  if (!preset) return undefined;
-  const color = style.shadowColor ?? "#000000";
-  return `drop-shadow(0 ${preset.oy}px ${preset.blur}px ${color})`;
+  if (preset) {
+    const color = style.shadowColor ?? "#000000";
+    parts.push(`drop-shadow(0 ${preset.oy}px ${preset.blur}px ${color})`);
+  }
+
+  if (style.glow) {
+    const color = style.glowColor ?? "#FFFFFF";
+    // Map intensity 0–100 to a font-size-relative blur so the glow reads the
+    // same across caption sizes. Two stacked shadows give a denser halo.
+    const intensity = style.glowIntensity ?? 30;
+    const blur = (intensity / 100) * (style.fontSize ?? 56) * 0.5;
+    parts.push(`drop-shadow(0 0 ${blur.toFixed(1)}px ${color})`);
+    parts.push(`drop-shadow(0 0 ${(blur / 2).toFixed(1)}px ${color})`);
+  }
+
+  return parts.length ? parts.join(" ") : undefined;
 }
 
 /** How long a block lingers after its last word, clamped to the next block. */
 const TAIL_MS = 320;
-/** Block fade in/out length, in frames. */
-const FADE_FRAMES = 4;
+/** Block fade in/out length, in frames (~0.27s at 30fps so it reads clearly). */
+const FADE_FRAMES = 8;
 
 /** Injects bundled caption @font-face rules and blocks render until they load. */
 const FontLoader: React.FC = () => {
@@ -184,7 +204,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   // Block entrance animation (layers over the per-word template animation).
   // The composed transform also carries the free-drag centering when placed.
   const entrance = style.captionAnimation ?? "fade";
-  const introDur = Math.max(1, Math.round(0.3 * fps));
+  const introDur = Math.min(durationFrames, Math.max(1, Math.round(0.4 * fps)));
   const introP = interpolate(frame, [0, introDur], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
@@ -192,11 +212,11 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   });
   const slide =
     entrance === "slide-up" || entrance === "slide-up-zoom"
-      ? `translateY(${((1 - introP) * 40).toFixed(1)}px)`
+      ? `translateY(${((1 - introP) * 70).toFixed(1)}px)`
       : "";
   const zoom =
     entrance === "zoom-in" || entrance === "slide-up-zoom"
-      ? `scale(${(0.85 + 0.15 * introP).toFixed(3)})`
+      ? `scale(${(0.7 + 0.3 * introP).toFixed(3)})`
       : "";
   const transform =
     [freePlaced ? "translate(-50%, -50%)" : "", slide, zoom]
@@ -224,7 +244,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
         ...outerStyle,
         transform,
         opacity,
-        filter: shadowFilter(style),
+        filter: blockFilter(style),
       }}
     >
       <div
