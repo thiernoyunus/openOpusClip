@@ -6,12 +6,14 @@ import {
     panelsForLayout,
 } from '../../remotion/compositions/ReframedVideo';
 
-const CANVAS_W = 1080;
-const CANVAS_H = 1920;
+/** Output canvas dimensions for a clip (defaults to 9:16 for older clips). */
+function canvasDims(framing) {
+    return { w: framing.outputWidth ?? 1080, h: framing.outputHeight ?? 1920 };
+}
 
 /**
  * Geometry shared by the Tracker overlay: maps points between canvas space
- * (0..1 over the 9:16 composition) and source space (0..1 over the 16:9
+ * (0..1 over the output composition) and source space (0..1 over the 16:9
  * original), through whatever layout the active segment uses.
  *
  * Every crop the composition renders is constructed with the exact pixel
@@ -29,10 +31,11 @@ export function segmentAtSourceFrame(framing, srcFrame) {
 }
 
 /** Normalized panel rects + their pixel aspect for a layout. */
-function panelGeometry(layout) {
+function panelGeometry(layout, framing) {
+    const { w, h } = canvasDims(framing);
     return panelsForLayout(layout, 1, 1).map((p) => ({
         ...p,
-        aspectPx: (p.width * CANVAS_W) / (p.height * CANVAS_H),
+        aspectPx: (p.width * w) / (p.height * h),
     }));
 }
 
@@ -50,14 +53,15 @@ function fillCrop(framing, segment, srcFrame) {
     return (
         segment.manualCrop ||
         interpolateCrop(segment.cameraKeyframes, srcFrame) ||
-        centerCrop(CANVAS_W / CANVAS_H, framing.source.width, framing.source.height)
+        centerCrop(canvasDims(framing).w / canvasDims(framing).h, framing.source.width, framing.source.height)
     );
 }
 
 /** Vertical extent of the sharp foreground in a fit layout (canvas units). */
 function fitForeground(framing) {
     const { width: srcW, height: srcH } = framing.source;
-    const fgH = (CANVAS_W * (srcH / srcW)) / CANVAS_H;
+    const { w, h } = canvasDims(framing);
+    const fgH = (w * (srcH / srcW)) / h;
     return { top: (1 - fgH) / 2, height: fgH };
 }
 
@@ -83,7 +87,7 @@ export function canvasToSource(framing, segment, srcFrame, pt) {
         return { panelIdx: 0, src: { x: pt.x, y: sy } };
     }
 
-    const panels = panelGeometry(layout);
+    const panels = panelGeometry(layout, framing);
     for (let i = 0; i < panels.length; i++) {
         const p = panels[i];
         if (pt.x < p.left || pt.x > p.left + p.width) continue;
@@ -117,7 +121,7 @@ export function sourceToCanvas(framing, segment, srcFrame, src) {
         return { x: src.x, y: fg.top + src.y * fg.height };
     }
 
-    const panels = panelGeometry(layout);
+    const panels = panelGeometry(layout, framing);
     for (let i = 0; i < panels.length; i++) {
         const p = panels[i];
         const crop = cropForPanel(framing, segment, i, p, srcFrame);

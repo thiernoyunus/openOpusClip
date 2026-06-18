@@ -1,4 +1,4 @@
-import React, { forwardRef, useMemo } from 'react';
+import React, { forwardRef, useMemo, useRef, useState, useLayoutEffect } from 'react';
 import { Player } from '@remotion/player';
 import { ShortVideo } from '../../remotion/compositions/ShortVideo';
 import TrackerOverlay from './TrackerOverlay';
@@ -7,13 +7,41 @@ import CaptionDragOverlay from './CaptionDragOverlay';
 export const EDITOR_FPS = 30;
 
 /**
- * The 9:16 preview canvas: a Remotion Player running the exact ShortVideo
- * composition the export uses, fed the live (possibly edited) framing config.
+ * The preview canvas: a Remotion Player running the exact ShortVideo composition
+ * the export uses, fed the live (possibly edited) framing config. The canvas box
+ * is sized to the clip's aspect ratio (9:16 / 1:1 / 4:5 / 16:9) and contained
+ * within the available area — we pick the binding dimension from the measured
+ * area because CSS aspect-ratio + max-* breaks the ratio when the non-bound side
+ * is capped.
  */
 const EditorCanvas = forwardRef(function EditorCanvas(
     { sourceUrl, framing, subtitles = null, durationInFrames, trackerOn = false, dispatch },
     playerRef
 ) {
+    // Output canvas = the clip's aspect ratio (defaults to 9:16 for older clips).
+    const outW = framing?.outputWidth ?? 1080;
+    const outH = framing?.outputHeight ?? 1920;
+    const clipAspect = outW / outH;
+
+    const wrapRef = useRef(null);
+    const [avail, setAvail] = useState(null);
+    useLayoutEffect(() => {
+        const el = wrapRef.current;
+        if (!el) return;
+        const update = () => setAvail({ w: el.clientWidth, h: el.clientHeight });
+        update();
+        const ro = new ResizeObserver(update);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
+
+    // Height-bound when the area is wider than the clip (clip is relatively
+    // taller). Before the first measure, fall back to the clip's orientation.
+    const heightBound = avail ? avail.w / avail.h > clipAspect : clipAspect < 1;
+    const boxStyle = heightBound
+        ? { height: '100%', width: 'auto', aspectRatio: `${outW} / ${outH}` }
+        : { width: '100%', height: 'auto', aspectRatio: `${outW} / ${outH}` };
+
     const inputProps = useMemo(
         () => ({
             videoUrl: '',
@@ -21,47 +49,45 @@ const EditorCanvas = forwardRef(function EditorCanvas(
             framing,
             durationInFrames,
             fps: EDITOR_FPS,
-            // Preview renders at full 1080x1920 — the same resolution as export
-            // (EditorView.handleExport + the render service). The Player
-            // rasterizes at display size regardless of compositionWidth/Height,
-            // so a half-res composition saved nothing and only broke WYSIWYG:
-            // pixel-sized overlay styles (caption fontSize/stroke/radii,
-            // TextOverlay px sizes) occupied twice their relative space.
-            width: 1080,
-            height: 1920,
+            // Preview renders at the full export resolution so it's true WYSIWYG.
+            // Pixel-sized overlay styles (caption fontSize/stroke/radii, TextOverlay
+            // px) depend on the composition size matching export.
+            width: outW,
+            height: outH,
             subtitles,
             hook: null,
             effects: null,
         }),
-        [sourceUrl, framing, subtitles, durationInFrames]
+        [sourceUrl, framing, subtitles, durationInFrames, outW, outH]
     );
 
     return (
-        <div className="relative h-full aspect-[9/16] rounded-xl overflow-hidden border border-edge bg-black shadow-2xl">
-            {/* PREVIEW renders at the full 1080x1920 export resolution so the
-                preview is true WYSIWYG. The CSS width/height:100% scales it to
-                fill the canvas. Export resolution matches — see
-                EditorView.handleExport. */}
-            <Player
-                ref={playerRef}
-                component={ShortVideo}
-                inputProps={inputProps}
-                durationInFrames={durationInFrames}
-                fps={EDITOR_FPS}
-                compositionWidth={1080}
-                compositionHeight={1920}
-                style={{ width: '100%', height: '100%' }}
-                clickToPlay={false}
-                spaceKeyToPlayOrPause={false}
-            />
-            {trackerOn && (
-                <TrackerOverlay playerRef={playerRef} framing={framing} dispatch={dispatch} />
-            )}
-            {/* Drag-to-reposition handle for captions. Only the handle itself
-                captures pointer events, so it coexists with the tracker layer. */}
-            {subtitles && (
-                <CaptionDragOverlay subtitles={subtitles} dispatch={dispatch} />
-            )}
+        <div ref={wrapRef} className="w-full h-full flex items-center justify-center">
+            <div
+                className="relative max-w-full max-h-full rounded-xl overflow-hidden border border-edge bg-black shadow-2xl"
+                style={boxStyle}
+            >
+                <Player
+                    ref={playerRef}
+                    component={ShortVideo}
+                    inputProps={inputProps}
+                    durationInFrames={durationInFrames}
+                    fps={EDITOR_FPS}
+                    compositionWidth={outW}
+                    compositionHeight={outH}
+                    style={{ width: '100%', height: '100%' }}
+                    clickToPlay={false}
+                    spaceKeyToPlayOrPause={false}
+                />
+                {trackerOn && (
+                    <TrackerOverlay playerRef={playerRef} framing={framing} dispatch={dispatch} />
+                )}
+                {/* Drag-to-reposition handle for captions. Only the handle itself
+                    captures pointer events, so it coexists with the tracker layer. */}
+                {subtitles && (
+                    <CaptionDragOverlay subtitles={subtitles} dispatch={dispatch} />
+                )}
+            </div>
         </div>
     );
 });

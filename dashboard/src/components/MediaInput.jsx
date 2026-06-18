@@ -40,6 +40,13 @@ function ClipTab({ active, onClick, icon: Icon, label }) {
     );
 }
 
+const ASPECT_RATIOS = [
+    { value: '9:16', label: '9:16 · Reels / Shorts / TikTok' },
+    { value: '1:1', label: '1:1 · Square' },
+    { value: '4:5', label: '4:5 · Portrait' },
+    { value: '16:9', label: '16:9 · Landscape' },
+];
+
 function fmtTime(s) {
     if (!Number.isFinite(s)) return '0:00';
     const sec = Math.max(0, Math.round(s));
@@ -59,6 +66,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
 
     // Clip controls
     const [clipMode, setClipMode] = useState('ai'); // 'ai' | 'none'
+    const [aspectRatio, setAspectRatio] = useState('9:16');
     const [clipLength, setClipLength] = useState('auto');
     const [momentPrompt, setMomentPrompt] = useState('');
     const [captionTemplate, setCaptionTemplate] = useState(() => {
@@ -125,6 +133,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
         const length = CLIP_LENGTHS.find((c) => c.value === clipLength) ?? CLIP_LENGTHS[0];
         const settings = {
             clipMode,
+            aspectRatio,
             captionTemplate: captionTemplate === 'none' ? null : captionTemplate,
         };
         if (clipMode === 'ai') {
@@ -269,6 +278,19 @@ export default function MediaInput({ onProcess, isProcessing }) {
                         <ClipTab active={clipMode === 'ai'} onClick={() => setClipMode('ai')} icon={Scissors} label="AI clipping" />
                         <ClipTab active={clipMode === 'none'} onClick={() => setClipMode('none')} icon={Captions} label="Don't clip" />
                     </div>
+
+                    <label className="block mb-4">
+                        <span className="block text-xs font-medium text-zinc-400 mb-2">Aspect ratio</span>
+                        <select
+                            value={aspectRatio}
+                            onChange={(e) => setAspectRatio(e.target.value)}
+                            className="input-field cursor-pointer"
+                        >
+                            {ASPECT_RATIOS.map((a) => (
+                                <option key={a.value} value={a.value}>{a.label}</option>
+                            ))}
+                        </select>
+                    </label>
 
                     {clipMode === 'ai' ? (
                         <div className="space-y-4">

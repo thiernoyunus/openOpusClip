@@ -28,6 +28,14 @@ load_dotenv()
 # --- Constants ---
 ASPECT_RATIO = 9 / 16
 
+# Supported output aspect ratios -> (width, height). 1080-class for quality.
+ASPECT_PRESETS = {
+    "9:16": (1080, 1920),
+    "1:1": (1080, 1080),
+    "4:5": (1080, 1350),
+    "16:9": (1920, 1080),
+}
+
 GEMINI_PROMPT_TEMPLATE = """
 You are a senior short-form video editor. Read the ENTIRE transcript and word-level timestamps to choose the 3–15 MOST VIRAL moments for TikTok/IG Reels/YouTube Shorts. Each clip must be between {min_len} and {max_len} seconds long.
 {user_focus}
@@ -100,12 +108,13 @@ class SmoothedCameraman:
         self.current_center_x = video_width / 2
         self.target_center_x = video_width / 2
         
-        # Calculate crop dimensions once
+        # Calculate crop dimensions once, from the requested output aspect.
+        aspect = self.output_width / self.output_height
         self.crop_height = video_height
-        self.crop_width = int(self.crop_height * ASPECT_RATIO)
+        self.crop_width = int(self.crop_height * aspect)
         if self.crop_width > video_width:
              self.crop_width = video_width
-             self.crop_height = int(self.crop_width / ASPECT_RATIO)
+             self.crop_height = int(self.crop_width / aspect)
              
         # Safe Zone: 20% of the video width
         # As long as the target is within this zone relative to current center, DO NOT MOVE.
@@ -762,7 +771,7 @@ Technical Details: {str(e)}
     return downloaded_file, sanitized_title
 
 def process_video_to_vertical(input_video, final_output_video, framing_output_path=None,
-                              framing_source_override=None):
+                              framing_source_override=None, aspect_ratio="9:16"):
     """
     Core logic to convert horizontal video to vertical using scene detection and Active Speaker Tracking (MediaPipe).
 
@@ -801,9 +810,8 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
     print("\n   🧠 Step 2: Preparing Active Tracking...")
     original_width, original_height = get_video_resolution(input_video)
     
-    # Enforce standard vertical 1080p output (1080x1920) for high quality
-    OUTPUT_WIDTH = 1080
-    OUTPUT_HEIGHT = 1920
+    # Output dimensions from the requested aspect ratio (default vertical 9:16).
+    OUTPUT_WIDTH, OUTPUT_HEIGHT = ASPECT_PRESETS.get(aspect_ratio, ASPECT_PRESETS["9:16"])
 
     # Initialize Cameraman
     cameraman = SmoothedCameraman(OUTPUT_WIDTH, OUTPUT_HEIGHT, original_width, original_height)
@@ -1070,6 +1078,8 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
                 'height': original_height,
                 'durationFrames': framing_source_override['durationFrames'] if framing_source_override else total_frames,
             },
+            'outputWidth': OUTPUT_WIDTH,
+            'outputHeight': OUTPUT_HEIGHT,
             'clipInFrame': offset,
             'clipOutFrame': offset + total_frames,
             # Immutable caption origin: word ms are relative to the original clip
@@ -1310,6 +1320,7 @@ if __name__ == '__main__':
     parser.add_argument('--moment-prompt', type=str, default="", help="Free-text instruction: what moments the AI should prioritise.")
     parser.add_argument('--trim-start', type=float, default=None, help="Don't-clip mode: start of the range to process (seconds).")
     parser.add_argument('--trim-end', type=float, default=None, help="Don't-clip mode: end of the range to process (seconds).")
+    parser.add_argument('--aspect-ratio', choices=sorted(ASPECT_PRESETS), default='9:16', help="Output aspect ratio.")
     
     args = parser.parse_args()
 
@@ -1490,6 +1501,7 @@ if __name__ == '__main__':
                 clip_cut_path, clip_final_path,
                 framing_output_path=clip_framing_path,
                 framing_source_override=framing_source_override,
+                aspect_ratio=args.aspect_ratio,
             )
 
             if os.path.exists(clip_cut_path):

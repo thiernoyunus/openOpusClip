@@ -349,6 +349,7 @@ async def process_endpoint(
     skip_analysis: Optional[str] = Form(None),
     trim_start: Optional[float] = Form(None),
     trim_end: Optional[float] = Form(None),
+    aspect_ratio: Optional[str] = Form("9:16"),
 ):
     api_key = request.headers.get("X-Gemini-Key")
     if not api_key:
@@ -369,8 +370,12 @@ async def process_endpoint(
         skip_analysis = body.get("skip_analysis", skip_analysis)
         trim_start = body.get("trim_start", trim_start)
         trim_end = body.get("trim_end", trim_end)
+        aspect_ratio = body.get("aspect_ratio", aspect_ratio)
 
     skip_flag = str(skip_analysis).lower() in ("1", "true", "yes")
+    allowed_aspect_ratios = {"9:16", "1:1", "4:5", "16:9"}
+    if aspect_ratio not in allowed_aspect_ratios:
+        aspect_ratio = "9:16"
 
     allowed_whisper_models = {"tiny", "base", "small", "medium", "large-v3"}
     if whisper_model not in allowed_whisper_models:
@@ -448,6 +453,7 @@ async def process_endpoint(
         cmd.append("--skip-analysis")
     _num_arg("--trim-start", trim_start, float, 0.0)
     _num_arg("--trim-end", trim_end, float, 0.0)
+    cmd.extend(["--aspect-ratio", aspect_ratio])
     cmd.extend(["-o", job_output_dir])
 
     print(f"[attestation] job={job_id} ip={attestation['ip']} source={attestation['source']} ack=true")
