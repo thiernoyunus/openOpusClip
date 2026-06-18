@@ -1301,7 +1301,7 @@ if __name__ == '__main__':
     input_group.add_argument('-i', '--input', type=str, help="Path to the input video file.")
     input_group.add_argument('-u', '--url', type=str, help="YouTube URL to download and process.")
     
-    parser.add_argument('-o', '--output', type=str, help="Output directory or file (if processing whole video).")
+    parser.add_argument('-o', '--output', type=str, help="Output directory for the generated clip artifacts (mp4 + source + framing/metadata json). Don't-clip mode also writes editable clip artifacts here, not a single file.")
     parser.add_argument('--keep-original', action='store_true', help="Keep the downloaded YouTube video.")
     parser.add_argument('--skip-analysis', action='store_true', help="Skip AI viral detection; process the whole video (or --trim range) as one clip.")
     parser.add_argument('--whisper-model', choices=sorted(WHISPER_MODELS), default='base', help="Faster-Whisper model to use for transcription.")
@@ -1360,11 +1360,11 @@ if __name__ == '__main__':
     # 2. Transcribe (captions need word-level timestamps in BOTH modes)
     transcript = transcribe_video(input_video, args.whisper_model)
 
-    # Get duration
+    # Get duration (guard against a corrupt/unreadable video reporting fps 0)
     cap = cv2.VideoCapture(input_video)
-    fps = cap.get(cv2.CAP_PROP_FPS)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = frame_count / fps
+    duration = frame_count / fps if fps > 0 else 0.0
     cap.release()
 
     # 3. Pick moments: AI viral detection, or one synthetic moment ("Don't clip")

@@ -432,18 +432,22 @@ async def process_endpoint(
     cmd.extend(["--whisper-model", whisper_model])
     # Optional clip controls. subprocess runs a list (no shell), so user text
     # is passed as a single argv entry — no injection risk.
-    if min_clip_length is not None:
-        cmd.extend(["--min-clip-length", str(max(1, int(min_clip_length)))])
-    if max_clip_length is not None:
-        cmd.extend(["--max-clip-length", str(max(1, int(max_clip_length)))])
+    def _num_arg(flag, val, cast, lo):
+        # Tolerate empty strings / junk from form or JSON bodies — just skip the flag.
+        if val is None:
+            return
+        try:
+            cmd.extend([flag, str(max(lo, cast(val)))])
+        except (ValueError, TypeError):
+            pass
+    _num_arg("--min-clip-length", min_clip_length, int, 1)
+    _num_arg("--max-clip-length", max_clip_length, int, 1)
     if moment_prompt and str(moment_prompt).strip():
         cmd.extend(["--moment-prompt", str(moment_prompt).strip()[:500]])
     if skip_flag:
         cmd.append("--skip-analysis")
-    if trim_start is not None:
-        cmd.extend(["--trim-start", str(max(0.0, float(trim_start)))])
-    if trim_end is not None:
-        cmd.extend(["--trim-end", str(max(0.0, float(trim_end)))])
+    _num_arg("--trim-start", trim_start, float, 0.0)
+    _num_arg("--trim-end", trim_end, float, 0.0)
     cmd.extend(["-o", job_output_dir])
 
     print(f"[attestation] job={job_id} ip={attestation['ip']} source={attestation['source']} ack=true")
