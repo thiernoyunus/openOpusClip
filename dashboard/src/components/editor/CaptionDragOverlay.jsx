@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 /**
  * Opus-style "drag captions to reposition" layer. Sits absolutely over the
@@ -55,11 +55,28 @@ export default function CaptionDragOverlay({ subtitles, dispatch }) {
     const layerRef = useRef(null);
     const rafRef = useRef(0);
     const latestRef = useRef(null);
+    // Latest subtitles, read inside the rAF/commit callbacks so they never act
+    // on a stale closure if a re-render lands between scheduling and firing.
+    const subtitlesRef = useRef(subtitles);
+    // Pre-drag subtitles, captured on pointerdown so the drag is undoable even
+    // though the live (transient) updates don't push history themselves.
+    const originalRef = useRef(null);
+    // Did the pointer actually move? A plain click shouldn't create a history entry.
+    const movedRef = useRef(false);
     // Pointer offset between cursor and box center at grab time, so the box
     // doesn't jump its center to the cursor on the first move.
     const grabOffset = useRef({ dx: 0, dy: 0 });
     // Live position during a drag (null when idle → use committed x/y / preset).
     const [dragPos, setDragPos] = useState(null);
+
+    useEffect(() => {
+        subtitlesRef.current = subtitles;
+    });
+
+    // Cancel a pending frame if we unmount mid-drag.
+    useEffect(() => () => {
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    }, []);
 
     if (!subtitles) return null;
 
@@ -82,7 +99,7 @@ export default function CaptionDragOverlay({ subtitles, dispatch }) {
             dispatch({
                 type: 'SET_SUBTITLES',
                 transient: true,
-                subtitles: { ...subtitles, x: Number(p.x.toFixed(4)), y: Number(p.y.toFixed(4)) },
+                subtitles: { ...subtitlesRef.current, x: Number(p.x.toFixed(4)), y: Number(p.y.toFixed(4)) },
             });
         });
     };
@@ -90,9 +107,11 @@ export default function CaptionDragOverlay({ subtitles, dispatch }) {
     const handlePointerDown = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        e.currentTarget.setPointerCapture?.(e.pointerId);
         const rect = layerRef.current?.getBoundingClientRect();
-        if (!rect) return;
+        if (!rect || rect.width === 0 || rect.height === 0) return;
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        originalRef.current = subtitles;
+        movedRef.current = false;
         grabOffset.current = {
             dx: pos.x - (e.clientX - rect.left) / rect.width,
             dy: pos.y - (e.clientY - rect.top) / rect.height,
@@ -108,6 +127,7 @@ export default function CaptionDragOverlay({ subtitles, dispatch }) {
             x: (e.clientX - rect.left) / rect.width + grabOffset.current.dx,
             y: (e.clientY - rect.top) / rect.height + grabOffset.current.dy,
         });
+        movedRef.current = true;
         setDragPos(pt);
         pushTransient(pt);
     };
@@ -121,9 +141,14 @@ export default function CaptionDragOverlay({ subtitles, dispatch }) {
         }
         const pt = dragPos;
         setDragPos(null);
+        // A click with no movement leaves position untouched — no history entry.
+        if (!movedRef.current) return;
         dispatch({
             type: 'SET_SUBTITLES',
-            subtitles: { ...subtitles, x: Number(pt.x.toFixed(4)), y: Number(pt.y.toFixed(4)) },
+            // The transient moves already mutated the live subtitles, so the
+            // pre-drag snapshot is what must go onto the undo stack.
+            original: originalRef.current,
+            subtitles: { ...subtitlesRef.current, x: Number(pt.x.toFixed(4)), y: Number(pt.y.toFixed(4)) },
         });
     };
 

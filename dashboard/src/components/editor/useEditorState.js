@@ -79,6 +79,18 @@ export const editorReducer = (state, action) => {
             if (action.transient) {
                 return { ...state, framing: { ...state.framing, subtitles: action.subtitles }, dirty: true };
             }
+            // Committing a drag: the transient moves already advanced
+            // framing.subtitles, so snapshot the pre-drag state (action.original)
+            // onto the undo stack instead of the current (already-moved) one.
+            if (action.original !== undefined) {
+                return {
+                    ...state,
+                    framing: { ...state.framing, subtitles: action.subtitles },
+                    dirty: true,
+                    past: [...state.past.slice(-HISTORY_LIMIT + 1), { ...state.framing, subtitles: action.original }],
+                    future: [],
+                };
+            }
             return withHistory({ ...state.framing, subtitles: action.subtitles });
         }
         case 'EDIT_CAPTION_WORD': {
