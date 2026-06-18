@@ -411,6 +411,10 @@ export function normalizeFraming(framing) {
     return {
         ...framing,
         version: 2,
+        // Output canvas dimensions (clip aspect ratio). Older clips predate the
+        // field and were all 9:16, so default to 1080x1920.
+        outputWidth: framing.outputWidth ?? 1080,
+        outputHeight: framing.outputHeight ?? 1920,
         clipInFrame: framing.clipInFrame ?? 0,
         clipOutFrame: framing.clipOutFrame ?? framing.source.durationFrames,
         // Pin the caption origin at load time. New clips already carry it from

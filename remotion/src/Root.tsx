@@ -95,7 +95,12 @@ export const RemotionRoot: React.FC = () => {
             props.framing && props.sourceVideoUrl
               ? outputDurationFrames(props.framing, fps)
               : props.durationInFrames || DEFAULT_PROPS.durationInFrames;
-          return { durationInFrames, fps };
+          // Honor the clip's aspect ratio at export — the render service selects
+          // this composition, so the encoded dimensions come from here, not the
+          // registered defaults.
+          const width = props.width || DEFAULT_PROPS.width;
+          const height = props.height || DEFAULT_PROPS.height;
+          return { durationInFrames, fps, width, height };
         }}
       />
     </>

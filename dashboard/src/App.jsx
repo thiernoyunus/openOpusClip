@@ -450,6 +450,7 @@ function App() {
     if (data.skipAnalysis) clip.skip_analysis = true;
     if (data.trimStart != null) clip.trim_start = data.trimStart;
     if (data.trimEnd != null) clip.trim_end = data.trimEnd;
+    if (data.aspectRatio) clip.aspect_ratio = data.aspectRatio;
 
     if (data.type === 'url') {
       headers['Content-Type'] = 'application/json';
@@ -525,6 +526,7 @@ function App() {
           skipAnalysis: data.skipAnalysis,
           trimStart: data.trimStart,
           trimEnd: data.trimEnd,
+          aspectRatio: data.aspectRatio,
         }));
         for (let i = 0; i < fileJobs.length; i++) {
           await startProcessJob(fileJobs[i], { makeActive: i === 0 });
