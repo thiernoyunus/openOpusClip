@@ -442,14 +442,24 @@ function App() {
     let body;
     const headers = { 'X-Gemini-Key': apiKey };
 
+    // Optional clip controls (omit when unset so the backend keeps its defaults).
+    const clip = {};
+    if (data.minClipLength != null) clip.min_clip_length = data.minClipLength;
+    if (data.maxClipLength != null) clip.max_clip_length = data.maxClipLength;
+    if (data.momentPrompt) clip.moment_prompt = data.momentPrompt;
+    if (data.skipAnalysis) clip.skip_analysis = true;
+    if (data.trimStart != null) clip.trim_start = data.trimStart;
+    if (data.trimEnd != null) clip.trim_end = data.trimEnd;
+
     if (data.type === 'url') {
       headers['Content-Type'] = 'application/json';
-      body = JSON.stringify({ url: data.payload, acknowledged: !!data.acknowledged, whisper_model: data.whisperModel });
+      body = JSON.stringify({ url: data.payload, acknowledged: !!data.acknowledged, whisper_model: data.whisperModel, ...clip });
     } else {
       const formData = new FormData();
       formData.append('file', data.payload);
       formData.append('acknowledged', data.acknowledged ? 'true' : 'false');
       formData.append('whisper_model', data.whisperModel);
+      Object.entries(clip).forEach(([k, v]) => formData.append(k, String(v)));
       body = formData;
     }
 
@@ -509,6 +519,12 @@ function App() {
           payload: file,
           acknowledged: data.acknowledged,
           whisperModel: data.whisperModel,
+          minClipLength: data.minClipLength,
+          maxClipLength: data.maxClipLength,
+          momentPrompt: data.momentPrompt,
+          skipAnalysis: data.skipAnalysis,
+          trimStart: data.trimStart,
+          trimEnd: data.trimEnd,
         }));
         for (let i = 0; i < fileJobs.length; i++) {
           await startProcessJob(fileJobs[i], { makeActive: i === 0 });

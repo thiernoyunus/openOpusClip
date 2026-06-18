@@ -77,7 +77,7 @@ export const editorReducer = (state, action) => {
             // transient: live drag updates skip history so one drag = one undo
             // step (committed on pointer release).
             if (action.transient) {
-                return { ...state, framing: { ...state.framing, subtitles: action.subtitles }, dirty: true };
+                return { ...state, framing: { ...state.framing, subtitles: action.subtitles, captionsInitialized: true }, dirty: true };
             }
             // Committing a drag: the transient moves already advanced
             // framing.subtitles, so snapshot the pre-drag state (action.original)
@@ -85,13 +85,13 @@ export const editorReducer = (state, action) => {
             if (action.original !== undefined) {
                 return {
                     ...state,
-                    framing: { ...state.framing, subtitles: action.subtitles },
+                    framing: { ...state.framing, subtitles: action.subtitles, captionsInitialized: true },
                     dirty: true,
                     past: [...state.past.slice(-HISTORY_LIMIT + 1), { ...state.framing, subtitles: action.original }],
                     future: [],
                 };
             }
-            return withHistory({ ...state.framing, subtitles: action.subtitles });
+            return withHistory({ ...state.framing, subtitles: action.subtitles, captionsInitialized: true });
         }
         case 'EDIT_CAPTION_WORD': {
             const subs = state.framing.subtitles;
@@ -419,6 +419,10 @@ export function normalizeFraming(framing) {
         captionsOriginFrame: framing.captionsOriginFrame ?? framing.clipInFrame ?? 0,
         cuts: framing.cuts ?? [],
         subtitles: framing.subtitles ?? null,
+        // True once captions have been explicitly enabled/disabled (by the user
+        // or the upload-time auto-enable), so we don't re-auto-enable a clip the
+        // user deliberately turned captions off on.
+        captionsInitialized: framing.captionsInitialized ?? false,
         textOverlays: framing.textOverlays ?? [],
         music: framing.music ?? null,
         transitions: framing.transitions ?? { fadeIn: false, fadeOut: false, cutCrossfade: false },
@@ -444,14 +448,18 @@ const BUILTIN_CAPTION_STYLE = {
     },
 };
 
-/** Persist the current caption style+position as the user's default (E9, brand-template slice). */
-export function saveDefaultCaptionStyle(position, style) {
+/**
+ * Persist the current caption style+position as the user's default (E9, brand-template slice).
+ * `enabled` records intent for new clips: true = auto-enable captions on first open,
+ * false = "No caption", undefined = never chosen (legacy / no auto-enable).
+ */
+export function saveDefaultCaptionStyle(position, style, enabled = true) {
     try {
-        localStorage.setItem(CAPTION_DEFAULT_KEY, JSON.stringify({ position, style }));
+        localStorage.setItem(CAPTION_DEFAULT_KEY, JSON.stringify({ position, style, enabled }));
     } catch { /* storage unavailable */ }
 }
 
-function loadDefaultCaptionStyle() {
+export function loadDefaultCaptionStyle() {
     try {
         const raw = localStorage.getItem(CAPTION_DEFAULT_KEY);
         if (raw) return JSON.parse(raw);

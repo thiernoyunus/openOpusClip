@@ -342,7 +342,13 @@ async def process_endpoint(
     file: Optional[UploadFile] = File(None),
     url: Optional[str] = Form(None),
     acknowledged: Optional[str] = Form(None),
-    whisper_model: Optional[str] = Form("base")
+    whisper_model: Optional[str] = Form("base"),
+    min_clip_length: Optional[int] = Form(None),
+    max_clip_length: Optional[int] = Form(None),
+    moment_prompt: Optional[str] = Form(None),
+    skip_analysis: Optional[str] = Form(None),
+    trim_start: Optional[float] = Form(None),
+    trim_end: Optional[float] = Form(None),
 ):
     api_key = request.headers.get("X-Gemini-Key")
     if not api_key:
@@ -357,6 +363,14 @@ async def process_endpoint(
         url = body.get("url")
         ack_flag = bool(body.get("acknowledged"))
         whisper_model = body.get("whisper_model", whisper_model)
+        min_clip_length = body.get("min_clip_length", min_clip_length)
+        max_clip_length = body.get("max_clip_length", max_clip_length)
+        moment_prompt = body.get("moment_prompt", moment_prompt)
+        skip_analysis = body.get("skip_analysis", skip_analysis)
+        trim_start = body.get("trim_start", trim_start)
+        trim_end = body.get("trim_end", trim_end)
+
+    skip_flag = str(skip_analysis).lower() in ("1", "true", "yes")
 
     allowed_whisper_models = {"tiny", "base", "small", "medium", "large-v3"}
     if whisper_model not in allowed_whisper_models:
@@ -416,6 +430,24 @@ async def process_endpoint(
         cmd.extend(["-i", input_path])
 
     cmd.extend(["--whisper-model", whisper_model])
+    # Optional clip controls. subprocess runs a list (no shell), so user text
+    # is passed as a single argv entry — no injection risk.
+    def _num_arg(flag, val, cast, lo):
+        # Tolerate empty strings / junk from form or JSON bodies — just skip the flag.
+        if val is None:
+            return
+        try:
+            cmd.extend([flag, str(max(lo, cast(val)))])
+        except (ValueError, TypeError):
+            pass
+    _num_arg("--min-clip-length", min_clip_length, int, 1)
+    _num_arg("--max-clip-length", max_clip_length, int, 1)
+    if moment_prompt and str(moment_prompt).strip():
+        cmd.extend(["--moment-prompt", str(moment_prompt).strip()[:500]])
+    if skip_flag:
+        cmd.append("--skip-analysis")
+    _num_arg("--trim-start", trim_start, float, 0.0)
+    _num_arg("--trim-end", trim_end, float, 0.0)
     cmd.extend(["-o", job_output_dir])
 
     print(f"[attestation] job={job_id} ip={attestation['ip']} source={attestation['source']} ack=true")

@@ -4,6 +4,7 @@ import { defaultSubtitleConfig, saveDefaultCaptionStyle } from './useEditorState
 import { CAPTION_TEMPLATES, resolveTemplateId, getCaptionTemplate } from '../../remotion/lib/captionTemplates';
 import { SUBTITLE_FONTS } from '../../remotion/lib/fonts';
 import { getApiUrl } from '../../config';
+import CaptionPreview from './CaptionPreview';
 
 const POSITIONS = ['top', 'middle', 'bottom'];
 const HIGHLIGHTS = ['#FFDD00', '#3dd68c', '#FF5C5C', '#5CA8FF', '#00E5FF', '#FFD700', '#FFFFFF'];
@@ -42,7 +43,6 @@ const eqColor = (a, b) => (a || '').toLowerCase() === (b || '').toLowerCase();
 
 /** Preview chip for a template, rendered with its own font/colors. */
 function TemplateButton({ tpl, active, onClick, onCustomize }) {
-    const ds = tpl.defaultStyle || {};
     return (
         <button
             onClick={onClick}
@@ -62,17 +62,8 @@ function TemplateButton({ tpl, active, onClick, onCustomize }) {
                     <Pencil size={11} />
                 </span>
             )}
-            <span
-                className="block text-[14px] leading-none"
-                style={{
-                    fontFamily: SUBTITLE_FONTS[ds.fontFamily] ?? ds.fontFamily ?? 'inherit',
-                    color: ds.fontColor || '#FFFFFF',
-                    fontWeight: 800,
-                    textTransform: tpl.uppercase ? 'uppercase' : 'none',
-                    textShadow: ds.borderWidth ? `0 0 1px ${ds.borderColor || '#000'}` : 'none',
-                }}
-            >
-                Abc
+            <span className="flex items-center justify-center h-9 overflow-hidden">
+                <CaptionPreview templateId={tpl.id} previewFontPx={18} />
             </span>
             <span className="block text-[10px] text-muted mt-1 truncate">{tpl.label}</span>
         </button>
