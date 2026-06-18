@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git Workflow (follow every session)
+
+Keep branches short-lived and merge fast — long-lived branches drift from `main` and cause painful divergence later.
+
+- **Start every task from fresh `main`:** `git checkout main && git pull`. At the start of a new session, do this before building anything so we never work on stale code.
+- **One task = one branch = one PR.** Never branch off another feature branch; never keep adding unrelated work to an existing branch.
+- **Merge (or close) the PR before moving on** from a task or ending a session — don't strand work on a branch while `main` advances.
+- **After a PR merges:** `git checkout main && git pull`, then delete the branch (local `git branch -d` + remote `git push origin --delete`). Start the next task from the updated `main`.
+- **Don't repurpose a branch mid-stream** — if the work changes scope, cut a new branch.
+- Sessions and branches are independent (archiving a session does nothing to git); a clean rhythm is one branch per task, merged before the session ends.
+
 ## Project Overview
 
 OpenShorts is an AI-powered vertical video generator that transforms long YouTube videos or local uploads into viral-ready short clips (9:16 format) for TikTok, Instagram Reels, and YouTube Shorts. Uses Google Gemini 2.0 Flash for viral moment detection and title generation.
