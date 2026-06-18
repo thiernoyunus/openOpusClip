@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Loader2, AlertCircle, LayoutGrid, Captions, Crosshair, Sparkles, Type, Music, Clapperboard } from 'lucide-react';
 import { getApiUrl } from '../../config';
-import useEditorState, { defaultSubtitleConfig } from './useEditorState';
+import useEditorState, { defaultSubtitleConfig, loadDefaultCaptionStyle } from './useEditorState';
 import { outputDurationFrames, outputToSource } from '../../remotion/lib/edl';
 import EditorTopBar from './EditorTopBar';
 import EditorCanvas, { EDITOR_FPS } from './EditorCanvas';
@@ -104,6 +104,20 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
             cancelled = true;
         };
     }, [jobId, index]);
+
+    // Auto-enable captions on a clip's first open when the user chose a caption
+    // preset at upload (enabled === true). Fires once; SET_SUBTITLES marks the
+    // framing captionsInitialized so a deliberate later "off" sticks.
+    const autoEnabledRef = useRef(false);
+    useEffect(() => {
+        if (autoEnabledRef.current) return;
+        const f = state.framing;
+        if (!f || f.subtitles || f.captionsInitialized) return;
+        if (captions.length === 0) return;
+        if (loadDefaultCaptionStyle()?.enabled !== true) return;
+        autoEnabledRef.current = true;
+        dispatch({ type: 'SET_SUBTITLES', subtitles: defaultSubtitleConfig(captions) });
+    }, [state.framing, captions, dispatch]);
 
     const handleEditWord = useCallback(
         (wordIndex, text) => {

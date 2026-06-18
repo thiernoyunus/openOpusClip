@@ -29,13 +29,13 @@ load_dotenv()
 ASPECT_RATIO = 9 / 16
 
 GEMINI_PROMPT_TEMPLATE = """
-You are a senior short-form video editor. Read the ENTIRE transcript and word-level timestamps to choose the 3–15 MOST VIRAL moments for TikTok/IG Reels/YouTube Shorts. Each clip must be between 15 and 60 seconds long.
-
+You are a senior short-form video editor. Read the ENTIRE transcript and word-level timestamps to choose the 3–15 MOST VIRAL moments for TikTok/IG Reels/YouTube Shorts. Each clip must be between {min_len} and {max_len} seconds long.
+{user_focus}
 ⚠️ FFMPEG TIME CONTRACT — STRICT REQUIREMENTS:
 - Return timestamps in ABSOLUTE SECONDS from the start of the video (usable in: ffmpeg -ss <start> -to <end> -i <input> ...).
 - Only NUMBERS with decimal point, up to 3 decimals (examples: 0, 1.250, 17.350).
 - Ensure 0 ≤ start < end ≤ VIDEO_DURATION_SECONDS.
-- Each clip between 15 and 60 s (inclusive).
+- Each clip between {min_len} and {max_len} s (inclusive).
 - Prefer starting 0.2–0.4 s BEFORE the hook and ending 0.2–0.4 s AFTER the payoff.
 - Use silence moments for natural cuts; never cut in the middle of a word or phrase.
 - STRICTLY FORBIDDEN to use time formats other than absolute seconds.
@@ -50,7 +50,7 @@ WORDS_JSON (array of {{w, s, e}} where s/e are seconds):
 
 STRICT EXCLUSIONS:
 - No generic intros/outros or purely sponsorship segments unless they contain the hook.
-- No clips < 15 s or > 60 s.
+- No clips < {min_len} s or > {max_len} s.
 
 OUTPUT — RETURN ONLY VALID JSON (no markdown, no comments). Order clips by predicted performance (best to worst). In the descriptions, ALWAYS include a CTA like "Follow me and comment X and I'll send you the workflow" (especially if discussing an n8n workflow):
 {{
@@ -1174,7 +1174,8 @@ def get_gemini_retry_delay(error, fallback_seconds):
             return min(120, max(1, int(float(match.group(1))) + 1))
     return fallback_seconds
 
-def get_viral_clips(transcript_result, video_duration, max_retries=3):
+def get_viral_clips(transcript_result, video_duration, max_retries=3,
+                    min_clip_length=15, max_clip_length=60, moment_prompt=""):
     print("🤖  Analyzing with Gemini...")
     
     api_key = os.getenv("GEMINI_API_KEY")
@@ -1200,10 +1201,21 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3):
                 'e': word['end']
             })
 
+    user_focus = ""
+    if moment_prompt and moment_prompt.strip():
+        user_focus = (
+            "\n🎯 USER FOCUS — PRIORITISE moments that match this request "
+            "(they must still be genuinely engaging/clippable):\n"
+            f"\"{moment_prompt.strip()}\"\n"
+        )
+
     prompt = GEMINI_PROMPT_TEMPLATE.format(
         video_duration=video_duration,
         transcript_text=json.dumps(transcript_result['text']),
-        words_json=json.dumps(words)
+        words_json=json.dumps(words),
+        min_len=min_clip_length,
+        max_len=max_clip_length,
+        user_focus=user_focus,
     )
 
     last_error = None
@@ -1291,8 +1303,13 @@ if __name__ == '__main__':
     
     parser.add_argument('-o', '--output', type=str, help="Output directory or file (if processing whole video).")
     parser.add_argument('--keep-original', action='store_true', help="Keep the downloaded YouTube video.")
-    parser.add_argument('--skip-analysis', action='store_true', help="Skip AI analysis and convert the whole video.")
+    parser.add_argument('--skip-analysis', action='store_true', help="Skip AI viral detection; process the whole video (or --trim range) as one clip.")
     parser.add_argument('--whisper-model', choices=sorted(WHISPER_MODELS), default='base', help="Faster-Whisper model to use for transcription.")
+    parser.add_argument('--min-clip-length', type=int, default=15, help="Minimum clip length in seconds (AI mode).")
+    parser.add_argument('--max-clip-length', type=int, default=60, help="Maximum clip length in seconds (AI mode).")
+    parser.add_argument('--moment-prompt', type=str, default="", help="Free-text instruction: what moments the AI should prioritise.")
+    parser.add_argument('--trim-start', type=float, default=None, help="Don't-clip mode: start of the range to process (seconds).")
+    parser.add_argument('--trim-end', type=float, default=None, help="Don't-clip mode: end of the range to process (seconds).")
     
     args = parser.parse_args()
 
@@ -1340,131 +1357,146 @@ if __name__ == '__main__':
         print(f"❌ Input file not found: {input_video}")
         exit(1)
 
-    # 2. Decision: Analyze clips or process whole?
-    if args.skip_analysis:
-        print("⏩ Skipping analysis, processing entire video...")
-        output_file = args.output if args.output else os.path.join(output_dir, f"{video_title}_vertical.mp4")
-        process_video_to_vertical(input_video, output_file)
-    else:
-        # 3. Transcribe
-        transcript = transcribe_video(input_video, args.whisper_model)
-        
-        # Get duration
-        cap = cv2.VideoCapture(input_video)
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        duration = frame_count / fps
-        cap.release()
+    # 2. Transcribe (captions need word-level timestamps in BOTH modes)
+    transcript = transcribe_video(input_video, args.whisper_model)
 
+    # Get duration
+    cap = cv2.VideoCapture(input_video)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    duration = frame_count / fps
+    cap.release()
+
+    # 3. Pick moments: AI viral detection, or one synthetic moment ("Don't clip")
+    if args.skip_analysis:
+        seg_start = max(0.0, float(args.trim_start)) if args.trim_start is not None else 0.0
+        seg_end = min(duration, float(args.trim_end)) if args.trim_end is not None else duration
+        if seg_end <= seg_start:
+            seg_start, seg_end = 0.0, duration
+        print(f"⏩ Don't-clip mode: processing {seg_start:.1f}s–{seg_end:.1f}s as a single clip.")
+        clips_data = {'shorts': [{
+            'start': seg_start,
+            'end': seg_end,
+            'video_description_for_tiktok': '',
+            'video_description_for_instagram': '',
+            'video_title_for_youtube_short': video_title,
+            'viral_hook_text': '',
+        }]}
+    else:
         # 4. Gemini Analysis
         try:
-            clips_data = get_viral_clips(transcript, duration)
+            clips_data = get_viral_clips(
+                transcript, duration,
+                min_clip_length=args.min_clip_length,
+                max_clip_length=args.max_clip_length,
+                moment_prompt=args.moment_prompt or "",
+            )
         except ClipAnalysisError as e:
             print(f"❌ Clip detection failed: {e}")
             print("🛑 Stopping job. Not converting the whole video as a fallback.")
             sys.exit(2)
 
-        if not clips_data or 'shorts' not in clips_data:
-            print("❌ Gemini response did not include any shorts.")
-            print("🛑 Stopping job. Not converting the whole video as a fallback.")
-            sys.exit(2)
-        else:
-            print(f"🔥 Found {len(clips_data['shorts'])} viral clips!")
-            
-            # Save metadata
-            clips_data['transcript'] = transcript # Save full transcript for subtitles
-            metadata_file = os.path.join(output_dir, f"{video_title}_metadata.json")
-            with open(metadata_file, 'w') as f:
-                json.dump(clips_data, f, indent=2)
-            print(f"   Saved metadata to {metadata_file}")
+    if not clips_data or 'shorts' not in clips_data:
+        print("❌ Gemini response did not include any shorts.")
+        print("🛑 Stopping job. Not converting the whole video as a fallback.")
+        sys.exit(2)
+    else:
+        print(f"🔥 Found {len(clips_data['shorts'])} viral clips!")
 
-            # 5. Process each clip
-            for i, clip in enumerate(clips_data['shorts']):
-                start = clip['start']
-                end = clip['end']
-                print(f"\n🎬 Processing Clip {i+1}: {start}s - {end}s")
-                print(f"   Title: {clip.get('video_title_for_youtube_short', 'No Title')}")
-                
-                # Cut clip
-                clip_filename = f"{video_title}_clip_{i+1}.mp4"
-                # 16:9 source is KEPT with ±3s padding — the web editor re-frames
-                # from it and can trim/extend within the padding (framing v2 EDL)
-                clip_cut_path = os.path.join(output_dir, f"temp_{video_title}_clip_{i+1}.mp4")
-                clip_source_path = os.path.join(output_dir, f"{video_title}_clip_{i+1}_source.mp4")
-                clip_final_path = os.path.join(output_dir, clip_filename)
-                clip_framing_path = os.path.join(output_dir, f"{video_title}_clip_{i+1}.framing.json")
+        # Save metadata
+        clips_data['transcript'] = transcript # Save full transcript for subtitles
+        metadata_file = os.path.join(output_dir, f"{video_title}_metadata.json")
+        with open(metadata_file, 'w') as f:
+            json.dump(clips_data, f, indent=2)
+        print(f"   Saved metadata to {metadata_file}")
 
-                # Unpadded cut: the bake input (re-encoding for frame precision)
-                cut_command = [
-                    'ffmpeg', '-y',
-                    '-ss', str(start),
-                    '-to', str(end),
-                    '-i', input_video,
-                    # Dense keyframes (every 0.5s @30fps) so the web editor's
-                    # seeks decode fast — long GOPs cause a multi-second black
-                    # flash on layout switch in the live preview. Negligible
-                    # size cost; this cut also serves as the editor-source fallback.
-                    '-c:v', 'libx264', '-crf', '12', '-preset', 'ultrafast',
-                    '-g', '15', '-keyint_min', '15', '-sc_threshold', '0',
-                    '-c:a', 'aac',
-                    clip_cut_path
-                ]
-                subprocess.run(cut_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        # 5. Process each clip
+        for i, clip in enumerate(clips_data['shorts']):
+            start = clip['start']
+            end = clip['end']
+            print(f"\n🎬 Processing Clip {i+1}: {start}s - {end}s")
+            print(f"   Title: {clip.get('video_title_for_youtube_short', 'No Title')}")
 
-                # Padded cut: the editor's source (extend headroom on both sides)
-                EXTEND_PAD_SECONDS = 3.0
-                pad_start = max(0.0, start - EXTEND_PAD_SECONDS)
-                pad_end = min(duration, end + EXTEND_PAD_SECONDS)
-                padded_cut_command = [
-                    'ffmpeg', '-y',
-                    '-ss', str(pad_start),
-                    '-to', str(pad_end),
-                    '-i', input_video,
-                    # Dense keyframes so the editor (which seeks this padded
-                    # source constantly) repaints fast after a layout switch.
-                    '-c:v', 'libx264', '-crf', '12', '-preset', 'ultrafast',
-                    '-g', '15', '-keyint_min', '15', '-sc_threshold', '0',
-                    '-c:a', 'aac',
-                    clip_source_path
-                ]
-                padded_result = subprocess.run(padded_cut_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            # Cut clip
+            clip_filename = f"{video_title}_clip_{i+1}.mp4"
+            # 16:9 source is KEPT with ±3s padding — the web editor re-frames
+            # from it and can trim/extend within the padding (framing v2 EDL)
+            clip_cut_path = os.path.join(output_dir, f"temp_{video_title}_clip_{i+1}.mp4")
+            clip_source_path = os.path.join(output_dir, f"{video_title}_clip_{i+1}_source.mp4")
+            clip_final_path = os.path.join(output_dir, clip_filename)
+            clip_framing_path = os.path.join(output_dir, f"{video_title}_clip_{i+1}.framing.json")
 
-                # If the padded cut failed, fall back to keeping the unpadded
-                # cut as the editor source (no extend headroom, offset 0) so a
-                # valid _source.mp4 always exists for the framing coordinates.
-                if (padded_result.returncode != 0 or not os.path.exists(clip_source_path) or os.path.getsize(clip_source_path) == 0) and os.path.exists(clip_cut_path):
-                    print(f"   ⚠️  Padded source cut failed for clip {i+1}; using unpadded cut as editor source.")
-                    shutil.copyfile(clip_cut_path, clip_source_path)
-                    pad_start = start  # offset collapses to 0
+            # Unpadded cut: the bake input (re-encoding for frame precision)
+            cut_command = [
+                'ffmpeg', '-y',
+                '-ss', str(start),
+                '-to', str(end),
+                '-i', input_video,
+                # Dense keyframes (every 0.5s @30fps) so the web editor's
+                # seeks decode fast — long GOPs cause a multi-second black
+                # flash on layout switch in the live preview. Negligible
+                # size cost; this cut also serves as the editor-source fallback.
+                '-c:v', 'libx264', '-crf', '12', '-preset', 'ultrafast',
+                '-g', '15', '-keyint_min', '15', '-sc_threshold', '0',
+                '-c:a', 'aac',
+                clip_cut_path
+            ]
+            subprocess.run(cut_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
-                framing_source_override = None
-                if os.path.exists(clip_source_path):
-                    src_cap = cv2.VideoCapture(clip_source_path)
-                    if src_cap.isOpened():
-                        padded_frames = int(src_cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                        src_fps = src_cap.get(cv2.CAP_PROP_FPS) or 30.0
-                        src_cap.release()
-                        framing_source_override = {
-                            'file': os.path.basename(clip_source_path),
-                            'durationFrames': padded_frames,
-                            'offsetFrames': int(round((start - pad_start) * src_fps)),
-                        }
-                    else:
-                        src_cap.release()
+            # Padded cut: the editor's source (extend headroom on both sides)
+            EXTEND_PAD_SECONDS = 3.0
+            pad_start = max(0.0, start - EXTEND_PAD_SECONDS)
+            pad_end = min(duration, end + EXTEND_PAD_SECONDS)
+            padded_cut_command = [
+                'ffmpeg', '-y',
+                '-ss', str(pad_start),
+                '-to', str(pad_end),
+                '-i', input_video,
+                # Dense keyframes so the editor (which seeks this padded
+                # source constantly) repaints fast after a layout switch.
+                '-c:v', 'libx264', '-crf', '12', '-preset', 'ultrafast',
+                '-g', '15', '-keyint_min', '15', '-sc_threshold', '0',
+                '-c:a', 'aac',
+                clip_source_path
+            ]
+            padded_result = subprocess.run(padded_cut_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
-                # Process vertical (bakes from the unpadded cut; framing.json is
-                # written in padded-source coordinates via the override)
-                success = process_video_to_vertical(
-                    clip_cut_path, clip_final_path,
-                    framing_output_path=clip_framing_path,
-                    framing_source_override=framing_source_override,
-                )
+            # If the padded cut failed, fall back to keeping the unpadded
+            # cut as the editor source (no extend headroom, offset 0) so a
+            # valid _source.mp4 always exists for the framing coordinates.
+            if (padded_result.returncode != 0 or not os.path.exists(clip_source_path) or os.path.getsize(clip_source_path) == 0) and os.path.exists(clip_cut_path):
+                print(f"   ⚠️  Padded source cut failed for clip {i+1}; using unpadded cut as editor source.")
+                shutil.copyfile(clip_cut_path, clip_source_path)
+                pad_start = start  # offset collapses to 0
 
-                if os.path.exists(clip_cut_path):
-                    os.remove(clip_cut_path)
+            framing_source_override = None
+            if os.path.exists(clip_source_path):
+                src_cap = cv2.VideoCapture(clip_source_path)
+                if src_cap.isOpened():
+                    padded_frames = int(src_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    src_fps = src_cap.get(cv2.CAP_PROP_FPS) or 30.0
+                    src_cap.release()
+                    framing_source_override = {
+                        'file': os.path.basename(clip_source_path),
+                        'durationFrames': padded_frames,
+                        'offsetFrames': int(round((start - pad_start) * src_fps)),
+                    }
+                else:
+                    src_cap.release()
 
-                if success:
-                    print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
+            # Process vertical (bakes from the unpadded cut; framing.json is
+            # written in padded-source coordinates via the override)
+            success = process_video_to_vertical(
+                clip_cut_path, clip_final_path,
+                framing_output_path=clip_framing_path,
+                framing_source_override=framing_source_override,
+            )
+
+            if os.path.exists(clip_cut_path):
+                os.remove(clip_cut_path)
+
+            if success:
+                print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
 
     # Clean up original if requested
     if args.url and not args.keep_original and os.path.exists(input_video):
