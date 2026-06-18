@@ -36,10 +36,10 @@ function TextPanel({ framing, dispatch, getCurrentSourceFrame }) {
     const fmt = (f) => `${((f - (framing.clipInFrame ?? 0)) / srcFps).toFixed(1)}s`;
 
     return (
-        <div className="p-4">
+        <div className="p-3">
             <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-semibold text-fg uppercase tracking-wide flex items-center gap-1.5">
-                    <Type size={13} /> Text
+                <h3 className="text-[11px] font-semibold text-fg uppercase tracking-wide flex items-center gap-1.5">
+                    <Type size={12} /> Text
                 </h3>
                 <button
                     onClick={addOverlay}
@@ -53,7 +53,7 @@ function TextPanel({ framing, dispatch, getCurrentSourceFrame }) {
             {overlays.length === 0 ? (
                 <p className="text-xs text-muted">Add a text overlay at the playhead position (max 5).</p>
             ) : (
-                <div className="space-y-4">
+                <div className="space-y-2.5">
                     {overlays.map((o) => (
                         <div key={o.id} className="rounded-lg border border-edge bg-surface2/40 p-2.5 space-y-2">
                             <div className="flex items-center gap-1.5">
@@ -79,7 +79,7 @@ function TextPanel({ framing, dispatch, getCurrentSourceFrame }) {
                                             key={s}
                                             onClick={() => update(o.id, { size: s })}
                                             className={`w-6 h-6 rounded text-[11px] border ${
-                                                o.size === s ? 'bg-white/15 border-white/30 text-fg' : 'border-edge text-muted hover:bg-white/5'
+                                                o.size === s ? 'bg-viral/15 border-viral/50 text-fg' : 'border-edge text-muted hover:bg-white/5'
                                             }`}
                                         >
                                             {s}

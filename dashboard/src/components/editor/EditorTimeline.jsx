@@ -21,7 +21,7 @@ const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three',
  */
 const Filmstrip = React.memo(function Filmstrip({ thumbs, onPointerDown }) {
     return (
-        <div className="relative h-12 flex bg-black cursor-pointer" onPointerDown={onPointerDown}>
+        <div className="relative h-10 flex bg-black cursor-pointer" onPointerDown={onPointerDown}>
             {thumbs.length === 0 ? (
                 <div className="w-full h-full bg-surface2/30 animate-pulse" />
             ) : (
@@ -46,7 +46,7 @@ const Filmstrip = React.memo(function Filmstrip({ thumbs, onPointerDown }) {
  */
 const Waveform = React.memo(function Waveform({ peaks, onPointerDown }) {
     return (
-        <div className="relative h-8 flex items-center gap-px px-px bg-canvas cursor-pointer" onPointerDown={onPointerDown}>
+        <div className="relative h-6 flex items-center gap-px px-px bg-canvas cursor-pointer" onPointerDown={onPointerDown}>
             {peaks === null ? (
                 <div className="w-full h-3 bg-surface2/30 animate-pulse rounded" />
             ) : peaks.length === 0 ? (
@@ -196,40 +196,40 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
     const liveClipOut = drag?.kind === 'trim' && drag.edge === 'out' ? drag.frame : clipOut;
 
     return (
-        <div className="border-t border-edge bg-surface px-4 py-3 select-none">
+        <div className="border-t border-edge bg-surface px-3 py-2 select-none">
             {/* Transport */}
-            <div className="flex items-center gap-3 mb-2.5">
+            <div className="flex items-center gap-2.5 mb-2">
                 <button
                     onClick={() => seekToSourceFrame(0)}
-                    className="w-8 h-8 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors"
+                    className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors"
                     aria-label="Back to start"
                 >
-                    <SkipBack size={15} />
+                    <SkipBack size={14} />
                 </button>
                 <button
                     onClick={togglePlay}
-                    className="w-9 h-9 rounded-full bg-fg text-[#18181b] flex items-center justify-center hover:bg-white active:scale-95 transition-all"
+                    className="w-8 h-8 rounded-full bg-fg text-[#18181b] flex items-center justify-center hover:bg-white active:scale-95 transition-all"
                     aria-label={playing ? 'Pause' : 'Play'}
                 >
-                    {playing ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
+                    {playing ? <Pause size={15} /> : <Play size={15} className="ml-0.5" />}
                 </button>
                 <button
                     onClick={handleSplit}
                     disabled={!canSplit}
                     title="Split segment at playhead"
                     aria-label="Split segment at playhead"
-                    className={`w-8 h-8 rounded-md flex items-center justify-center transition-colors ${
+                    className={`w-7 h-7 rounded-md flex items-center justify-center transition-colors ${
                         canSplit
                             ? 'text-muted hover:text-fg hover:bg-white/5'
                             : 'text-zinc-700 cursor-not-allowed'
                     }`}
                 >
-                    <SplitSquareHorizontal size={15} />
+                    <SplitSquareHorizontal size={14} />
                 </button>
-                <span className="text-xs text-muted tabular-nums">
+                <span className="text-[11px] text-muted tabular-nums">
                     {fmt(frame)} <span className="text-zinc-600">/</span> {fmt(durationInFrames)}
                 </span>
-                <span className="ml-auto text-[11px] text-muted">
+                <span className="ml-auto text-[10px] text-muted hidden sm:block">
                     Click a chip to select · drag chip edges to move boundaries · click strip to seek
                 </span>
             </div>
@@ -242,7 +242,7 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                 onPointerLeave={endDrag}
             >
                 {/* Layout chip row (absolute positions: segments cover [clipIn, clipOut]) */}
-                <div className="relative h-7 border-b border-edge">
+                <div className="relative h-6 border-b border-edge">
                     {framing.segments.map((seg) => {
                         const selected = selectedIds.includes(seg.id);
                         return (
