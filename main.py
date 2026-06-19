@@ -682,12 +682,20 @@ def download_youtube_video(url, output_dir="."):
     # (YOUTUBE_COOKIES) remain the most durable fix and unlock the web client.
     player_client = [
         c.strip()
-        for c in os.environ.get("YTDLP_PLAYER_CLIENT", "web_safari,tv_embedded,default").split(",")
+        for c in os.environ.get("YTDLP_PLAYER_CLIENT", "web_safari,default").split(",")
         if c.strip()
     ]
     extractor_args = {"youtube": {"player_client": player_client}} if player_client else {}
     if player_client:
         print(f"📺 yt-dlp YouTube player clients: {', '.join(player_client)}")
+
+    # The resilient path serves HLS, which downloads as many small fragments. Pull
+    # them in parallel so a long video isn't a slow serial crawl (and doesn't look
+    # stuck). Tunable via YTDLP_CONCURRENT_FRAGMENTS.
+    try:
+        concurrent_fragments = max(1, int(os.environ.get("YTDLP_CONCURRENT_FRAGMENTS", "5")))
+    except ValueError:
+        concurrent_fragments = 5
 
     # Let yt-dlp use its current default YouTube clients. Forcing older clients
     # can hide high-quality formats and fall back to 360p format 18.
@@ -700,6 +708,7 @@ def download_youtube_video(url, output_dir="."):
         'socket_timeout': 30,
         'retries': 10,
         'fragment_retries': 10,
+        'concurrent_fragment_downloads': concurrent_fragments,
         'nocheckcertificate': True,
         'cachedir': False,
         'js_runtimes': js_runtimes,
