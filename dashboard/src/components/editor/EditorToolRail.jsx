@@ -8,7 +8,7 @@ import React from 'react';
  * Pure-presentational: `tabs` + `activeId` + `onSelect` flow straight through
  * from EditorView, so the activeTab state and panel switching are unchanged.
  */
-export default function EditorToolRail({ tabs, activeId, onSelect }) {
+function EditorToolRail({ tabs, activeId, onSelect }) {
     return (
         <div className="w-12 shrink-0 border-l border-edge bg-surface flex flex-col items-stretch py-2 gap-0.5">
             {tabs.map((tab) => {
@@ -43,3 +43,7 @@ export default function EditorToolRail({ tabs, activeId, onSelect }) {
         </div>
     );
 }
+
+// Memoized: with a stable onSelect (useCallback in EditorView) the rail skips
+// re-rendering when unrelated editor state changes.
+export default React.memo(EditorToolRail);

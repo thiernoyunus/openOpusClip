@@ -148,6 +148,16 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         setTimeout(() => setActionError(null), 6000);
     }, []);
 
+    // Rail click: collapse if it's the already-open tool, else open that tool.
+    const handleToolSelect = useCallback((id) => {
+        if (panelOpen && id === activeTab) {
+            setPanelOpen(false);
+        } else {
+            setActiveTab(id);
+            setPanelOpen(true);
+        }
+    }, [panelOpen, activeTab]);
+
     const saveFraming = useCallback(async () => {
         const res = await fetch(getApiUrl(`/api/clips/${jobId}/${index}/framing`), {
             method: 'PUT',
@@ -416,14 +426,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                         <EditorToolRail
                             tabs={TABS}
                             activeId={panelOpen ? activeTab : null}
-                            onSelect={(id) => {
-                                if (panelOpen && id === activeTab) {
-                                    setPanelOpen(false);
-                                } else {
-                                    setActiveTab(id);
-                                    setPanelOpen(true);
-                                }
-                            }}
+                            onSelect={handleToolSelect}
                         />
                     </div>
 
