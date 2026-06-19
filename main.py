@@ -654,13 +654,71 @@ def download_youtube_video(url, output_dir="."):
         print("⚠️ Both YOUTUBE_COOKIES and YOUTUBE_COOKIES_FROM_BROWSER are set. Using YOUTUBE_COOKIES.")
 
     node_path = shutil.which("node")
+    node_major = 0
+    if node_path:
+        try:
+            _ver = subprocess.run([node_path, "--version"], capture_output=True, text=True, timeout=10).stdout.strip()
+            node_major = int(_ver.lstrip("v").split(".")[0])
+        except Exception:
+            node_major = 0
+    deno_path = shutil.which("deno")
     js_runtimes = {"deno": {}}
     if node_path:
         js_runtimes["node"] = {"path": node_path}
-        print(f"🧩 yt-dlp JavaScript runtime enabled: node ({node_path})")
+        print(f"🧩 yt-dlp JavaScript runtime enabled: node ({node_path}, v{node_major or '?'})")
+    elif deno_path:
+        print(f"🧩 yt-dlp JavaScript runtime enabled: deno ({deno_path})")
     else:
-        print("⚠️ Node.js was not found on PATH. YouTube may hide some high-quality formats.")
-    
+        print("⚠️ No JS runtime (node/deno) found. YouTube may hide some high-quality formats.")
+
+    # YouTube throttles streams whose `n` signature challenge isn't solved, which
+    # truncates large downloads ("X bytes read, Y more expected. Giving up..."),
+    # not a 429 ban. yt-dlp's EJS remote solver fixes it, but it needs a supported
+    # JS runtime to run: its Node provider requires Node >= 22, or Deno. Only
+    # enable it when one is available (else it silently can't run and downloads
+    # still throttle). Pass a LIST — yt-dlp does list ops on it. Override the spec
+    # — or disable (empty) — with YTDLP_REMOTE_COMPONENTS.
+    node_ok = bool(node_path) and node_major >= 22
+    runtime_ok = node_ok or bool(deno_path)
+    remote_components = []
+    rc_env = os.environ.get("YTDLP_REMOTE_COMPONENTS", "ejs:github")
+    if runtime_ok:
+        remote_components = sorted({c.strip() for c in rc_env.split(",") if c.strip()})
+        if remote_components:
+            via = "node" if node_ok else "deno"
+            print(f"🔓 yt-dlp n-challenge solver enabled via {via}: {', '.join(remote_components)}")
+    elif rc_env:
+        detail = f"Node v{node_major or '?'} < 22 and no Deno" if node_path else "no Node/Deno runtime"
+        print(f"⚠️ n-challenge solver not enabled: needs Node >= 22 or Deno ({detail}); large downloads may throttle.")
+
+    # YouTube 403s the anonymous ANDROID_VR client's progressive URLs on reconnect
+    # partway through large downloads (it's forcing SABR on the web client). Steer
+    # yt-dlp to clients that still serve resilient, fragmented HLS / stable 1080p
+    # without cookies. Override with YTDLP_PLAYER_CLIENT (comma-separated); cookies
+    # (YOUTUBE_COOKIES) remain the most durable fix and unlock the web client.
+    player_client = [
+        c.strip()
+        for c in os.environ.get("YTDLP_PLAYER_CLIENT", "web_safari,default").split(",")
+        if c.strip()
+    ]
+    extractor_args = {"youtube": {"player_client": player_client}} if player_client else {}
+    if player_client:
+        print(f"📺 yt-dlp YouTube player clients: {', '.join(player_client)}")
+
+    # The resilient path serves HLS, which downloads as many small fragments. Pull
+    # them in parallel so a long video isn't a slow serial crawl (and doesn't look
+    # stuck). Tunable via YTDLP_CONCURRENT_FRAGMENTS.
+    try:
+        concurrent_fragments = max(1, int(os.environ.get("YTDLP_CONCURRENT_FRAGMENTS", "5")))
+    except ValueError:
+        concurrent_fragments = 5
+
+    # Persist yt-dlp's cache (player JS + the fetched EJS solver component) so a
+    # transient GitHub/rate-limit hiccup on a later job doesn't re-break the
+    # n-challenge. download_youtube_video builds a fresh YoutubeDL for metadata
+    # and for the download, so a shared cache avoids re-fetching on each.
+    ytdlp_cache_dir = os.environ.get("YTDLP_CACHE_DIR") or os.path.join(tempfile.gettempdir(), "openshorts_ytdlp_cache")
+
     # Let yt-dlp use its current default YouTube clients. Forcing older clients
     # can hide high-quality formats and fall back to 360p format 18.
     _COMMON_YDL_OPTS = {
@@ -672,9 +730,12 @@ def download_youtube_video(url, output_dir="."):
         'socket_timeout': 30,
         'retries': 10,
         'fragment_retries': 10,
+        'concurrent_fragment_downloads': concurrent_fragments,
         'nocheckcertificate': True,
-        'cachedir': False,
+        'cachedir': ytdlp_cache_dir,
         'js_runtimes': js_runtimes,
+        'remote_components': remote_components,
+        'extractor_args': extractor_args,
         'http_headers': {
             'User-Agent': (
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -736,6 +797,11 @@ Technical Details: {str(e)}
     ydl_opts = {
         **_COMMON_YDL_OPTS,
         'format': (
+            # Prefer resilient HLS (fragmented, survives the mid-download reconnect
+            # 403 that kills android_vr's progressive URLs) when it's offered, then
+            # fall back to progressive/DASH mp4.
+            'best[height<=1080][protocol^=m3u8]/'
+            'bestvideo[height<=1080][protocol^=m3u8]+bestaudio/'
             'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/'
             'bestvideo[height<=1080]+bestaudio/'
             'best[height<=1080]/best'
