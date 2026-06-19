@@ -661,30 +661,35 @@ def download_youtube_video(url, output_dir="."):
             node_major = int(_ver.lstrip("v").split(".")[0])
         except Exception:
             node_major = 0
+    deno_path = shutil.which("deno")
     js_runtimes = {"deno": {}}
     if node_path:
         js_runtimes["node"] = {"path": node_path}
         print(f"🧩 yt-dlp JavaScript runtime enabled: node ({node_path}, v{node_major or '?'})")
+    elif deno_path:
+        print(f"🧩 yt-dlp JavaScript runtime enabled: deno ({deno_path})")
     else:
-        print("⚠️ Node.js was not found on PATH. YouTube may hide some high-quality formats.")
+        print("⚠️ No JS runtime (node/deno) found. YouTube may hide some high-quality formats.")
 
     # YouTube throttles streams whose `n` signature challenge isn't solved, which
     # truncates large downloads ("X bytes read, Y more expected. Giving up..."),
-    # not a 429 ban. yt-dlp's EJS remote solver fixes it, but its Node challenge
-    # provider needs Node >= 22 (older Node silently can't run it, so the n-sig
-    # stays unsolved and downloads still throttle). Pass a LIST — yt-dlp does list
-    # ops on it. Override the spec — or disable (empty) — with YTDLP_REMOTE_COMPONENTS.
+    # not a 429 ban. yt-dlp's EJS remote solver fixes it, but it needs a supported
+    # JS runtime to run: its Node provider requires Node >= 22, or Deno. Only
+    # enable it when one is available (else it silently can't run and downloads
+    # still throttle). Pass a LIST — yt-dlp does list ops on it. Override the spec
+    # — or disable (empty) — with YTDLP_REMOTE_COMPONENTS.
+    node_ok = bool(node_path) and node_major >= 22
+    runtime_ok = node_ok or bool(deno_path)
     remote_components = []
     rc_env = os.environ.get("YTDLP_REMOTE_COMPONENTS", "ejs:github")
-    if node_path and node_major >= 22:
+    if runtime_ok:
         remote_components = sorted({c.strip() for c in rc_env.split(",") if c.strip()})
         if remote_components:
-            print(f"🔓 yt-dlp n-challenge solver enabled: {', '.join(remote_components)}")
+            via = "node" if node_ok else "deno"
+            print(f"🔓 yt-dlp n-challenge solver enabled via {via}: {', '.join(remote_components)}")
     elif rc_env:
-        if not node_path:
-            print("⚠️ n-challenge solver not enabled: no Node runtime on PATH (large downloads may throttle).")
-        elif node_major < 22:
-            print(f"⚠️ n-challenge solver not enabled: Node v{node_major or '?'} < 22 required (large downloads may throttle). Install Node 22+.")
+        detail = f"Node v{node_major or '?'} < 22 and no Deno" if node_path else "no Node/Deno runtime"
+        print(f"⚠️ n-challenge solver not enabled: needs Node >= 22 or Deno ({detail}); large downloads may throttle.")
 
     # YouTube 403s the anonymous ANDROID_VR client's progressive URLs on reconnect
     # partway through large downloads (it's forcing SABR on the web client). Steer
