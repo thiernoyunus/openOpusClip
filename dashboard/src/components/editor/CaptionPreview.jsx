@@ -2,8 +2,8 @@ import React, { useEffect } from 'react';
 import {
     getCaptionTemplate,
     resolveTemplateId,
-} from '../../remotion/lib/captionTemplates';
-import { getFontStack, captionFontFaces } from '../../remotion/lib/fonts';
+} from '@remotion-src/lib/captionTemplates';
+import { getFontStack, captionFontFaces } from '@remotion-src/lib/fonts';
 
 /**
  * Static, accurate preview of a caption template — renders the template's real

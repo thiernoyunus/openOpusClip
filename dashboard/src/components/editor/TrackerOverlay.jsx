@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { EDITOR_FPS } from './EditorCanvas';
 import { buildFillKeyframes } from './useEditorState';
-import { outputToSource } from '../../remotion/lib/edl';
+import { outputToSource } from '@remotion-src/lib/edl';
 import {
     segmentAtSourceFrame,
     canvasToSource,

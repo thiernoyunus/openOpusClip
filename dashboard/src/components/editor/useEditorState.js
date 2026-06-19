@@ -1,5 +1,5 @@
 import { useReducer } from 'react';
-import { cropForFace, smoothedFaceRect } from '../../remotion/compositions/ReframedVideo';
+import { cropForFace, smoothedFaceRect } from '@remotion-src/compositions/ReframedVideo';
 
 const HISTORY_LIMIT = 50;
 
@@ -478,7 +478,7 @@ export function defaultSubtitleConfig(captions) {
 }
 
 // Caption styles are now defined as templates in
-// dashboard/src/remotion/lib/captionTemplates.tsx (CAPTION_TEMPLATES) and
+// remotion/src/lib/captionTemplates.tsx (CAPTION_TEMPLATES) and
 // surfaced by CaptionsPanel — the old CAPTION_PRESETS list lived here.
 
 /** Center crop with a given pixel aspect, in normalized coords. */

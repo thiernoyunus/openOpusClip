@@ -11,12 +11,15 @@ services:
     restart: unless-stopped
 
   frontend:
-    build: ./dashboard
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
     container_name: openshorts-frontend
     ports:
       - "5175:5173"
     volumes:
       - ./dashboard:/app
+      - ./remotion:/remotion:ro
       - /app/node_modules
     restart: unless-stopped
     depends_on:

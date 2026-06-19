@@ -1,5 +1,9 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
@@ -9,11 +13,10 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
-    // src/remotion is a symlink to ../../remotion/src (single source of truth,
-    // also bundled by render-service). dedupe forces these packages to resolve
-    // from dashboard/node_modules so the symlinked files don't drag in the root
-    // checkout's mismatched copies (avoids duplicate React + remotion skew).
     resolve: {
+      alias: {
+        '@remotion-src': path.resolve(__dirname, '../remotion/src'),
+      },
       dedupe: ['react', 'react-dom', 'remotion', '@remotion/media',
         '@remotion/media-utils', '@remotion/player', '@remotion/web-renderer', 'zod'],
     },
@@ -35,14 +38,6 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
         },
         '/thumbnails': {
-          target: backendTarget,
-          changeOrigin: true,
-        },
-        '/gallery': {
-          target: backendTarget,
-          changeOrigin: true,
-        },
-        '/video': {
           target: backendTarget,
           changeOrigin: true,
         },

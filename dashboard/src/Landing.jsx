@@ -109,16 +109,6 @@ export default function Landing({ onLaunchApp }) {
       title: "Direct Social Publishing",
       description: "Post directly to TikTok, Instagram Reels, and YouTube Shorts from the dashboard. Async uploads with progress tracking and S3 cloud backup."
     },
-    {
-      icon: Sparkles,
-      title: "AI UGC Video Generator",
-      description: "Generate marketing videos with AI actors for any product or business. Paste a URL or describe your product — AI writes the script, generates a realistic avatar with lip-sync, adds b-roll, subtitles, and hook overlays. From $0.65/video."
-    },
-    {
-      icon: FileVideo,
-      title: "AI Actors & Lip-Sync",
-      description: "Choose from a gallery of AI-generated actors or upload your own photo. The pipeline generates a talking head video with natural movement and lip-synced voiceover in English or Spanish. Two modes: Low Cost ($0.65) and Premium ($2.00)."
-    }
   ];
 
   const steps = [
@@ -170,18 +160,6 @@ export default function Landing({ onLaunchApp }) {
       question: "Is there a free open source clip generator?",
       answer: "Yes — OpenShorts is a 100% free, open source clip generator. Unlike paid clip generators like Opus Clip ($15-228/month) or Kapwing ($24-79/month), OpenShorts lets you generate unlimited clips with no watermarks, no usage limits, and no subscription fees. It also includes a free AI YouTube thumbnail generator, free AI YouTube title generator, and free AI YouTube description generator — features that other clip generators charge extra for. You self-host it with Docker on your own machine for full privacy and control."
     },
-    {
-      question: "What is the AI UGC Video Generator?",
-      answer: "OpenShorts includes an AI UGC (User Generated Content) video creator that generates marketing videos with AI actors for any product or business. You describe your product or paste a website URL — the AI writes a viral script, generates a realistic AI actor with lip-synced voiceover, adds b-roll visuals, TikTok-style subtitles, and hook text overlays. The result is a ready-to-post vertical video for TikTok, Instagram Reels, or YouTube Shorts. Two cost modes: Low Cost (~$0.65/video using Hailuo + VEED Lipsync) and Premium (~$2/video using Kling Avatar v2)."
-    },
-    {
-      question: "How much does it cost to generate an AI UGC video?",
-      answer: "OpenShorts itself is free, but the AI Shorts feature uses external APIs (fal.ai for video generation, ElevenLabs for voiceover) that charge per use. Low Cost mode costs approximately $0.65 per video (Flux image $0.05 + ElevenLabs voice $0.10 + Hailuo img2video $0.19 + VEED Lipsync $0.20 + b-roll $0.10). Premium mode costs approximately $2.00 per video using Kling Avatar v2 for higher quality. Both modes are significantly cheaper than hiring UGC creators ($50-500 per video) or using platforms like HeyGen ($24-180/month)."
-    },
-    {
-      question: "Can I use the AI UGC Video Generator for any type of business?",
-      answer: "Yes. The AI Shorts generator works for any product, service, or business — not just SaaS. You can use it for restaurants, e-commerce stores, coaching services, local businesses, personal brands, apps, and more. Just describe your business in the text field (e.g. 'Artisan pizza restaurant in Madrid, wood-fired oven, home delivery') or paste your website URL, and the AI generates viral marketing scripts tailored to your business."
-    }
   ];
 
   const checkIcon = <Check size={16} className="text-green-400 mx-auto" />;
@@ -227,17 +205,16 @@ export default function Landing({ onLaunchApp }) {
         <div className="max-w-5xl mx-auto text-center">
           <div className="inline-flex items-center gap-2 bg-primary/10 border border-primary/20 rounded-full px-4 py-1.5 text-sm text-primary mb-8">
             <Sparkles size={14} />
-            <span>Free & Open Source AI Clip Generator + UGC Video Creator</span>
+            <span>Free & Open Source AI Clip Generator</span>
           </div>
 
           <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold leading-tight mb-6 tracking-tight">
             Free Open Source
             <span className="bg-gradient-to-r from-primary via-purple-400 to-pink-500 bg-clip-text text-transparent"> Clip Generator </span>
-            & AI UGC Video Creator
           </h1>
 
           <p className="hero-description text-lg md:text-xl text-zinc-400 max-w-3xl mx-auto mb-10 leading-relaxed">
-            Three tools in one. <strong className="text-white">Clip Generator:</strong> turn your long-form videos into viral shorts with AI moment detection, smart 9:16 crop, and auto subtitles. <strong className="text-white">AI Shorts:</strong> generate UGC marketing videos with AI actors and lip-sync for any business. <strong className="text-white">YouTube Studio:</strong> free AI thumbnail generator, 10 viral title suggestions with refinement chat, and auto descriptions with chapters. Self-hosted, open source, no limits.
+            Two tools in one. <strong className="text-white">Clip Generator:</strong> turn your long-form videos into viral shorts with AI moment detection, smart cropping, and auto subtitles. <strong className="text-white">YouTube Studio:</strong> generate thumbnails, viral title suggestions, and descriptions with chapters. Self-hosted, open source, no limits.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
@@ -321,17 +298,6 @@ export default function Landing({ onLaunchApp }) {
                 ))}
               </ul>
             </div>
-            <div className="bg-surface/50 border border-violet-500/20 rounded-2xl p-8 relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-violet-500/5 rounded-full -translate-y-1/2 translate-x-1/2" />
-              <Sparkles size={28} className="text-violet-400 mb-4" />
-              <h3 className="text-xl font-bold text-white mb-2">AI Shorts</h3>
-              <p className="text-zinc-400 text-sm leading-relaxed mb-4">Generate UGC marketing videos with AI actors for any product or business. No camera, no studio. Just describe your product and get a viral-ready video.</p>
-              <ul className="space-y-1.5">
-                {['AI actor generation + lip-sync', 'Script writing from URL or description', 'B-roll + TikTok-style subtitles', 'From $0.65 per video'].map((f, i) => (
-                  <li key={i} className="flex items-center gap-2 text-xs text-zinc-400"><Check size={12} className="text-green-400 shrink-0" />{f}</li>
-                ))}
-              </ul>
-            </div>
             <div className="bg-surface/50 border border-pink-500/20 rounded-2xl p-8 relative overflow-hidden">
               <div className="absolute top-0 right-0 w-32 h-32 bg-pink-500/5 rounded-full -translate-y-1/2 translate-x-1/2" />
               <Monitor size={28} className="text-pink-400 mb-4" />
@@ -351,8 +317,8 @@ export default function Landing({ onLaunchApp }) {
       <section id="features" className="py-20 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-14">
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">Free AI Clip Generator + UGC Video Creator</h2>
-            <p className="text-zinc-400 max-w-2xl mx-auto">Three tools in one: clip long videos into viral shorts, generate UGC marketing videos with AI actors, and a complete YouTube Studio for thumbnails, titles, and descriptions.</p>
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">Free AI Clip Generator</h2>
+            <p className="text-zinc-400 max-w-2xl mx-auto">Two tools in one: clip long videos into viral shorts, plus a YouTube Studio for thumbnails, titles, and descriptions.</p>
           </div>
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
             {features.map((feature, i) => (
@@ -398,26 +364,6 @@ export default function Landing({ onLaunchApp }) {
               <p className="text-zinc-400 text-sm leading-relaxed">Enables direct publishing to YouTube, TikTok, and Instagram Reels from the dashboard. <a href="https://www.upload-post.com" target="_blank" rel="noopener noreferrer" className="text-pink-400 hover:text-pink-300 underline">Social media API</a> that lets you post your clips and thumbnails without leaving OpenShorts.</p>
             </div>
           </div>
-          <div className="grid md:grid-cols-2 gap-5 mt-5">
-            <div className="bg-surface/50 border border-white/10 rounded-2xl p-6 relative">
-              <div className="absolute top-4 right-4 bg-violet-700/50 text-violet-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-violet-500/30">AI SHORTS</div>
-              <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center mb-4">
-                <Zap size={24} className="text-violet-400" />
-              </div>
-              <h3 className="text-lg font-semibold text-white mb-1">fal.ai API</h3>
-              <span className="inline-block text-xs text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full mb-3">Pay-per-use from $0.04</span>
-              <p className="text-zinc-400 text-sm leading-relaxed">Powers AI Shorts: generates AI actor images (Flux), talking head videos (Hailuo/Kling), and lip-sync (VEED). Required only for the AI UGC video generator.</p>
-            </div>
-            <div className="bg-surface/50 border border-white/10 rounded-2xl p-6 relative">
-              <div className="absolute top-4 right-4 bg-violet-700/50 text-violet-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-violet-500/30">AI SHORTS</div>
-              <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center mb-4">
-                <Languages size={24} className="text-violet-400" />
-              </div>
-              <h3 className="text-lg font-semibold text-white mb-1">ElevenLabs TTS</h3>
-              <span className="inline-block text-xs text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full mb-3">Free tier included</span>
-              <p className="text-zinc-400 text-sm leading-relaxed">Generates natural voiceovers for AI Shorts from the script. Multiple voice options for male and female actors in English and Spanish.</p>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -450,8 +396,7 @@ export default function Landing({ onLaunchApp }) {
               { name: "YOLOv8", desc: "Object Detection" },
               { name: "MediaPipe", desc: "Face Tracking" },
               { name: "FFmpeg", desc: "Video Processing" },
-              { name: "ElevenLabs", desc: "Voice & TTS" },
-              { name: "fal.ai", desc: "AI Video Gen" },
+              { name: "ElevenLabs", desc: "Voice Dubbing" },
               { name: "React + Vite", desc: "Dashboard" },
               { name: "Docker", desc: "Deployment" }
             ].map((tech, i) => (
@@ -496,8 +441,6 @@ export default function Landing({ onLaunchApp }) {
                 <ComparisonRow feature="Open Source" openshorts={checkIcon} opusclip={<span className="text-zinc-500 text-sm">No</span>} kapwing={<span className="text-zinc-500 text-sm">No</span>} />
                 <ComparisonRow feature="AI YouTube Thumbnail Generator" openshorts={checkIcon} opusclip={<span className="text-zinc-500 text-sm">No</span>} kapwing={<span className="text-zinc-500 text-sm">Paid</span>} />
                 <ComparisonRow feature="AI Title & Description Generator" openshorts={checkIcon} opusclip={<span className="text-zinc-500 text-sm">Limited</span>} kapwing={<span className="text-zinc-500 text-sm">Paid</span>} />
-                <ComparisonRow feature="AI UGC Video Generator" openshorts={checkIcon} opusclip={<span className="text-zinc-500 text-sm">No</span>} kapwing={<span className="text-zinc-500 text-sm">No</span>} />
-                <ComparisonRow feature="AI Actors with Lip-Sync" openshorts={checkIcon} opusclip={<span className="text-zinc-500 text-sm">No</span>} kapwing={<span className="text-zinc-500 text-sm">No</span>} />
                 <ComparisonRow feature="Usage Limits" openshorts={<span className="text-green-400 text-sm">Unlimited</span>} opusclip={<span className="text-zinc-500 text-sm">Per plan</span>} kapwing={<span className="text-zinc-500 text-sm">Per plan</span>} />
               </tbody>
             </table>
@@ -528,11 +471,6 @@ export default function Landing({ onLaunchApp }) {
                 title: "Podcasters & Educators",
                 description: "Extract the most engaging moments from podcast episodes and educational content. Research by Headliner shows that podcast clips on social media increase episode downloads by 72% on average.",
                 icon: FileVideo
-              },
-              {
-                title: "Businesses & Brands",
-                description: "Generate UGC-style marketing videos for any product or business with AI actors. No camera, no studio, no influencer budget. Just describe your product and get a viral-ready video with lip-synced AI avatar, voiceover, b-roll, and subtitles — from $0.65 per video.",
-                icon: Sparkles
               }
             ].map((useCase, i) => (
               <div key={i} className="bg-surface/50 border border-white/10 rounded-2xl p-6">
@@ -570,7 +508,7 @@ export default function Landing({ onLaunchApp }) {
       <section className="py-20 px-6">
         <div className="max-w-3xl mx-auto text-center">
           <h2 className="text-3xl md:text-4xl font-bold mb-4">Start Creating Viral Videos for Free</h2>
-          <p className="text-zinc-400 mb-8 max-w-xl mx-auto">No sign-up, no credit card, no watermarks. Generate viral clips from long videos or create AI UGC marketing videos with AI actors for any business. Self-host with Docker.</p>
+          <p className="text-zinc-400 mb-8 max-w-xl mx-auto">No sign-up, no credit card, no watermarks. Generate viral clips from long videos and run the stack yourself with Docker.</p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <button
               onClick={onLaunchApp}
@@ -597,7 +535,7 @@ export default function Landing({ onLaunchApp }) {
         <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <img src="/logo-openshorts.png" alt="OpenShorts" className="w-6 h-6" />
-            <span className="text-sm text-zinc-400">OpenShorts — Free Open Source Clip Generator & AI UGC Video Creator</span>
+            <span className="text-sm text-zinc-400">OpenShorts — Free Open Source Clip Generator</span>
           </div>
           <div className="flex items-center gap-6 text-sm text-zinc-500">
             <a href="https://github.com/mutonby/openshorts" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">GitHub</a>

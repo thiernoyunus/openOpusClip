@@ -1,5 +1,5 @@
 import { renderMediaOnWeb } from '@remotion/web-renderer';
-import { ShortVideo } from '../remotion/compositions/ShortVideo';
+import { ShortVideo } from '@remotion-src/compositions/ShortVideo';
 
 /**
  * Renders a Remotion composition directly in the browser using WebCodecs.

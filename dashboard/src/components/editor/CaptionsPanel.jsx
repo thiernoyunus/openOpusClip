@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Type, Bookmark, Check, Sparkles, Pencil, ArrowLeft, Wand2, Eraser, Loader2 } from 'lucide-react';
 import { defaultSubtitleConfig, saveDefaultCaptionStyle } from './useEditorState';
-import { CAPTION_TEMPLATES, resolveTemplateId, getCaptionTemplate } from '../../remotion/lib/captionTemplates';
-import { SUBTITLE_FONTS } from '../../remotion/lib/fonts';
+import { CAPTION_TEMPLATES, resolveTemplateId, getCaptionTemplate } from '@remotion-src/lib/captionTemplates';
+import { SUBTITLE_FONTS } from '@remotion-src/lib/fonts';
 import { getApiUrl } from '../../config';
 import CaptionPreview from './CaptionPreview';
 

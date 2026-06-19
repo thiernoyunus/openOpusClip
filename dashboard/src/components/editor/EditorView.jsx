@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Loader2, AlertCircle, LayoutGrid, Captions, Crosshair, Sparkles, Type, Music, Clapperboard } from 'lucide-react';
 import { getApiUrl } from '../../config';
 import useEditorState, { defaultSubtitleConfig, loadDefaultCaptionStyle } from './useEditorState';
-import { outputDurationFrames, outputToSource } from '../../remotion/lib/edl';
+import { outputDurationFrames, outputToSource } from '@remotion-src/lib/edl';
 import EditorTopBar from './EditorTopBar';
 import EditorCanvas, { EDITOR_FPS } from './EditorCanvas';
 import EditorTimeline from './EditorTimeline';
