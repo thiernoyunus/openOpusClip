@@ -534,10 +534,12 @@ async def get_status(job_id: str):
     if job_id not in jobs:
         # Projects persist on disk; rehydrate a finished one whose in-memory
         # state was lost (e.g. server restart) so it stays openable, not "expired".
+        # Populate `jobs` (not just return the snapshot) so follow-up edit
+        # endpoints — which gate on `job_id in jobs` — keep working on it.
         snap = _load_persisted_result(job_id)
-        if snap is not None:
-            return {"status": snap.get("status", "completed"), "logs": [], "result": snap.get("result")}
-        raise HTTPException(status_code=404, detail="Job not found")
+        if snap is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        jobs[job_id] = {"status": snap.get("status", "completed"), "logs": [], "result": snap.get("result")}
 
     job = jobs[job_id]
     return {
@@ -558,6 +560,10 @@ async def delete_job(job_id: str):
     job_path = os.path.abspath(os.path.join(OUTPUT_DIR, job_id))
     if os.path.commonpath([out_root, job_path]) != out_root or job_path == out_root:
         raise HTTPException(status_code=400, detail="Invalid job id")
+    # Don't delete a job that's still running — its worker would keep writing
+    # (re-creating the dir / crashing on jobs[job_id]). Let it finish first.
+    if jobs.get(job_id, {}).get('status') in ('queued', 'processing'):
+        raise HTTPException(status_code=409, detail="Project is still processing; try again once it finishes.")
     removed = os.path.isdir(job_path)
     if removed:
         shutil.rmtree(job_path, ignore_errors=True)

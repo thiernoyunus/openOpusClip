@@ -661,8 +661,13 @@ function App() {
     const handleDelete = async (e) => {
       e.stopPropagation();
       if (!window.confirm(`Delete "${p.title}"? This permanently deletes the project and its files.`)) return;
-      // Best-effort server delete (frees disk); always drop the local card.
-      try { await fetch(getApiUrl(`/api/jobs/${p.id}`), { method: 'DELETE' }); } catch { /* offline / already gone */ }
+      let res;
+      try { res = await fetch(getApiUrl(`/api/jobs/${p.id}`), { method: 'DELETE' }); }
+      catch { /* offline / already gone — drop the local card below */ }
+      if (res && res.status === 409) {
+        window.alert("This project is still processing — you can delete it once it finishes.");
+        return; // keep the card; server refused to delete a running job
+      }
       setProjects(removeProject(p.id));
     };
     return (
