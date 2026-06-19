@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Player } from '@remotion/player';
-import { ShortVideo } from '../remotion/compositions/ShortVideo';
+import { ShortVideo } from '@remotion-src/compositions/ShortVideo';
 
 /**
  * Wraps Remotion's Player component for real-time preview in modals.

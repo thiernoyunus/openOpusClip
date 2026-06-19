@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Play, Pause, SkipBack, X, SplitSquareHorizontal } from 'lucide-react';
 import { EDITOR_FPS } from './EditorCanvas';
 import { useFilmstrip, useWaveform } from './useMediaStrips';
-import { outputDurationFrames, outputToSource, sourceToOutput } from '../../remotion/lib/edl';
+import { outputDurationFrames, outputToSource, sourceToOutput } from '@remotion-src/lib/edl';
 
 const fmt = (frames) => {
     const totalSec = frames / EDITOR_FPS;

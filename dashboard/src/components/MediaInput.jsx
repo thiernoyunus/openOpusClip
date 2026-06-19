@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Youtube, Upload, FileVideo, X, Scissors, Captions } from 'lucide-react';
 import { getApiUrl } from '../config';
-import { CAPTION_TEMPLATES } from '../remotion/lib/captionTemplates';
+import { CAPTION_TEMPLATES } from '@remotion-src/lib/captionTemplates';
 import { saveDefaultCaptionStyle, loadDefaultCaptionStyle } from './editor/useEditorState';
 import CaptionPreview from './editor/CaptionPreview';
 

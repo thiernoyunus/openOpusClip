@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { FileText, Scissors, RotateCcw, Wand2 } from 'lucide-react';
 import { EDITOR_FPS } from './EditorCanvas';
-import { sourceToOutput } from '../../remotion/lib/edl';
+import { sourceToOutput } from '@remotion-src/lib/edl';
 import { detectFillerCuts, detectPauseCuts } from './speechCleanup';
 
 const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three', four: 'Four' };

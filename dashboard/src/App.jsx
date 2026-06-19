@@ -3,10 +3,7 @@ import { Upload, FileVideo, Sparkles, Scissors, Youtube, Instagram, Share2, LogO
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
-// import Gallery from './components/Gallery';
 import ThumbnailStudio from './components/ThumbnailStudio';
-import SaaShortsTab from './components/SaaShortsTab';
-import UGCGallery from './components/UGCGallery';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
 import ProcessingModal from './components/ProcessingModal';
 import EditorView from './components/editor/EditorView';
@@ -161,13 +158,6 @@ function App() {
     return '';
   });
 
-  // fal.ai API State - Load encrypted
-  const [falKey, setFalKey] = useState(() => {
-    const stored = localStorage.getItem('falKey_v1');
-    if (stored) return decrypt(stored);
-    return '';
-  });
-
   const [uploadUserId, setUploadUserId] = useState(() => localStorage.getItem('uploadUserId') || '');
   const [userProfiles, setUserProfiles] = useState([]); // List of {username, connected: []}
   const [showKeyModal, setShowKeyModal] = useState(false);
@@ -301,12 +291,6 @@ function App() {
       localStorage.setItem('elevenLabsKey_v1', encrypt(elevenLabsKey));
     }
   }, [elevenLabsKey]);
-
-  useEffect(() => {
-    if (falKey) {
-      localStorage.setItem('falKey_v1', encrypt(falKey));
-    }
-  }, [falKey]);
 
   useEffect(() => {
     if (uploadPostKey && userProfiles.length === 0) {
@@ -637,7 +621,6 @@ function App() {
 
       <nav className="flex-1 flex flex-col gap-1.5 w-full">
         <RailItem icon={Scissors} label="Clip Generator" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-        <RailItem icon={Sparkles} label="AI Shorts" active={activeTab === 'saasshorts'} onClick={() => setActiveTab('saasshorts')} />
         <RailItem icon={Bot} label="AI Agent" active={activeTab === 'ai-agent'} onClick={() => setActiveTab('ai-agent')} />
         <RailItem icon={Youtube} label="YouTube Studio" active={activeTab === 'thumbnails'} onClick={() => setActiveTab('thumbnails')} />
       </nav>
@@ -920,62 +903,7 @@ function App() {
                 </div>
               </div>
 
-              <div className="glass-panel p-6 mt-8">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold">AI Shorts (UGC Videos)</h2>
-                  <span className="text-[10px] bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 rounded text-violet-400 uppercase tracking-wider">New</span>
-                </div>
-                <p className="text-xs text-zinc-500 mb-6 leading-relaxed">
-                  Generate UGC-style videos with AI actors for any product or business using <strong>fal.ai</strong>.
-                  Just describe your product or paste a URL. Requires fal.ai + ElevenLabs API keys.
-                </p>
-                <div className="space-y-4">
-                  <label className="block text-sm text-zinc-400">fal.ai API Key</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      value={falKey}
-                      onChange={(e) => setFalKey(e.target.value)}
-                      className="input-field"
-                      placeholder="fal_..."
-                    />
-                    <button
-                      onClick={() => {
-                        if (falKey) {
-                          localStorage.setItem('falKey_v1', encrypt(falKey));
-                          alert('fal.ai API Key saved!');
-                        }
-                      }}
-                      className="btn-primary py-2 px-4 text-sm"
-                    >
-                      Save
-                    </button>
-                  </div>
-                  <p className="text-xs text-zinc-500 leading-relaxed">
-                    Get your API key from fal.ai to enable AI actor video generation.
-                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <a href="https://fal.ai/dashboard/keys" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
-                        <span className="text-zinc-400 font-medium">1. Sign Up</span>
-                        <span className="text-[10px] text-zinc-600">Create fal.ai account</span>
-                      </a>
-                      <a href="https://fal.ai/dashboard/keys" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
-                        <span className="text-zinc-400 font-medium">2. API Key</span>
-                        <span className="text-[10px] text-zinc-600">Generate key</span>
-                      </a>
-                    </div>
-                    <br />
-                    <span className="text-zinc-600 italic">
-                      Keys are only stored in your browser. Sent to backend only to process requests.
-                    </span>
-                  </p>
-                </div>
-              </div>
             </div>
-          )}
-
-          {/* View: SaaS Shorts */}
-          {activeTab === 'saasshorts' && (
-            <SaaShortsTab geminiApiKey={apiKey} elevenLabsKey={elevenLabsKey} falKey={falKey} uploadPostKey={uploadPostKey} uploadUserId={uploadUserId} />
           )}
 
           {/* View: AI Agent */}
@@ -1094,20 +1022,10 @@ function App() {
             </div>
           )}
 
-          {/* View: UGC Gallery */}
-          {activeTab === 'ugc-gallery' && (
-            <UGCGallery />
-          )}
-
           {/* View: Thumbnails */}
           {activeTab === 'thumbnails' && (
             <ThumbnailStudio geminiApiKey={apiKey} uploadPostKey={uploadPostKey} uploadUserId={uploadUserId} />
           )}
-
-          {/* View: Gallery */}
-          {/* {activeTab === 'gallery' && (
-            <Gallery />
-          )} */}
 
           {/* View: Dashboard homepage (idle / processing / error) — Opus-style */}
           {activeTab === 'dashboard' && !(viewingResults && results) && (
@@ -1127,7 +1045,6 @@ function App() {
                 {/* 3-tool shortcut row */}
                 <div className="relative flex items-center justify-center gap-10 mt-12">
                   <ShortcutItem icon={Scissors} color="text-viral" label="Clip Generator" onClick={() => setActiveTab('dashboard')} />
-                  <ShortcutItem icon={Sparkles} color="text-violet-300" label="AI Shorts" onClick={() => setActiveTab('saasshorts')} />
                   <ShortcutItem icon={Youtube} color="text-red-300" label="YouTube Studio" onClick={() => setActiveTab('thumbnails')} />
                 </div>
               </div>

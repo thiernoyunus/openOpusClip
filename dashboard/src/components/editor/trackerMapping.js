@@ -4,7 +4,7 @@ import {
     cropForFace,
     centerCrop,
     panelsForLayout,
-} from '../../remotion/compositions/ReframedVideo';
+} from '@remotion-src/compositions/ReframedVideo';
 
 /** Output canvas dimensions for a clip (defaults to 9:16 for older clips). */
 function canvasDims(framing) {

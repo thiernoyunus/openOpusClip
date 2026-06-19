@@ -1,6 +1,6 @@
 import React, { forwardRef, useMemo, useRef, useState, useLayoutEffect } from 'react';
 import { Player } from '@remotion/player';
-import { ShortVideo } from '../../remotion/compositions/ShortVideo';
+import { ShortVideo } from '@remotion-src/compositions/ShortVideo';
 import TrackerOverlay from './TrackerOverlay';
 import CaptionDragOverlay from './CaptionDragOverlay';
 
