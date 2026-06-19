@@ -654,26 +654,37 @@ def download_youtube_video(url, output_dir="."):
         print("⚠️ Both YOUTUBE_COOKIES and YOUTUBE_COOKIES_FROM_BROWSER are set. Using YOUTUBE_COOKIES.")
 
     node_path = shutil.which("node")
+    node_major = 0
+    if node_path:
+        try:
+            _ver = subprocess.run([node_path, "--version"], capture_output=True, text=True, timeout=10).stdout.strip()
+            node_major = int(_ver.lstrip("v").split(".")[0])
+        except Exception:
+            node_major = 0
     js_runtimes = {"deno": {}}
     if node_path:
         js_runtimes["node"] = {"path": node_path}
-        print(f"🧩 yt-dlp JavaScript runtime enabled: node ({node_path})")
+        print(f"🧩 yt-dlp JavaScript runtime enabled: node ({node_path}, v{node_major or '?'})")
     else:
         print("⚠️ Node.js was not found on PATH. YouTube may hide some high-quality formats.")
 
     # YouTube throttles streams whose `n` signature challenge isn't solved, which
     # truncates large downloads ("X bytes read, Y more expected. Giving up..."),
-    # not a 429 ban. yt-dlp's EJS remote solver fixes it, but it needs a JS
-    # runtime (node) to execute the downloaded solver. Override the component
-    # spec — or disable it (empty) — with YTDLP_REMOTE_COMPONENTS.
-    remote_components = set()
-    if node_path:
-        rc_env = os.environ.get("YTDLP_REMOTE_COMPONENTS", "ejs:github")
-        remote_components = {c.strip() for c in rc_env.split(",") if c.strip()}
+    # not a 429 ban. yt-dlp's EJS remote solver fixes it, but its Node challenge
+    # provider needs Node >= 22 (older Node silently can't run it, so the n-sig
+    # stays unsolved and downloads still throttle). Pass a LIST — yt-dlp does list
+    # ops on it. Override the spec — or disable (empty) — with YTDLP_REMOTE_COMPONENTS.
+    remote_components = []
+    rc_env = os.environ.get("YTDLP_REMOTE_COMPONENTS", "ejs:github")
+    if node_path and node_major >= 22:
+        remote_components = sorted({c.strip() for c in rc_env.split(",") if c.strip()})
         if remote_components:
-            print(f"🔓 yt-dlp n-challenge solver enabled: {', '.join(sorted(remote_components))}")
-    elif os.environ.get("YTDLP_REMOTE_COMPONENTS"):
-        print("⚠️ YTDLP_REMOTE_COMPONENTS is set but no JS runtime (node) was found; the n-challenge solver can't run.")
+            print(f"🔓 yt-dlp n-challenge solver enabled: {', '.join(remote_components)}")
+    elif rc_env:
+        if not node_path:
+            print("⚠️ n-challenge solver not enabled: no Node runtime on PATH (large downloads may throttle).")
+        elif node_major < 22:
+            print(f"⚠️ n-challenge solver not enabled: Node v{node_major or '?'} < 22 required (large downloads may throttle). Install Node 22+.")
 
     # YouTube 403s the anonymous ANDROID_VR client's progressive URLs on reconnect
     # partway through large downloads (it's forcing SABR on the web client). Steer
@@ -697,6 +708,12 @@ def download_youtube_video(url, output_dir="."):
     except ValueError:
         concurrent_fragments = 5
 
+    # Persist yt-dlp's cache (player JS + the fetched EJS solver component) so a
+    # transient GitHub/rate-limit hiccup on a later job doesn't re-break the
+    # n-challenge. download_youtube_video builds a fresh YoutubeDL for metadata
+    # and for the download, so a shared cache avoids re-fetching on each.
+    ytdlp_cache_dir = os.environ.get("YTDLP_CACHE_DIR") or os.path.join(tempfile.gettempdir(), "openshorts_ytdlp_cache")
+
     # Let yt-dlp use its current default YouTube clients. Forcing older clients
     # can hide high-quality formats and fall back to 360p format 18.
     _COMMON_YDL_OPTS = {
@@ -710,7 +727,7 @@ def download_youtube_video(url, output_dir="."):
         'fragment_retries': 10,
         'concurrent_fragment_downloads': concurrent_fragments,
         'nocheckcertificate': True,
-        'cachedir': False,
+        'cachedir': ytdlp_cache_dir,
         'js_runtimes': js_runtimes,
         'remote_components': remote_components,
         'extractor_args': extractor_args,
