@@ -52,6 +52,13 @@ const LayoutGlyph = ({ layout }) => {
     );
 };
 
+const ASPECT_OPTIONS = [
+    { id: '9:16', w: 1080, h: 1920 },
+    { id: '1:1', w: 1080, h: 1080 },
+    { id: '4:5', w: 1080, h: 1350 },
+    { id: '16:9', w: 1920, h: 1080 },
+];
+
 const OPTIONS = [
     { id: 'fill', label: 'Fill', desc: 'Crop to one speaker' },
     { id: 'fit', label: 'Fit', desc: 'Full width, blurred bars' },
@@ -95,8 +102,33 @@ function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl }) {
         dispatch(payload);
     };
 
+    const curW = framing.outputWidth ?? 1080;
+    const curH = framing.outputHeight ?? 1920;
+    const curAspectId = ASPECT_OPTIONS.find((a) => a.w === curW && a.h === curH)?.id;
+
     return (
         <div>
+            {/* Clip-level aspect ratio (applies to the whole clip, not a segment) */}
+            <div className="p-3 border-b border-edge">
+                <h3 className="text-[11px] font-semibold text-fg uppercase tracking-wide mb-2">Aspect ratio</h3>
+                <div className="grid grid-cols-4 gap-1.5">
+                    {ASPECT_OPTIONS.map((a) => {
+                        const active = a.id === curAspectId;
+                        return (
+                            <button
+                                key={a.id}
+                                onClick={() => dispatch({ type: 'SET_ASPECT', outputWidth: a.w, outputHeight: a.h })}
+                                className={`py-1.5 rounded-md border text-[11px] font-medium transition-colors ${
+                                    active ? 'bg-viral/15 border-viral/50 text-viral' : 'border-edge bg-surface2/50 text-muted hover:text-fg hover:bg-white/5'
+                                }`}
+                            >
+                                {a.id}
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+
             <div className="p-3">
                 <h3 className="text-[11px] font-semibold text-fg uppercase tracking-wide mb-1">Layout</h3>
                 {!primary ? (

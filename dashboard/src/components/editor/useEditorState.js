@@ -71,6 +71,28 @@ export const editorReducer = (state, action) => {
             );
             return withHistory({ ...state.framing, segments });
         }
+        case 'SET_ASPECT': {
+            // Change the clip's output ratio and re-derive aspect-locked crops:
+            // fill keyframes are regenerated from the face track at the new aspect,
+            // manual crops are re-cropped around their center. Panel/fit layouts
+            // recompute from face tracks/source at render time, so they pass through.
+            const { outputWidth, outputHeight } = action;
+            const aspect = outputWidth / outputHeight;
+            const { width: srcW, height: srcH } = state.framing.source;
+            const segments = state.framing.segments.map((s) => {
+                let { cameraKeyframes, manualCrop } = s;
+                if (manualCrop) {
+                    manualCrop = recropToAspect(manualCrop, aspect, srcW, srcH);
+                } else if (s.layout === 'fill' && cameraKeyframes?.length) {
+                    const trackId = s.trackedFaceIds?.[0];
+                    if (trackId != null) {
+                        cameraKeyframes = buildFillKeyframes(state.framing, s, trackId, aspect);
+                    }
+                }
+                return { ...s, cameraKeyframes, manualCrop };
+            });
+            return withHistory({ ...state.framing, outputWidth, outputHeight, segments });
+        }
         case 'SET_SUBTITLES': {
             // Caption config lives on the framing object (optional key) so it
             // rides the existing save/export paths. null disables captions.
@@ -321,15 +343,17 @@ export const FACE_PANEL_INDICES = {
  * a segment (used when the user picks a different person to track). Mirrors
  * the pipeline's output shape; smoothing comes from smoothedFaceRect.
  */
-export function buildFillKeyframes(framing, segment, trackId) {
+export function buildFillKeyframes(framing, segment, trackId, aspect) {
     const track = framing.faceTracks.find((t) => t.id === trackId);
     if (!track) return [];
     const { width: srcW, height: srcH } = framing.source;
+    // Crop aspect follows the clip's output ratio (defaults to 9:16).
+    const ar = aspect ?? (framing.outputWidth ?? 1080) / (framing.outputHeight ?? 1920);
     const keyframes = [];
     for (let frame = segment.startFrame; frame < segment.endFrame; frame += 3) {
         const face = smoothedFaceRect(track, frame);
         if (!face) continue;
-        const crop = cropForFace(face, 9 / 16, srcW, srcH);
+        const crop = cropForFace(face, ar, srcW, srcH);
         keyframes.push({
             frame,
             x: Number(crop.x.toFixed(4)),
@@ -495,4 +519,21 @@ export function centerCropRect(panelAspect, srcW, srcH) {
         w: cropWpx / srcW,
         h: cropHpx / srcH,
     };
+}
+
+/**
+ * Re-crop an existing normalized crop to a new aspect, preserving its center.
+ * Keeps vertical coverage (the crop's height) and adjusts width for the new
+ * aspect — used when switching a clip's aspect ratio so manual crops follow.
+ */
+export function recropToAspect(crop, aspect, srcW, srcH) {
+    const cxPx = (crop.x + crop.w / 2) * srcW;
+    const cyPx = (crop.y + crop.h / 2) * srcH;
+    let cropHpx = crop.h * srcH;
+    let cropWpx = cropHpx * aspect;
+    if (cropWpx > srcW) { cropWpx = srcW; cropHpx = cropWpx / aspect; }
+    if (cropHpx > srcH) { cropHpx = srcH; cropWpx = cropHpx * aspect; }
+    const leftPx = Math.min(Math.max(cxPx - cropWpx / 2, 0), srcW - cropWpx);
+    const topPx = Math.min(Math.max(cyPx - cropHpx / 2, 0), srcH - cropHpx);
+    return { x: leftPx / srcW, y: topPx / srcH, w: cropWpx / srcW, h: cropHpx / srcH };
 }
