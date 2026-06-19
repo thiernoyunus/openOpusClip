@@ -1,9 +1,8 @@
 /**
  * Speech cleanup detectors (Opus-style): scan the word-level transcript for
- * filler words and silent pauses and turn them into EDL cut ranges (source
- * frames). The caller dispatches the combined list as a single ADD_CUTS so the
- * whole cleanup is one undo step, and the cuts are fully reversible through the
- * existing cut/restore UI.
+ * filler words and silent pauses and turn them into source-frame ranges. The
+ * caller dispatches the combined list as a single CUT_SOURCE_RANGE so the whole
+ * cleanup is one undo step (Undo restores the removed content).
  *
  * Captions are `{ text, startMs, endMs }` with ms relative to the ORIGINAL clip
  * start. A word maps to a source frame via

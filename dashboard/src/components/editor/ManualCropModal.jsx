@@ -100,7 +100,7 @@ export default function ManualCropModal({ sourceUrl, source, segment, onApply, o
                     onPointerLeave={endDrag}
                 >
                     <video
-                        src={`${sourceUrl}#t=${(segment.startFrame / source.fps).toFixed(2)}`}
+                        src={`${sourceUrl}#t=${((segment.sourceStart ?? segment.startFrame ?? 0) / source.fps).toFixed(2)}`}
                         preload="auto"
                         muted
                         playsInline

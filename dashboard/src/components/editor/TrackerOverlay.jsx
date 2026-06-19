@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { EDITOR_FPS } from './EditorCanvas';
 import { buildFillKeyframes } from './useEditorState';
-import { outputToSource } from '@remotion-src/lib/edl';
+import { outputToSource, clipAtOutputFrame } from '@remotion-src/lib/edl';
 import {
-    segmentAtSourceFrame,
     canvasToSource,
     sourceToCanvas,
     facesAtSourceFrame,
@@ -17,21 +16,22 @@ import {
  * tracked fill. Sits absolutely over the Player inside EditorCanvas.
  */
 export default function TrackerOverlay({ playerRef, framing, dispatch }) {
-    const [srcFrame, setSrcFrame] = useState(0);
+    const [outFrame, setOutFrame] = useState(0);
 
     useEffect(() => {
         const p = playerRef.current;
         if (!p) return;
-        // Output frame -> source frame goes through the EDL (cuts/trim aware)
-        const toSrcFrame = (outFrame) => outputToSource(framing, outFrame, EDITOR_FPS);
         // The overlay can mount after the user already seeked — sync first
-        setSrcFrame(toSrcFrame(p.getCurrentFrame()));
-        const onFrame = (e) => setSrcFrame(toSrcFrame(e.detail.frame));
+        setOutFrame(p.getCurrentFrame());
+        const onFrame = (e) => setOutFrame(e.detail.frame);
         p.addEventListener('frameupdate', onFrame);
         return () => p.removeEventListener('frameupdate', onFrame);
-    }, [playerRef, framing]);
+    }, [playerRef]);
 
-    const segment = segmentAtSourceFrame(framing, srcFrame);
+    // Resolve the active clip from the OUTPUT playhead (unambiguous under
+    // reorder/duplication), then map to a source frame for face sampling.
+    const segment = clipAtOutputFrame(framing, outFrame, EDITOR_FPS)?.clip ?? null;
+    const srcFrame = outputToSource(framing, outFrame, EDITOR_FPS);
     const faces = facesAtSourceFrame(framing, srcFrame);
 
     const markers = segment
@@ -58,7 +58,7 @@ export default function TrackerOverlay({ playerRef, framing, dispatch }) {
         if (!face) return;
         dispatch({
             type: 'TRACK_PERSON',
-            segmentId: segment.id,
+            clipId: segment.id,
             panelIdx: hit.panelIdx,
             trackId: face.id,
             cameraKeyframes: buildFillKeyframes(framing, segment, face.id),

@@ -358,7 +358,7 @@ const RangeContent: React.FC<{
 }> = ({ src, framing, range, originalVolume }) => {
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
-  const { source, segments, faceTracks } = framing;
+  const { source, faceTracks } = framing;
 
   const sourceFrame = Math.min(
     range.startFrame + Math.round(frame * (source.fps / fps)),
@@ -366,18 +366,9 @@ const RangeContent: React.FC<{
   );
   const trimBefore = Math.round((range.startFrame / source.fps) * fps);
 
-  const segment =
-    segments.find(
-      (s) => sourceFrame >= s.startFrame && sourceFrame < s.endFrame
-    ) ??
-    segments[segments.length - 1] ??
-    null;
-
-  if (!segment) {
-    return (
-      <FitFrame src={src} width={width} height={height} srcW={source.width} srcH={source.height} trimBefore={trimBefore} volume={originalVolume} />
-    );
-  }
+  // The placed range carries its clip's framing decision (layout/crop/faces);
+  // a v3 clip is internally single-layout, so no per-frame segment lookup.
+  const segment = range.clip;
 
   // Manual crop always wins, regardless of layout
   if (segment.manualCrop) {

@@ -14,21 +14,16 @@ function canvasDims(framing) {
 /**
  * Geometry shared by the Tracker overlay: maps points between canvas space
  * (0..1 over the output composition) and source space (0..1 over the 16:9
- * original), through whatever layout the active segment uses.
+ * original), through whatever layout the active clip uses. The `clip` argument
+ * is a TimelineClip (or anything carrying layout/manualCrop/cameraKeyframes/
+ * trackedFaceIds) — the active clip is resolved from the output playhead with
+ * clipAtOutputFrame (edl.ts), so duplication/reorder stay unambiguous.
  *
  * Every crop the composition renders is constructed with the exact pixel
  * aspect of its panel (cropForFace/centerCrop/cameraman keyframes/manual
  * crops are all aspect-locked), so the mapping is linear — no cover-scale
  * letterboxing to account for.
  */
-
-export function segmentAtSourceFrame(framing, srcFrame) {
-    return (
-        framing.segments.find((s) => srcFrame >= s.startFrame && srcFrame < s.endFrame) ??
-        framing.segments[framing.segments.length - 1] ??
-        null
-    );
-}
 
 /** Normalized panel rects + their pixel aspect for a layout. */
 function panelGeometry(layout, framing) {

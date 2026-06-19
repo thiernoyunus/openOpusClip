@@ -80,7 +80,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
             })
             .then((framing) => {
                 if (cancelled) return;
-                if (!framing || !framing.segments || !framing.source) {
+                if (!framing || !framing.source || !(framing.clips || framing.segments)) {
                     throw new Error('Framing data is malformed.');
                 }
                 dispatch({ type: 'LOAD', framing });

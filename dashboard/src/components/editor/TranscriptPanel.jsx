@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { FileText, Scissors, RotateCcw, Wand2 } from 'lucide-react';
+import { FileText, Scissors, Wand2 } from 'lucide-react';
 import { EDITOR_FPS } from './EditorCanvas';
-import { sourceToOutput } from '@remotion-src/lib/edl';
+import { sourceToOutput, sourceToOutputAll } from '@remotion-src/lib/edl';
 import { detectFillerCuts, detectPauseCuts } from './speechCleanup';
 
 const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three', four: 'Four' };
@@ -41,15 +41,14 @@ const Word = React.memo(function Word({ index, word, isActive, isCut, inSel, onW
  * Opus-style transcript column with text-based editing: word-level captions,
  * click a word to seek, the word under the playhead highlights during
  * playback, double-click to edit text, select a range and Cut to remove that
- * content from the clip (adds an EDL cut). Words inside a cut render struck
- * through; click one to select its cut and Restore it.
+ * content (splits the owning clip(s) and drops the middle). Removed words
+ * render struck through; use Undo to bring them back.
  */
 export default function TranscriptPanel({ captions, framing, playerRef, onEditWord, dispatch }) {
     const [currentMs, setCurrentMs] = useState(0);
     const [editingIndex, setEditingIndex] = useState(null);
     const [draft, setDraft] = useState('');
     const [sel, setSel] = useState(null); // {anchor, focus} word indices
-    const [selectedCut, setSelectedCut] = useState(null); // cut index
     const [cleanupOpen, setCleanupOpen] = useState(false);
     const [removeFillers, setRemoveFillers] = useState(true);
     const [removePauses, setRemovePauses] = useState(true);
@@ -63,11 +62,9 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     }, [sel]);
 
     const srcFps = framing.source.fps;
-    const clipIn = framing.clipInFrame ?? 0;
-    // Caption ms are anchored at the ORIGINAL clip start (captionsOriginFrame),
-    // not the mutable clipInFrame — convert from the origin so head trims don't
-    // shift word↔frame mapping, segment dividers, or transcript cuts.
-    const captionsOrigin = framing.captionsOriginFrame ?? clipIn;
+    // Caption ms are anchored at the ORIGINAL clip start (captionsOriginFrame)
+    // so head trims don't shift word↔frame mapping, dividers, or cuts.
+    const captionsOrigin = framing.captionsOriginFrame ?? 0;
 
     // Word -> source frames (captions are ms relative to the original clip start)
     const wordToSource = useCallback(
@@ -78,18 +75,15 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         [captionsOrigin, srcFps]
     );
 
-    // Which cut (if any) each word falls inside, by its midpoint. Precomputed
-    // once per [captions, framing.cuts, clipIn, srcFps] instead of per word per
-    // render.
-    const cutIndexByWord = useMemo(() => {
-        const cuts = framing.cuts ?? [];
+    // Whether each word is removed: its source midpoint maps to NO output frame
+    // (it isn't covered by any clip). Precomputed once per [captions, clips].
+    const isCutByWord = useMemo(() => {
         return captions.map((word) => {
-            const start = captionsOrigin + Math.round((word.startMs / 1000) * srcFps);
-            const end = captionsOrigin + Math.round((word.endMs / 1000) * srcFps);
-            const mid = (start + end) / 2;
-            return cuts.findIndex((c) => mid >= c.startFrame && mid < c.endFrame);
+            const { start, end } = wordToSource(word);
+            const mid = Math.round((start + end) / 2);
+            return sourceToOutputAll(framing, mid, EDITOR_FPS).length === 0;
         });
-    }, [captions, framing.cuts, captionsOrigin, srcFps]);
+    }, [captions, framing, wordToSource]);
 
     useEffect(() => {
         const p = playerRef.current;
@@ -101,14 +95,17 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
 
     const segmentStarts = useMemo(() => {
         if (!framing) return [];
-        return framing.segments.map((s) => ({
-            // Express segment starts on the same origin-anchored ms axis as
-            // word.startMs so the interleaved dividers land between the right
-            // words after a head trim.
-            ms: ((s.startFrame - captionsOrigin) / srcFps) * 1000,
-            layout: s.layout,
-            id: s.id,
-        }));
+        // Clip starts on the same origin-anchored ms axis as word.startMs so the
+        // interleaved dividers land between the right words. Sorted by source
+        // start (the transcript reads in source order — after a clip REORDER the
+        // dividers reflect source position, not playback order; known limitation).
+        return framing.clips
+            .map((c) => ({
+                ms: ((c.sourceStart - captionsOrigin) / srcFps) * 1000,
+                layout: c.layout,
+                id: c.id,
+            }))
+            .sort((a, b) => a.ms - b.ms);
     }, [framing, captionsOrigin, srcFps]);
 
     const rows = useMemo(() => {
@@ -201,14 +198,11 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     // updater so it needn't be a dependency.
     const onWordClick = useCallback(
         (index, word, e) => {
-            const cutIdx = cutIndexByWord[index];
-            if (cutIdx !== -1) {
-                // clicking cut content selects its cut so it can be restored
-                setSelectedCut(cutIdx);
+            if (isCutByWord[index]) {
+                // removed content: nothing to seek/select (use Undo to restore)
                 setSel(null);
                 return;
             }
-            setSelectedCut(null);
             const cur = selRef.current;
             if (e.shiftKey && cur) {
                 setSel({ anchor: cur.anchor, focus: index });
@@ -217,7 +211,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                 seekToWord(word);
             }
         },
-        [cutIndexByWord, seekToWord]
+        [isCutByWord, seekToWord]
     );
 
     // Stable double-click -> edit handler for memoized <Word> children.
@@ -234,22 +228,16 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         if (!selRange) return;
         const startFrame = wordToSource(captions[selRange.lo]).start;
         const endFrame = wordToSource(captions[selRange.hi]).end;
-        dispatch({ type: 'ADD_CUT', startFrame, endFrame });
+        dispatch({ type: 'CUT_SOURCE_RANGE', ranges: [{ startFrame, endFrame }] });
         setSel(null);
     };
 
-    const handleRestore = () => {
-        if (selectedCut === null) return;
-        dispatch({ type: 'REMOVE_CUT', index: selectedCut });
-        setSelectedCut(null);
-    };
-
     const applyCleanup = useCallback(() => {
-        const cuts = [
+        const ranges = [
             ...(removeFillers ? detectFillerCuts(captions, framing) : []),
             ...(removePauses ? detectPauseCuts(captions, framing) : []),
         ];
-        if (cuts.length > 0) dispatch({ type: 'ADD_CUTS', cuts });
+        if (ranges.length > 0) dispatch({ type: 'CUT_SOURCE_RANGE', ranges });
         setCleanupOpen(false);
     }, [removeFillers, removePauses, captions, framing, dispatch]);
 
@@ -346,7 +334,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                 index={row.index}
                                 word={row.word}
                                 isActive={row.index === activeIndex}
-                                isCut={cutIndexByWord[row.index] !== -1}
+                                isCut={isCutByWord[row.index]}
                                 inSel={!!(selRange && row.index >= selRange.lo && row.index <= selRange.hi)}
                                 onWordClick={onWordClick}
                                 onEdit={onEdit}
@@ -356,29 +344,17 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                 )}
             </div>
 
-            {/* Action bar: Cut a selection or Restore a clicked cut */}
-            {(selCount > 0 || selectedCut !== null) && (
+            {/* Action bar: Cut the selected words */}
+            {selCount > 0 && (
                 <div className="shrink-0 border-t border-edge p-2.5 flex items-center gap-2">
-                    {selectedCut !== null ? (
-                        <button
-                            onClick={handleRestore}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface2 border border-edge text-xs text-fg hover:bg-white/5 transition-colors"
-                        >
-                            <RotateCcw size={13} /> Restore cut content
-                        </button>
-                    ) : (
-                        <button
-                            onClick={handleCut}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/15 border border-red-500/40 text-xs text-red-300 hover:bg-red-500/25 transition-colors"
-                        >
-                            <Scissors size={13} /> Cut {selCount} word{selCount > 1 ? 's' : ''}
-                        </button>
-                    )}
                     <button
-                        onClick={() => {
-                            setSel(null);
-                            setSelectedCut(null);
-                        }}
+                        onClick={handleCut}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/15 border border-red-500/40 text-xs text-red-300 hover:bg-red-500/25 transition-colors"
+                    >
+                        <Scissors size={13} /> Cut {selCount} word{selCount > 1 ? 's' : ''}
+                    </button>
+                    <button
+                        onClick={() => setSel(null)}
                         className="text-[11px] text-muted hover:text-fg px-2 py-1"
                     >
                         Cancel

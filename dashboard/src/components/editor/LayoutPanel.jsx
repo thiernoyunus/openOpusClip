@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Users, AlertCircle, Crop, Trash2 } from 'lucide-react';
-import { tracksInSegment, LAYOUT_PANELS, FACE_PANEL_INDICES, buildFillKeyframes } from './useEditorState';
+import { tracksInClip, LAYOUT_PANELS, FACE_PANEL_INDICES, buildFillKeyframes } from './useEditorState';
 import ManualCropModal from './ManualCropModal';
 
 /** Mini glyph previews for each layout option (pure CSS). */
@@ -69,17 +69,17 @@ const OPTIONS = [
  */
 function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl }) {
     const [showCropModal, setShowCropModal] = useState(false);
-    const selectedSegments = framing.segments.filter((s) => selectedIds.includes(s.id));
-    const primary = selectedSegments[0] || null;
-    // For multi-select, available people = the minimum across selected segments
-    const peopleAvailable = selectedSegments.length
-        ? Math.min(...selectedSegments.map((s) => tracksInSegment(framing, s).length))
+    const selectedClips = framing.clips.filter((c) => selectedIds.includes(c.id));
+    const primary = selectedClips[0] || null;
+    // For multi-select, available people = the minimum across selected clips
+    const peopleAvailable = selectedClips.length
+        ? Math.min(...selectedClips.map((c) => tracksInClip(framing, c).length))
         : 0;
 
-    const primaryTracks = primary ? tracksInSegment(framing, primary) : [];
+    const primaryTracks = primary ? tracksInClip(framing, primary) : [];
     const facePanels = primary ? FACE_PANEL_INDICES[primary.layout] || [] : [];
     const showPeopleAssignment =
-        selectedSegments.length === 1 &&
+        selectedClips.length === 1 &&
         primary &&
         facePanels.length > 0 &&
         primaryTracks.length > 0;
@@ -87,7 +87,7 @@ function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl }) {
     const assignFace = (panelIdx, trackId) => {
         const faceIds = [...(primary.trackedFaceIds || [])];
         faceIds[panelIdx] = trackId;
-        const payload = { type: 'SET_TRACKED_FACES', segmentId: primary.id, faceIds };
+        const payload = { type: 'SET_TRACKED_FACES', clipId: primary.id, faceIds };
         if (primary.layout === 'fill') {
             // fill follows cameraKeyframes, so regenerate them along the new track
             payload.cameraKeyframes = buildFillKeyframes(framing, primary, trackId);
@@ -101,14 +101,14 @@ function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl }) {
                 <h3 className="text-[11px] font-semibold text-fg uppercase tracking-wide mb-1">Layout</h3>
                 {!primary ? (
                     <p className="text-xs text-muted mt-2">
-                        Select a segment in the timeline to change its framing.
+                        Select a clip in the timeline to change its framing.
                     </p>
                 ) : (
                     <>
                         <p className="text-[11px] text-muted mb-3">
-                            {selectedSegments.length > 1
-                                ? `${selectedSegments.length} segments selected`
-                                : `Segment ${framing.segments.indexOf(primary) + 1} of ${framing.segments.length}`}
+                            {selectedClips.length > 1
+                                ? `${selectedClips.length} clips selected`
+                                : `Clip ${framing.clips.indexOf(primary) + 1} of ${framing.clips.length}`}
                             <span className="inline-flex items-center gap-1 ml-2 text-zinc-400">
                                 <Users size={11} /> {peopleAvailable} detected
                             </span>
@@ -117,7 +117,7 @@ function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl }) {
                             {OPTIONS.map((opt) => {
                                 const needed = LAYOUT_PANELS[opt.id];
                                 const disabled = needed > 1 && peopleAvailable < needed;
-                                const active = selectedSegments.every((s) => s.layout === opt.id);
+                                const active = selectedClips.every((c) => c.layout === opt.id);
                                 return (
                                     <button
                                         key={opt.id}
@@ -189,7 +189,7 @@ function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl }) {
                         )}
 
                         {/* Manual reframe */}
-                        {selectedSegments.length === 1 && (
+                        {selectedClips.length === 1 && (
                             <div className="mt-4">
                                 <h3 className="text-[11px] font-semibold text-fg uppercase tracking-wide mb-2">Manual reframe</h3>
                                 <button
@@ -201,7 +201,7 @@ function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl }) {
                                 </button>
                                 {primary.manualCrop && (
                                     <button
-                                        onClick={() => dispatch({ type: 'SET_MANUAL_CROP', segmentId: primary.id, crop: null })}
+                                        onClick={() => dispatch({ type: 'SET_MANUAL_CROP', clipId: primary.id, crop: null })}
                                         className="mt-1.5 w-full flex items-center gap-2 px-3 py-2 rounded-lg text-muted text-[11px] hover:text-fg hover:bg-white/5 transition-colors"
                                     >
                                         <Trash2 size={12} />
@@ -220,7 +220,7 @@ function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl }) {
                     source={framing.source}
                     segment={primary}
                     onApply={(crop) => {
-                        dispatch({ type: 'SET_MANUAL_CROP', segmentId: primary.id, crop });
+                        dispatch({ type: 'SET_MANUAL_CROP', clipId: primary.id, crop });
                         setShowCropModal(false);
                     }}
                     onClose={() => setShowCropModal(false)}

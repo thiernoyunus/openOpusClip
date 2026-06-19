@@ -1,8 +1,15 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Play, Pause, SkipBack, X, SplitSquareHorizontal } from 'lucide-react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { Play, Pause, SkipBack, Scissors, Trash2, Copy, ZoomIn, ZoomOut, Plus } from 'lucide-react';
 import { EDITOR_FPS } from './EditorCanvas';
 import { useFilmstrip, useWaveform } from './useMediaStrips';
-import { outputDurationFrames, outputToSource, sourceToOutput } from '@remotion-src/lib/edl';
+import { placedClips, outputToSource, clipAtOutputFrame } from '@remotion-src/lib/edl';
+
+const FILM_COUNT = 48; // global thumbnails sampled across the source, sliced per clip
+const WAVE_BUCKETS = 480;
+const MIN_CLIP_LEN = 2; // source frames — mirrors the reducer
+const MIN_PPS = 12;
+const MAX_PPS = 320;
+const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three', four: 'Four', screenshare: 'Screen', gameplay: 'Gameplay' };
 
 const fmt = (frames) => {
     const totalSec = frames / EDITOR_FPS;
@@ -12,98 +19,182 @@ const fmt = (frames) => {
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
 };
 
-const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three', four: 'Four' };
+/** Slice an evenly-spaced strip (thumbs/peaks) to a source fraction window. */
+const fracSlice = (arr, s0, s1) => {
+    if (!arr || arr.length === 0) return arr || [];
+    const n = arr.length;
+    const a = Math.max(0, Math.floor(s0 * n));
+    const b = Math.min(n, Math.max(a + 1, Math.ceil(s1 * n)));
+    return arr.slice(a, b);
+};
 
 /**
- * The thumbnail filmstrip. Memoized so it doesn't re-render every playback
- * frame (only `frame` changes then, and that lives in the parent). It only
- * re-renders when the thumbnails or the scrub handler identity change.
+ * Apply an in-progress drag to the clip list so the live layout (positions +
+ * ripple) can be computed from placedClips without mutating the real state.
  */
-const Filmstrip = React.memo(function Filmstrip({ thumbs, onPointerDown }) {
+function applyDrag(clips, drag, totalSrc) {
+    if (!drag) return clips;
+    if (drag.kind === 'trim') {
+        return clips.map((c) => {
+            if (c.id !== drag.id) return c;
+            if (drag.edge === 'in') {
+                const ss = Math.max(0, Math.min(c.sourceStart + drag.deltaSrc, c.sourceEnd - MIN_CLIP_LEN));
+                return { ...c, sourceStart: ss };
+            }
+            const se = Math.min(totalSrc, Math.max(c.sourceEnd + drag.deltaSrc, c.sourceStart + MIN_CLIP_LEN));
+            return { ...c, sourceEnd: se };
+        });
+    }
+    if (drag.kind === 'move') {
+        const from = clips.findIndex((c) => c.id === drag.id);
+        if (from === -1) return clips;
+        const to = Math.max(0, Math.min(drag.toIndex, clips.length - 1));
+        if (to === from) return clips;
+        const next = [...clips];
+        const [m] = next.splice(from, 1);
+        next.splice(to, 0, m);
+        return next;
+    }
+    return clips;
+}
+
+/**
+ * One clip on the track. Memoized so the per-frame playhead updates (which
+ * re-render the parent) don't re-render every block — only props change them
+ * (zoom, selection, a drag affecting this clip, or the thumbnails arriving).
+ */
+const ClipBlock = React.memo(function ClipBlock({
+    clip, left, width, selected, dragging, thumbs, peaks, totalSrc,
+    onBodyDown, onTrimDown, onDuplicate, onDelete,
+}) {
+    const s0 = clip.sourceStart / totalSrc;
+    const s1 = clip.sourceEnd / totalSrc;
+    const clipThumbs = useMemo(() => fracSlice(thumbs, s0, s1), [thumbs, s0, s1]);
+    const clipPeaks = useMemo(() => fracSlice(peaks, s0, s1), [peaks, s0, s1]);
+
     return (
-        <div className="relative h-10 flex bg-black cursor-pointer" onPointerDown={onPointerDown}>
-            {thumbs.length === 0 ? (
-                <div className="w-full h-full bg-surface2/30 animate-pulse" />
-            ) : (
-                thumbs.map((src, i) => (
-                    <img
-                        key={i}
-                        src={src}
-                        alt=""
-                        draggable={false}
-                        className="h-full object-cover pointer-events-none"
-                        style={{ width: `${100 / thumbs.length}%` }}
-                    />
-                ))
-            )}
+        <div
+            onPointerDown={(e) => onBodyDown(clip.id, e)}
+            style={{ left, width }}
+            className={`absolute top-0 bottom-0 rounded-md overflow-hidden border cursor-grab active:cursor-grabbing group ${
+                selected ? 'border-viral ring-1 ring-viral' : 'border-edge hover:border-white/40'
+            } ${dragging ? 'opacity-80 z-30' : 'z-10'}`}
+        >
+            {/* Thumbnails */}
+            <div className="absolute inset-0 flex bg-black pointer-events-none">
+                {clipThumbs.length === 0 ? (
+                    <div className="w-full h-full bg-surface2/30" />
+                ) : (
+                    clipThumbs.map((src, i) => (
+                        <img key={i} src={src} alt="" draggable={false} className="h-full object-cover" style={{ width: `${100 / clipThumbs.length}%` }} />
+                    ))
+                )}
+            </div>
+            {/* Waveform along the bottom */}
+            <div className="absolute left-0 right-0 bottom-0 h-5 flex items-end gap-px px-px bg-black/40 pointer-events-none">
+                {(clipPeaks || []).map((v, i) => (
+                    <div key={i} className="flex-1 bg-zinc-300/70 rounded-sm" style={{ height: `${Math.max(8, v * 100)}%` }} />
+                ))}
+            </div>
+            {/* Layout label */}
+            <span className="absolute top-1 left-1.5 text-[10px] font-medium px-1.5 py-px rounded bg-black/60 text-zinc-100 pointer-events-none">
+                {LAYOUT_LABEL[clip.layout] || clip.layout}
+            </span>
+            {/* Hover toolbar: duplicate / delete */}
+            <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => { e.stopPropagation(); onDuplicate(clip.id); }}
+                    title="Duplicate clip"
+                    className="w-5 h-5 rounded bg-black/60 text-zinc-200 hover:text-white flex items-center justify-center"
+                >
+                    <Copy size={11} />
+                </button>
+                <button
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => { e.stopPropagation(); onDelete(clip.id); }}
+                    title="Delete clip"
+                    className="w-5 h-5 rounded bg-black/60 text-zinc-200 hover:text-red-400 flex items-center justify-center"
+                >
+                    <Trash2 size={11} />
+                </button>
+            </div>
+            {/* Trim handles */}
+            {['in', 'out'].map((edge) => (
+                <div
+                    key={edge}
+                    onPointerDown={(e) => onTrimDown(clip.id, edge, e)}
+                    className={`absolute top-0 bottom-0 ${edge === 'in' ? 'left-0' : 'right-0'} w-2 cursor-ew-resize bg-amber-400/0 hover:bg-amber-400/40`}
+                    title={edge === 'in' ? 'Trim clip start' : 'Trim clip end'}
+                >
+                    <div className="mx-auto w-[3px] h-full bg-amber-400/70 opacity-0 group-hover:opacity-100" />
+                </div>
+            ))}
         </div>
     );
 });
 
 /**
- * The audio waveform. Memoized for the same reason as Filmstrip — the bars are
- * expensive to rebuild and don't depend on the playhead frame.
- */
-const Waveform = React.memo(function Waveform({ peaks, onPointerDown }) {
-    return (
-        <div className="relative h-6 flex items-center gap-px px-px bg-canvas cursor-pointer" onPointerDown={onPointerDown}>
-            {peaks === null ? (
-                <div className="w-full h-3 bg-surface2/30 animate-pulse rounded" />
-            ) : peaks.length === 0 ? (
-                <span className="w-full text-center text-[10px] text-zinc-600">no audio</span>
-            ) : (
-                peaks.map((v, i) => (
-                    <div
-                        key={i}
-                        className="flex-1 bg-zinc-500/80 rounded-sm pointer-events-none"
-                        style={{ height: `${Math.max(6, v * 100)}%` }}
-                    />
-                ))
-            )}
-        </div>
-    );
-});
-
-/**
- * Opus-style timeline: layout-chip row per framing segment with draggable
- * boundaries, a thumbnail filmstrip, an audio waveform, scrub-to-seek, and a
- * playhead synced to the Player.
+ * Output-axis NLE timeline: the main track is the ordered clip list laid
+ * end-to-end (playback order). Clips can be selected, split, trimmed, reordered
+ * (drag), duplicated and deleted, with zoom + horizontal scroll. The playhead,
+ * ruler and seeking all live on the OUTPUT timeline.
  */
 export default function EditorTimeline({ framing, playerRef, selectedIds, onSelect, dispatch, sourceUrl }) {
-    const [frame, setFrame] = useState(0);
+    const [outFrame, setOutFrame] = useState(0);
     const [playing, setPlaying] = useState(false);
-    // drag: {kind:'boundary', boundaryIndex, frame} | {kind:'trim', edge:'in'|'out', frame}
+    const [pxPerSec, setPxPerSec] = useState(60);
     const [drag, setDrag] = useState(null);
-    const stripRef = useRef(null);
-    // The strip's bounding rect, cached at drag start so we don't call the
-    // layout-thrashing getBoundingClientRect() on every pointermove. Null when
-    // not dragging (a plain scrub click measures fresh).
-    const dragRectRef = useRef(null);
+    const trackRef = useRef(null);
+    const dragRef = useRef(null);
 
-    const totalSrcFrames = framing.source.durationFrames;
-    const clipIn = framing.clipInFrame ?? 0;
-    const clipOut = framing.clipOutFrame ?? totalSrcFrames;
-    const cuts = framing.cuts ?? [];
-    const durationInFrames = outputDurationFrames(framing, EDITOR_FPS);
+    const fps = EDITOR_FPS;
+    const srcFps = framing.source.fps;
+    const totalSrc = framing.source.durationFrames;
+    const pxPerFrame = pxPerSec / fps;
 
-    const thumbs = useFilmstrip(sourceUrl);
-    const peaks = useWaveform(sourceUrl);
+    // Global strips from the source video, sliced per clip by source fraction.
+    const thumbs = useFilmstrip(sourceUrl, FILM_COUNT);
+    const peaks = useWaveform(sourceUrl, WAVE_BUCKETS);
 
+    // Live layout: clips with any in-progress drag applied, placed end-to-end.
+    const liveClips = useMemo(() => applyDrag(framing.clips, drag, totalSrc), [framing.clips, drag, totalSrc]);
+    const placed = useMemo(() => placedClips({ ...framing, clips: liveClips }, fps), [framing, liveClips, fps]);
+    const totalOut = useMemo(() => placed.reduce((a, p) => a + p.outDuration, 0) || 1, [placed]);
+    const trackWidth = totalOut * pxPerFrame;
+
+    // Player sync
     useEffect(() => {
         const p = playerRef.current;
-        if (!p) return;
-        const onFrame = (e) => setFrame(e.detail.frame);
+        if (!p) return undefined;
+        const onF = (e) => setOutFrame(e.detail.frame);
         const onPlay = () => setPlaying(true);
         const onPause = () => setPlaying(false);
-        p.addEventListener('frameupdate', onFrame);
+        p.addEventListener('frameupdate', onF);
         p.addEventListener('play', onPlay);
         p.addEventListener('pause', onPause);
         return () => {
-            p.removeEventListener('frameupdate', onFrame);
+            p.removeEventListener('frameupdate', onF);
             p.removeEventListener('play', onPlay);
             p.removeEventListener('pause', onPause);
         };
     }, [playerRef]);
+
+    // Keep the playhead in view during playback / seeks
+    useEffect(() => {
+        const el = trackRef.current;
+        if (!el) return;
+        const x = outFrame * pxPerFrame;
+        if (x < el.scrollLeft + 40) el.scrollLeft = Math.max(0, x - 40);
+        else if (x > el.scrollLeft + el.clientWidth - 40) el.scrollLeft = x - el.clientWidth + 40;
+    }, [outFrame, pxPerFrame]);
+
+    const seekToOut = useCallback((out) => {
+        const p = playerRef.current;
+        if (!p) return;
+        p.pause();
+        p.seekTo(Math.max(0, Math.min(Math.round(out), totalOut - 1)));
+    }, [playerRef, totalOut]);
 
     const togglePlay = useCallback(() => {
         const p = playerRef.current;
@@ -112,266 +203,225 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
         else p.play();
     }, [playerRef]);
 
-    // Razor split: divide the segment under the playhead into two independent
-    // segments. Only possible when the playhead sits strictly inside a segment
-    // with at least 10 frames left on each side (mirrors SPLIT_SEGMENT).
-    const splitFrame = outputToSource(framing, frame, EDITOR_FPS);
-    const canSplit = framing.segments.some(
-        (s) => splitFrame - s.startFrame >= 10 && s.endFrame - splitFrame >= 10
-    );
+    const outFrameAtClientX = useCallback((clientX) => {
+        const el = trackRef.current;
+        if (!el) return 0;
+        const rect = el.getBoundingClientRect();
+        const x = clientX - rect.left + el.scrollLeft;
+        return Math.max(0, Math.min(Math.round(x / pxPerFrame), totalOut - 1));
+    }, [pxPerFrame, totalOut]);
+
+    // --- Split / delete / duplicate ---
+    const playClip = clipAtOutputFrame(framing, outFrame, fps);
+    const srcAtPlayhead = outputToSource(framing, outFrame, fps);
+    const canSplit = !!playClip
+        && srcAtPlayhead - playClip.clip.sourceStart >= MIN_CLIP_LEN
+        && playClip.clip.sourceEnd - srcAtPlayhead >= MIN_CLIP_LEN;
     const handleSplit = useCallback(() => {
-        const srcFrame = outputToSource(framing, frame, EDITOR_FPS);
-        dispatch({ type: 'SPLIT_SEGMENT', frame: srcFrame });
-    }, [framing, frame, dispatch]);
+        const pc = clipAtOutputFrame(framing, outFrame, fps);
+        if (!pc) return;
+        dispatch({ type: 'SPLIT_CLIP', clipId: pc.clip.id, sourceFrame: outputToSource(framing, outFrame, fps) });
+    }, [framing, outFrame, fps, dispatch]);
 
-    const seekToSourceFrame = useCallback(
-        (srcFrame) => {
-            const p = playerRef.current;
-            if (!p) return;
-            p.pause();
-            // Map through the EDL: frames inside cuts snap to the next kept frame
-            p.seekTo(sourceToOutput(framing, srcFrame, EDITOR_FPS) ?? 0);
-        },
-        [playerRef, framing]
-    );
+    const selectedId = selectedIds[0] ?? null;
+    const canDelete = selectedId && framing.clips.length > 1;
+    const handleDelete = useCallback((id) => {
+        if (framing.clips.length <= 1) return;
+        dispatch({ type: 'DELETE_CLIP', id });
+    }, [framing.clips.length, dispatch]);
 
-    const sourceFrameAtClientX = useCallback(
-        (clientX) => {
-            if (!stripRef.current) return 0;
-            // During a drag, reuse the rect cached at drag start; for a plain
-            // scrub click (no cached rect) measure fresh.
-            const rect = dragRectRef.current ?? stripRef.current.getBoundingClientRect();
-            const fraction = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-            return Math.round(fraction * totalSrcFrames);
-        },
-        [totalSrcFrames]
-    );
+    const duplicateClip = useCallback((id) => {
+        const idx = framing.clips.findIndex((c) => c.id === id);
+        if (idx === -1) return;
+        const c = framing.clips[idx];
+        dispatch({
+            type: 'INSERT_CLIP',
+            afterIndex: idx,
+            clip: {
+                sourceStart: c.sourceStart,
+                sourceEnd: c.sourceEnd,
+                layout: c.layout,
+                trackedFaceIds: [...c.trackedFaceIds],
+                cameraKeyframes: c.cameraKeyframes,
+                manualCrop: c.manualCrop,
+            },
+        });
+    }, [framing.clips, dispatch]);
 
-    // Dragging (segment boundaries + clip trim handles): live position in
-    // local state, single history entry committed to the reducer on release
-    const startDrag = (payload) => (e) => {
-        e.preventDefault();
+    // --- Drag (trim / reorder) + ruler scrub ---
+    const onBodyDown = useCallback((id, e) => {
+        if (e.button !== 0) return;
+        const nd = { kind: 'pending', id, startX: e.clientX };
+        dragRef.current = nd;
+        setDrag(nd);
+        try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
+    }, []);
+
+    const onTrimDown = useCallback((id, edge, e) => {
         e.stopPropagation();
-        // Cache the strip rect once for the whole drag (see dragRectRef).
-        dragRectRef.current = stripRef.current?.getBoundingClientRect() ?? null;
-        setDrag(payload);
-        try {
-            e.target.setPointerCapture?.(e.pointerId);
-        } catch { /* synthetic or already-released pointer */ }
-    };
-    const onStripPointerMove = (e) => {
-        if (!drag) return;
-        setDrag((d) => ({ ...d, frame: sourceFrameAtClientX(e.clientX) }));
-    };
-    const endDrag = () => {
-        if (!drag) {
-            dragRectRef.current = null;
+        if (e.button !== 0) return;
+        const nd = { kind: 'trim', id, edge, startX: e.clientX, deltaSrc: 0 };
+        dragRef.current = nd;
+        setDrag(nd);
+        try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
+    }, []);
+
+    const rulerDown = useCallback((e) => {
+        if (e.button !== 0) return;
+        seekToOut(outFrameAtClientX(e.clientX));
+        const nd = { kind: 'scrub' };
+        dragRef.current = nd;
+        setDrag(nd);
+        try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
+    }, [seekToOut, outFrameAtClientX]);
+
+    const onPointerMove = useCallback((e) => {
+        const d = dragRef.current;
+        if (!d) return;
+        if (d.kind === 'scrub') {
+            seekToOut(outFrameAtClientX(e.clientX));
             return;
         }
-        if (drag.kind === 'boundary') {
-            dispatch({ type: 'SET_BOUNDARY', boundaryIndex: drag.boundaryIndex, frame: drag.frame });
-        } else if (drag.kind === 'trim') {
-            dispatch({
-                type: 'SET_CLIP_BOUNDS',
-                ...(drag.edge === 'in' ? { clipInFrame: drag.frame } : { clipOutFrame: drag.frame }),
-            });
+        const dx = e.clientX - d.startX;
+        if (d.kind === 'trim') {
+            const deltaSrc = Math.round((dx / pxPerFrame) * (srcFps / fps));
+            const nd = { ...d, deltaSrc };
+            dragRef.current = nd;
+            setDrag(nd);
+        } else if (d.kind === 'pending' || d.kind === 'move') {
+            if (d.kind === 'pending' && Math.abs(dx) < 4) return;
+            const el = trackRef.current;
+            const rect = el.getBoundingClientRect();
+            const x = e.clientX - rect.left + el.scrollLeft;
+            const real = placedClips(framing, fps).filter((p) => p.clip.id !== d.id);
+            const toIndex = real.filter((p) => (p.outStart + p.outDuration / 2) * pxPerFrame < x).length;
+            const nd = { ...d, kind: 'move', toIndex };
+            dragRef.current = nd;
+            setDrag(nd);
         }
-        dragRectRef.current = null;
+    }, [pxPerFrame, srcFps, fps, framing, seekToOut, outFrameAtClientX]);
+
+    const endDrag = useCallback((e) => {
+        const d = dragRef.current;
+        dragRef.current = null;
         setDrag(null);
-    };
+        if (!d) return;
+        if (d.kind === 'trim') {
+            const clip = framing.clips.find((c) => c.id === d.id);
+            if (clip && d.deltaSrc) {
+                dispatch(d.edge === 'in'
+                    ? { type: 'SET_CLIP_SOURCE', id: d.id, sourceStart: clip.sourceStart + d.deltaSrc }
+                    : { type: 'SET_CLIP_SOURCE', id: d.id, sourceEnd: clip.sourceEnd + d.deltaSrc });
+            }
+        } else if (d.kind === 'move') {
+            dispatch({ type: 'MOVE_CLIP', id: d.id, toIndex: d.toIndex });
+        } else if (d.kind === 'pending') {
+            // never moved → treat as a click: select + seek to the clip start
+            onSelect(d.id, e.shiftKey || e.metaKey || e.ctrlKey);
+            const p = placedClips(framing, fps).find((pp) => pp.clip.id === d.id);
+            if (p) seekToOut(p.outStart);
+        }
+    }, [framing, fps, dispatch, onSelect, seekToOut]);
 
-    const scrubTo = useCallback(
-        (e) => {
-            if (drag) return;
-            seekToSourceFrame(sourceFrameAtClientX(e.clientX));
-        },
-        [drag, seekToSourceFrame, sourceFrameAtClientX]
-    );
+    // Ruler ticks (seconds)
+    const secStep = pxPerSec >= 120 ? 1 : pxPerSec >= 48 ? 2 : 5;
+    const ticks = [];
+    for (let s = 0; s * fps <= totalOut; s += secStep) ticks.push(s);
 
-    // Playhead lives on the SOURCE axis (the strips show source content)
-    const playheadSrc = outputToSource(framing, frame, EDITOR_FPS);
-    const playheadPct = Math.min(100, (playheadSrc / totalSrcFrames) * 100);
-    const boundaryPct = (f) => (f / totalSrcFrames) * 100;
-    const liveClipIn = drag?.kind === 'trim' && drag.edge === 'in' ? drag.frame : clipIn;
-    const liveClipOut = drag?.kind === 'trim' && drag.edge === 'out' ? drag.frame : clipOut;
+    const playheadX = outFrame * pxPerFrame;
+    const draggingId = drag && (drag.kind === 'move' || drag.kind === 'trim') ? drag.id : null;
 
     return (
         <div className="border-t border-edge bg-surface px-3 py-2 select-none">
             {/* Transport */}
             <div className="flex items-center gap-2.5 mb-2">
-                <button
-                    onClick={() => seekToSourceFrame(0)}
-                    className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors"
-                    aria-label="Back to start"
-                >
+                <button onClick={() => seekToOut(0)} className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors" aria-label="Back to start">
                     <SkipBack size={14} />
                 </button>
-                <button
-                    onClick={togglePlay}
-                    className="w-8 h-8 rounded-full bg-fg text-[#18181b] flex items-center justify-center hover:bg-white active:scale-95 transition-all"
-                    aria-label={playing ? 'Pause' : 'Play'}
-                >
+                <button onClick={togglePlay} className="w-8 h-8 rounded-full bg-fg text-[#18181b] flex items-center justify-center hover:bg-white active:scale-95 transition-all" aria-label={playing ? 'Pause' : 'Play'}>
                     {playing ? <Pause size={15} /> : <Play size={15} className="ml-0.5" />}
                 </button>
-                <button
-                    onClick={handleSplit}
-                    disabled={!canSplit}
-                    title="Split segment at playhead"
-                    aria-label="Split segment at playhead"
-                    className={`w-7 h-7 rounded-md flex items-center justify-center transition-colors ${
-                        canSplit
-                            ? 'text-muted hover:text-fg hover:bg-white/5'
-                            : 'text-zinc-700 cursor-not-allowed'
-                    }`}
-                >
-                    <SplitSquareHorizontal size={14} />
+                <button onClick={handleSplit} disabled={!canSplit} title="Split clip at playhead" className={`w-7 h-7 rounded-md flex items-center justify-center transition-colors ${canSplit ? 'text-muted hover:text-fg hover:bg-white/5' : 'text-zinc-700 cursor-not-allowed'}`}>
+                    <Scissors size={14} />
                 </button>
-                <span className="text-[11px] text-muted tabular-nums">
-                    {fmt(frame)} <span className="text-zinc-600">/</span> {fmt(durationInFrames)}
+                <button onClick={() => selectedId && handleDelete(selectedId)} disabled={!canDelete} title="Delete selected clip" className={`w-7 h-7 rounded-md flex items-center justify-center transition-colors ${canDelete ? 'text-muted hover:text-red-400 hover:bg-white/5' : 'text-zinc-700 cursor-not-allowed'}`}>
+                    <Trash2 size={14} />
+                </button>
+                <span className="text-[11px] text-muted tabular-nums ml-1">
+                    {fmt(outFrame)} <span className="text-zinc-600">/</span> {fmt(totalOut)}
                 </span>
-                <span className="ml-auto text-[10px] text-muted hidden sm:block">
-                    Click a chip to select · drag chip edges to move boundaries · click strip to seek
-                </span>
+
+                {/* Zoom */}
+                <div className="ml-auto flex items-center gap-1.5">
+                    <button onClick={() => setPxPerSec((z) => Math.max(MIN_PPS, Math.round(z / 1.4)))} className="w-6 h-6 rounded flex items-center justify-center text-muted hover:text-fg hover:bg-white/5" aria-label="Zoom out">
+                        <ZoomOut size={13} />
+                    </button>
+                    <input type="range" min={MIN_PPS} max={MAX_PPS} value={pxPerSec} onChange={(e) => setPxPerSec(Number(e.target.value))} className="w-24 accent-viral" aria-label="Timeline zoom" />
+                    <button onClick={() => setPxPerSec((z) => Math.min(MAX_PPS, Math.round(z * 1.4)))} className="w-6 h-6 rounded flex items-center justify-center text-muted hover:text-fg hover:bg-white/5" aria-label="Zoom in">
+                        <ZoomIn size={13} />
+                    </button>
+                </div>
             </div>
 
+            {/* Scrollable track */}
             <div
-                ref={stripRef}
-                className="relative rounded-lg overflow-hidden border border-edge bg-canvas"
-                onPointerMove={onStripPointerMove}
+                ref={trackRef}
+                className="relative overflow-x-auto overflow-y-hidden custom-scrollbar rounded-lg border border-edge bg-canvas"
+                onPointerMove={onPointerMove}
                 onPointerUp={endDrag}
                 onPointerLeave={endDrag}
             >
-                {/* Layout chip row (absolute positions: segments cover [clipIn, clipOut]) */}
-                <div className="relative h-6 border-b border-edge">
-                    {framing.segments.map((seg) => {
-                        const selected = selectedIds.includes(seg.id);
-                        return (
-                            <button
-                                key={seg.id}
-                                style={{
-                                    left: `${boundaryPct(seg.startFrame)}%`,
-                                    width: `${boundaryPct(seg.endFrame - seg.startFrame)}%`,
-                                }}
-                                onClick={(e) => {
-                                    onSelect(seg.id, e.shiftKey || e.metaKey || e.ctrlKey);
-                                    seekToSourceFrame(seg.startFrame);
-                                }}
-                                className={`absolute top-0 h-full border-r border-edge transition-colors text-left overflow-hidden ${
-                                    selected ? 'bg-white/20' : 'bg-surface2/40 hover:bg-white/10'
-                                }`}
-                                title={`${seg.id} · ${LAYOUT_LABEL[seg.layout] || seg.layout}`}
-                            >
-                                <span
-                                    className={`absolute top-1/2 -translate-y-1/2 left-1.5 text-[10px] font-medium px-1.5 py-px rounded truncate max-w-[85%] ${
-                                        selected ? 'bg-fg text-[#18181b]' : 'bg-black/50 text-zinc-300'
-                                    }`}
-                                >
-                                    {LAYOUT_LABEL[seg.layout] || seg.layout}
-                                </span>
-                            </button>
-                        );
-                    })}
+                <div className="relative" style={{ width: trackWidth, minWidth: '100%' }}>
+                    {/* Ruler */}
+                    <div className="relative h-5 border-b border-edge cursor-pointer" onPointerDown={rulerDown}>
+                        {ticks.map((s) => (
+                            <span key={s} className="absolute top-0 text-[9px] text-zinc-500 tabular-nums pl-1 border-l border-edge h-full" style={{ left: s * pxPerSec }}>
+                                {s}
+                            </span>
+                        ))}
+                    </div>
 
-                    {/* Boundary drag handles (between adjacent segments) */}
-                    {framing.segments.slice(0, -1).map((seg, i) => {
-                        const active = drag?.kind === 'boundary' && drag.boundaryIndex === i;
-                        const f = active ? drag.frame : seg.endFrame;
-                        return (
-                            <div
-                                key={`b-${seg.id}`}
-                                style={{ left: `${boundaryPct(f)}%` }}
-                                onPointerDown={startDrag({ kind: 'boundary', boundaryIndex: i, frame: seg.endFrame })}
-                                className="absolute top-0 bottom-0 w-2 -ml-1 cursor-col-resize group z-10"
-                            >
-                                <div className={`mx-auto w-[3px] h-full rounded ${active ? 'bg-viral' : 'bg-zinc-500 group-hover:bg-fg'}`} />
-                            </div>
-                        );
-                    })}
-                </div>
+                    {/* Clip lane */}
+                    <div className="relative h-16 mt-1 mb-1">
+                        {placed.map((p) => (
+                            <ClipBlock
+                                key={p.clip.id}
+                                clip={p.clip}
+                                left={p.outStart * pxPerFrame}
+                                width={Math.max(10, p.outDuration * pxPerFrame)}
+                                selected={selectedIds.includes(p.clip.id)}
+                                dragging={draggingId === p.clip.id}
+                                thumbs={thumbs}
+                                peaks={peaks}
+                                totalSrc={totalSrc}
+                                onBodyDown={onBodyDown}
+                                onTrimDown={onTrimDown}
+                                onDuplicate={duplicateClip}
+                                onDelete={handleDelete}
+                            />
+                        ))}
 
-                {/* Filmstrip (memoized: doesn't re-render every playback frame) */}
-                <Filmstrip thumbs={thumbs} onPointerDown={scrubTo} />
-
-                {/* Waveform (memoized: doesn't re-render every playback frame) */}
-                <Waveform peaks={peaks} onPointerDown={scrubTo} />
-
-                {/* Removed content: dim everything outside [clipIn, clipOut] */}
-                {liveClipIn > 0 && (
-                    <div
-                        className="absolute top-0 bottom-0 left-0 bg-black/70 pointer-events-none z-10"
-                        style={{ width: `${boundaryPct(liveClipIn)}%` }}
-                    />
-                )}
-                {liveClipOut < totalSrcFrames && (
-                    <div
-                        className="absolute top-0 bottom-0 right-0 bg-black/70 pointer-events-none z-10"
-                        style={{ width: `${100 - boundaryPct(liveClipOut)}%` }}
-                    />
-                )}
-
-                {/* EDL cut bands (click × to restore) */}
-                {cuts.map((cut, i) => (
-                    <div
-                        key={`cut-${cut.startFrame}`}
-                        className="absolute top-0 bottom-0 z-10 bg-red-500/25 border-x border-red-400/60 group"
-                        style={{
-                            left: `${boundaryPct(cut.startFrame)}%`,
-                            width: `${boundaryPct(cut.endFrame - cut.startFrame)}%`,
-                            backgroundImage:
-                                'repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(248,113,113,0.25) 6px, rgba(248,113,113,0.25) 12px)',
-                        }}
-                        title="Cut content (click × to restore)"
-                    >
+                        {/* Add-clip at the end (duplicates the last clip) */}
                         <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                dispatch({ type: 'REMOVE_CUT', index: i });
-                            }}
-                            className="absolute top-0.5 left-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-red-500 text-white items-center justify-center hidden group-hover:flex"
-                            aria-label="Restore cut content"
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={() => framing.clips.length && duplicateClip(framing.clips[framing.clips.length - 1].id)}
+                            title="Add a clip (duplicates the last clip)"
+                            className="absolute top-0 bottom-0 w-9 flex items-center justify-center rounded-md border border-dashed border-edge text-muted hover:text-fg hover:border-white/40 hover:bg-white/5 z-20"
+                            style={{ left: trackWidth + 6 }}
                         >
-                            <X size={10} />
+                            <Plus size={16} />
                         </button>
                     </div>
-                ))}
 
-                {/* Clip trim/extend handles */}
-                {[
-                    { edge: 'in', frame: liveClipIn },
-                    { edge: 'out', frame: liveClipOut },
-                ].map(({ edge, frame: f }) => (
-                    <div
-                        key={`trim-${edge}`}
-                        style={{ left: `${boundaryPct(f)}%` }}
-                        onPointerDown={startDrag({ kind: 'trim', edge, frame: f })}
-                        className="absolute top-0 bottom-0 w-3 -ml-1.5 cursor-ew-resize group z-20"
-                        title={edge === 'in' ? 'Trim/extend clip start' : 'Trim/extend clip end'}
-                    >
-                        <div
-                            className={`mx-auto w-[5px] h-full rounded ${
-                                drag?.kind === 'trim' && drag.edge === edge
-                                    ? 'bg-amber-400'
-                                    : 'bg-amber-500/70 group-hover:bg-amber-400'
-                            }`}
-                        />
+                    {/* Playhead (spans ruler + lane) */}
+                    <div className="absolute top-0 bottom-0 w-px bg-fg pointer-events-none z-40" style={{ left: playheadX }}>
+                        <div className="absolute -top-0.5 -left-[3px] w-[7px] h-[7px] rounded-full bg-fg" />
                     </div>
-                ))}
-
-                {/* Drag live guide across all rows */}
-                {drag && (
-                    <div
-                        className="absolute top-0 bottom-0 w-px bg-viral pointer-events-none z-20"
-                        style={{ left: `${boundaryPct(drag.frame)}%` }}
-                    />
-                )}
-
-                {/* Playhead */}
-                <div
-                    className="absolute top-0 bottom-0 w-px bg-fg pointer-events-none z-20"
-                    style={{ left: `${playheadPct}%` }}
-                >
-                    <div className="absolute -top-0.5 -left-[3px] w-[7px] h-[7px] rounded-full bg-fg" />
                 </div>
+            </div>
+
+            <div className="mt-1 text-[10px] text-zinc-600">
+                click a clip to select · drag to reorder · drag edges to trim · ✂ splits at the playhead
             </div>
         </div>
     );
