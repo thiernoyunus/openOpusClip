@@ -1060,8 +1060,9 @@ def _validate_framing_clips(framing: dict, duration: int) -> Optional[str]:
             return f"clips[{i}] sourceStart/sourceEnd must be integers"
         if not (0 <= start < end <= duration):
             return f"clips[{i}] source range is out of bounds"
-        if not isinstance(clip.get("trackedFaceIds"), list):
-            return f"clips[{i}].trackedFaceIds must be a list"
+        tracked = clip.get("trackedFaceIds")
+        if not isinstance(tracked, list) or not all(isinstance(x, int) and not isinstance(x, bool) for x in tracked):
+            return f"clips[{i}].trackedFaceIds must be a list of integers"
         keyframes = clip.get("cameraKeyframes")
         if not isinstance(keyframes, list):
             return f"clips[{i}].cameraKeyframes must be a list"
@@ -1086,6 +1087,8 @@ def _validate_framing(framing: dict) -> Optional[str]:
         if key not in source:
             return f"source.{key} is required"
     duration = source["durationFrames"]
+    if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
+        return "source.durationFrames must be a positive integer"
 
     origin = framing.get("captionsOriginFrame")
     if origin is not None and (isinstance(origin, bool) or not isinstance(origin, int) or not (0 <= origin <= duration)):

@@ -213,41 +213,48 @@ export const sourceToOutputAll = (
 };
 
 /**
- * Source frame -> a single output frame (the FIRST occurrence). For seek
- * callers (timeline scrub, transcript word-click). Frames in a gap snap forward
- * to the next clip; pass strict=true to get null for removed content instead.
+ * Map a caption word (its source start/end frames) onto a single output window,
+ * via the clip occurrence that owns the word's MIDPOINT — the same rule
+ * remapCaptions uses. Returns null when the word was removed. This is
+ * occurrence-aware (unlike a per-frame source->output lookup), so a word whose
+ * end sits exactly on a clip boundary, or a timeline that has been reordered,
+ * still maps start AND end into the same clip. For transcript seek/highlight.
  */
-export const sourceToOutput = (
+export const wordSourceToOutput = (
   framing: FramingConfig,
-  srcFrame: number,
-  fps: number,
-  strict = false
-): number | null => {
-  const placed = placedClips(framing, fps);
-  if (placed.length === 0) return strict ? null : 0;
-  for (const p of placed) {
-    if (srcFrame >= p.sourceStart && srcFrame < p.sourceEnd) {
-      return (
-        p.outStart +
-        Math.round(((srcFrame - p.sourceStart) / framing.source.fps) * fps)
+  startSrc: number,
+  endSrc: number,
+  fps: number
+): { outStart: number; outEnd: number } | null => {
+  const srcFps = framing.source.fps;
+  const mid = (startSrc + endSrc) / 2;
+  for (const p of placedClips(framing, fps)) {
+    if (mid < p.sourceStart || mid >= p.sourceEnd) continue;
+    const toOut = (s: number) =>
+      p.outStart +
+      Math.round(
+        ((Math.max(p.sourceStart, Math.min(s, p.sourceEnd)) - p.sourceStart) /
+          srcFps) *
+          fps
       );
-    }
+    return { outStart: toOut(startSrc), outEnd: toOut(endSrc) };
   }
-  if (strict) return null;
-  for (const p of placed) if (p.sourceStart >= srcFrame) return p.outStart; // next clip
-  const last = placed[placed.length - 1];
-  return last.outStart + last.outDuration - 1;
+  return null;
 };
 
 export interface OutputWindow {
   outStart: number;
   outEnd: number; // exclusive
+  srcStart: number; // source frame where this window's overlap begins
+  srcEnd: number; // source frame where it ends (exclusive)
 }
 
 /**
  * The output windows where a source range [sStart, sEnd) is visible — one per
- * intersecting clip (so a range spanning reordered/duplicated clips yields
- * several windows). Used to place source-anchored text overlays and b-roll.
+ * intersecting clip (so a range spanning reordered/duplicated/split clips yields
+ * several windows). Each window carries the source overlap [srcStart, srcEnd) so
+ * callers can preserve playback offset (e.g. b-roll continuing across a split
+ * rather than restarting). Used to place source-anchored text overlays and b-roll.
  */
 export const sourceRangeToOutputWindows = (
   framing: FramingConfig,
@@ -264,7 +271,7 @@ export const sourceRangeToOutputWindows = (
     const off = (s: number) =>
       p.outStart + Math.round(((s - p.sourceStart) / srcFps) * fps);
     const outStart = off(a);
-    wins.push({ outStart, outEnd: Math.max(off(b), outStart + 1) });
+    wins.push({ outStart, outEnd: Math.max(off(b), outStart + 1), srcStart: a, srcEnd: b });
   }
   return wins;
 };

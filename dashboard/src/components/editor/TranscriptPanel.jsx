@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { FileText, Scissors, Wand2 } from 'lucide-react';
 import { EDITOR_FPS } from './EditorCanvas';
-import { sourceToOutput, sourceToOutputAll } from '@remotion-src/lib/edl';
+import { wordSourceToOutput, sourceToOutputAll } from '@remotion-src/lib/edl';
 import { detectFillerCuts, detectPauseCuts } from './speechCleanup';
 
 const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three', four: 'Four' };
@@ -126,23 +126,23 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
 
     // Each non-cut word's position on the OUTPUT timeline (ms), precomputed
     // once so the per-frame active-word lookup is a binary search instead of an
-    // O(n) scan that recomputes sourceToOutput for every word. Output start
-    // times are monotonic across `kept` (kept ranges play back-to-back), so it
-    // can be binary-searched directly. Each entry carries its original caption
-    // index. Cut words are simply omitted (they can never be active).
+    // O(n) scan. Each word maps through its owning clip occurrence (so a word
+    // ending on a clip boundary maps cleanly), then the list is sorted by output
+    // start — staying monotonic for the binary search even after a clip reorder.
+    // Each entry carries its original caption index; removed words are omitted.
     const kept = useMemo(() => {
         const keptList = [];
         captions.forEach((word, index) => {
             const { start, end } = wordToSource(word);
-            const outStart = sourceToOutput(framing, start, EDITOR_FPS, true);
-            if (outStart === null) return; // word is cut
-            const outEnd = sourceToOutput(framing, end, EDITOR_FPS) ?? outStart;
+            const r = wordSourceToOutput(framing, start, end, EDITOR_FPS);
+            if (!r) return; // word removed
             keptList.push({
                 index,
-                startMs: (outStart / EDITOR_FPS) * 1000,
-                endMs: (outEnd / EDITOR_FPS) * 1000,
+                startMs: (r.outStart / EDITOR_FPS) * 1000,
+                endMs: (r.outEnd / EDITOR_FPS) * 1000,
             });
         });
+        keptList.sort((a, b) => a.startMs - b.startMs);
         return keptList;
     }, [captions, framing, wordToSource]);
 
@@ -180,8 +180,9 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
             const p = playerRef.current;
             if (!p) return;
             p.pause();
-            const { start } = wordToSource(word);
-            p.seekTo(sourceToOutput(framing, start, EDITOR_FPS) ?? 0);
+            const { start, end } = wordToSource(word);
+            const r = wordSourceToOutput(framing, start, end, EDITOR_FPS);
+            p.seekTo(r ? r.outStart : 0);
         },
         [playerRef, framing, wordToSource]
     );

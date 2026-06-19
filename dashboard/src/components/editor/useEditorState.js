@@ -130,14 +130,22 @@ export const editorReducer = (state, action) => {
         case 'SET_CLIP_SOURCE': {
             // Per-clip trim/extend. Later clips ripple automatically (output
             // position is the running cursor in placedClips), so no neighbor edits.
+            // Each edge is clamped against the clip's OTHER (original) edge — not
+            // against the just-updated one — so the committed value matches the
+            // drag preview (which clamps the same way) and one trim never shifts
+            // the opposite edge.
             const dur = state.framing.source.durationFrames;
             let changed = false;
             const clips = state.framing.clips.map((c) => {
                 if (c.id !== action.id) return c;
-                let ss = action.sourceStart ?? c.sourceStart;
-                let se = action.sourceEnd ?? c.sourceEnd;
-                ss = Math.max(0, Math.min(ss, dur - MIN_CLIP_LEN));
-                se = Math.max(ss + MIN_CLIP_LEN, Math.min(se, dur));
+                let ss = c.sourceStart;
+                let se = c.sourceEnd;
+                if (action.sourceStart !== undefined) {
+                    ss = Math.max(0, Math.min(action.sourceStart, c.sourceEnd - MIN_CLIP_LEN));
+                }
+                if (action.sourceEnd !== undefined) {
+                    se = Math.min(dur, Math.max(action.sourceEnd, c.sourceStart + MIN_CLIP_LEN));
+                }
                 if (ss === c.sourceStart && se === c.sourceEnd) return c;
                 changed = true;
                 return { ...c, sourceStart: ss, sourceEnd: se };

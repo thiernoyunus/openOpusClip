@@ -10,7 +10,7 @@ import {
   placedClips,
   outputDurationFrames,
   outputToSource,
-  sourceToOutput,
+  wordSourceToOutput,
   sourceToOutputAll,
   sourceRangeToOutputWindows,
   remapCaptions,
@@ -62,10 +62,15 @@ assert.strictEqual(cursor, outputDurationFrames(v2, FPS), "placed clips sum to t
 
 // outputToSource: out 120 lands inside clip1 (out[100,250) -> source[150,300))
 assert.strictEqual(outputToSource(v2, 120, FPS), 170, "out 120 -> source 170");
-// sourceToOutput first occurrence
-assert.strictEqual(sourceToOutput(v2, 160, FPS), 110, "source 160 -> out 110");
 // a frame inside the cut is removed
 assert.deepStrictEqual(sourceToOutputAll(v2, 120, FPS), [], "cut frame maps to no output");
+// word mapping uses the midpoint's owning clip; end ON the clip boundary stays in-clip
+assert.deepStrictEqual(
+  wordSourceToOutput(v2, 90, 100, FPS),
+  { outStart: 90, outEnd: 100 },
+  "word ending on clip0's boundary maps within clip0 (not snapped past it)"
+);
+assert.strictEqual(wordSourceToOutput(v2, 110, 130, FPS), null, "word in the cut maps to null");
 
 // captions: keep words in clips, drop the one whose midpoint was cut
 const captions: CaptionWord[] = [
@@ -82,8 +87,11 @@ assert.ok(Math.abs(remapped[1].startMs - (110 / 30) * 1000) < 1, "c remapped ont
 const wins = sourceRangeToOutputWindows(v2, 50, 200, FPS);
 assert.deepStrictEqual(
   wins,
-  [{ outStart: 50, outEnd: 100 }, { outStart: 100, outEnd: 150 }],
-  "overlay spanning two clips yields two windows"
+  [
+    { outStart: 50, outEnd: 100, srcStart: 50, srcEnd: 100 },
+    { outStart: 100, outEnd: 150, srcStart: 150, srcEnd: 200 },
+  ],
+  "overlay/b-roll spanning two clips yields two windows carrying their source overlap"
 );
 
 // --- Fixture B: v3 reorder (later source plays first) ---

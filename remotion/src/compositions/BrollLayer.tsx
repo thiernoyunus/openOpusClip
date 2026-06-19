@@ -22,22 +22,31 @@ export const BrollLayer: React.FC<{ framing: FramingConfig }> = ({
     <AbsoluteFill>
       {items.flatMap((b) =>
         sourceRangeToOutputWindows(framing, b.startFrame, b.endFrame, fps).map(
-          (w, i) => (
-            <Sequence
-              key={`${b.id}-${i}`}
-              from={w.outStart}
-              durationInFrames={w.outEnd - w.outStart}
-              layout="none"
-            >
-              <AbsoluteFill style={{ backgroundColor: "#000" }}>
-                <Video
-                  src={b.url}
-                  muted
-                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                />
-              </AbsoluteFill>
-            </Sequence>
-          )
+          (w, i) => {
+            // How much of the b-roll has already elapsed at this window's start
+            // (output frames), so a clip spanning a split/reorder continues
+            // instead of restarting. Plain round — the first window's offset is 0.
+            const trimBefore = Math.round(
+              ((w.srcStart - b.startFrame) / framing.source.fps) * fps
+            );
+            return (
+              <Sequence
+                key={`${b.id}-${i}`}
+                from={w.outStart}
+                durationInFrames={w.outEnd - w.outStart}
+                layout="none"
+              >
+                <AbsoluteFill style={{ backgroundColor: "#000" }}>
+                  <Video
+                    src={b.url}
+                    trimBefore={trimBefore}
+                    muted
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  />
+                </AbsoluteFill>
+              </Sequence>
+            );
+          }
         )
       )}
     </AbsoluteFill>
