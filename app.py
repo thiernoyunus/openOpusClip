@@ -35,6 +35,9 @@ MAX_FILE_SIZE_MB = 2048  # 2GB limit
 # cleaned on their own (shorter) TTL.
 JOB_RETENTION_SECONDS = int(os.environ.get("JOB_RETENTION_SECONDS", "0"))
 UPLOAD_RETENTION_SECONDS = int(os.environ.get("UPLOAD_RETENTION_SECONDS", "3600"))
+# Shared subdirectories that live inside OUTPUT_DIR but are NOT projects (e.g. the
+# thumbnail studio's "thumbnails" dir). Never auto-purged or deletable as a job.
+RESERVED_OUTPUT_DIRS = {"thumbnails"}
 DISABLE_YOUTUBE_URL = os.environ.get("DISABLE_YOUTUBE_URL", "false").lower() in ("1", "true", "yes")
 
 # Application State
@@ -106,6 +109,42 @@ def _attach_editor_urls(clip: dict, job_id: str, output_dir: str, base_name: str
     if os.path.exists(os.path.join(output_dir, framing_filename)):
         clip['framing_url'] = f"/videos/{job_id}/{framing_filename}"
 
+def _safe_job_id(job_id: str) -> bool:
+    """A job id must be a single, non-reserved path segment (rmtree/IO safety)."""
+    return bool(job_id) and job_id not in (".", "..") and job_id not in RESERVED_OUTPUT_DIRS \
+        and "/" not in job_id and "\\" not in job_id and os.path.basename(job_id) == job_id
+
+def _persist_result(job_id: str) -> None:
+    """Snapshot a job's result to output/<job_id>/result.json so completed (and
+    edited) projects survive a server restart — get_status rehydrates from it.
+    Best-effort; never raises into the request path."""
+    try:
+        job = jobs.get(job_id)
+        if not job or 'result' not in job or not _safe_job_id(job_id):
+            return
+        out_dir = os.path.join(OUTPUT_DIR, job_id)
+        if not os.path.isdir(out_dir):
+            return
+        tmp = os.path.join(out_dir, "result.json.tmp")
+        with open(tmp, 'w') as f:
+            json.dump({"status": job.get('status', 'completed'), "result": job['result']}, f)
+        os.replace(tmp, os.path.join(out_dir, "result.json"))
+    except Exception:
+        pass
+
+def _load_persisted_result(job_id: str):
+    """Load a persisted result snapshot from disk, or None."""
+    if not _safe_job_id(job_id):
+        return None
+    path = os.path.join(OUTPUT_DIR, job_id, "result.json")
+    try:
+        if os.path.isfile(path):
+            with open(path) as f:
+                return json.load(f)
+    except Exception:
+        return None
+    return None
+
 async def cleanup_jobs():
     """Background task to remove old raw uploads and (optionally) old projects.
 
@@ -126,6 +165,8 @@ async def cleanup_jobs():
             # Output projects: only time-purge when a positive retention is set.
             if JOB_RETENTION_SECONDS > 0:
                 for job_id in os.listdir(OUTPUT_DIR):
+                    if job_id in RESERVED_OUTPUT_DIRS:
+                        continue  # shared dir (e.g. thumbnails), not a project
                     job_path = os.path.join(OUTPUT_DIR, job_id)
                     if os.path.isdir(job_path):
                         if now - os.path.getmtime(job_path) > JOB_RETENTION_SECONDS:
@@ -334,6 +375,7 @@ async def run_job(job_id, job_data):
                      _attach_editor_urls(clip, job_id, output_dir, base_name, i + 1)
 
                 jobs[job_id]['result'] = {'clips': clips, 'cost_analysis': cost_analysis}
+                _persist_result(job_id)  # snapshot so the project survives a restart
             else:
                  jobs[job_id]['status'] = 'failed'
                  jobs[job_id]['logs'].append("No metadata file generated.")
@@ -490,8 +532,13 @@ async def process_endpoint(
 @app.get("/api/status/{job_id}")
 async def get_status(job_id: str):
     if job_id not in jobs:
+        # Projects persist on disk; rehydrate a finished one whose in-memory
+        # state was lost (e.g. server restart) so it stays openable, not "expired".
+        snap = _load_persisted_result(job_id)
+        if snap is not None:
+            return {"status": snap.get("status", "completed"), "logs": [], "result": snap.get("result")}
         raise HTTPException(status_code=404, detail="Job not found")
-    
+
     job = jobs[job_id]
     return {
         "status": job['status'],
@@ -503,11 +550,9 @@ async def get_status(job_id: str):
 async def delete_job(job_id: str):
     """Permanently delete a project: its output files + in-memory state. Projects
     are kept until this is called (see cleanup_jobs / JOB_RETENTION_SECONDS)."""
-    # Reject anything that isn't a plain single path segment — rmtree is
-    # destructive, so block separators and "."/".." (which would resolve outside
-    # OUTPUT_DIR), then verify the resolved path is really inside OUTPUT_DIR.
-    if (not job_id or job_id in (".", "..") or "/" in job_id or "\\" in job_id
-            or os.path.basename(job_id) != job_id):
+    # rmtree is destructive: only accept a plain, non-reserved single path
+    # segment, and verify the resolved path is really inside OUTPUT_DIR.
+    if not _safe_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job id")
     out_root = os.path.abspath(OUTPUT_DIR)
     job_path = os.path.abspath(os.path.join(OUTPUT_DIR, job_id))
@@ -1020,7 +1065,8 @@ async def add_subtitles(req: SubtitleRequest):
     # Update InMemory Jobs
     if req.clip_index < len(job['result']['clips']):
          job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
-    
+         _persist_result(req.job_id)  # keep the on-disk snapshot in sync with edits
+
     # Update Metadata on Disk (Persistence)
     try:
         if req.clip_index < len(clips):
@@ -1251,6 +1297,7 @@ async def apply_render(req: ApplyRenderRequest):
     job = jobs.get(req.job_id)
     if job and 'result' in job and req.clip_index < len(job['result'].get('clips', [])):
         job['result']['clips'][req.clip_index]['video_url'] = new_video_url
+        _persist_result(req.job_id)  # keep the on-disk snapshot in sync with edits
 
     return {"success": True, "new_video_url": new_video_url}
 
@@ -1337,7 +1384,8 @@ async def add_hook(req: HookRequest):
     # Update InMemory Jobs
     if req.clip_index < len(job['result']['clips']):
          job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
-    
+         _persist_result(req.job_id)  # keep the on-disk snapshot in sync with edits
+
     # Update Metadata on Disk
     try:
         if req.clip_index < len(clips):
