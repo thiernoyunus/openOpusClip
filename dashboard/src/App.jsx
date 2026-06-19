@@ -658,9 +658,11 @@ function App() {
     const expired = p.status === 'expired';
     const phase = isActive ? phaseFromLogs(logs) : 'Processing';
     const cover = p.thumb || coverFromString(p.src || p.title);
-    const handleDelete = (e) => {
+    const handleDelete = async (e) => {
       e.stopPropagation();
-      if (!window.confirm(`Delete "${p.title}"? This removes it from your recent projects.`)) return;
+      if (!window.confirm(`Delete "${p.title}"? This permanently deletes the project and its files.`)) return;
+      // Best-effort server delete (frees disk); always drop the local card.
+      try { await fetch(getApiUrl(`/api/jobs/${p.id}`), { method: 'DELETE' }); } catch { /* offline / already gone */ }
       setProjects(removeProject(p.id));
     };
     return (
