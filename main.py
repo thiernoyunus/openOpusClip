@@ -675,6 +675,20 @@ def download_youtube_video(url, output_dir="."):
     elif os.environ.get("YTDLP_REMOTE_COMPONENTS"):
         print("⚠️ YTDLP_REMOTE_COMPONENTS is set but no JS runtime (node) was found; the n-challenge solver can't run.")
 
+    # YouTube 403s the anonymous ANDROID_VR client's progressive URLs on reconnect
+    # partway through large downloads (it's forcing SABR on the web client). Steer
+    # yt-dlp to clients that still serve resilient, fragmented HLS / stable 1080p
+    # without cookies. Override with YTDLP_PLAYER_CLIENT (comma-separated); cookies
+    # (YOUTUBE_COOKIES) remain the most durable fix and unlock the web client.
+    player_client = [
+        c.strip()
+        for c in os.environ.get("YTDLP_PLAYER_CLIENT", "web_safari,tv_embedded,default").split(",")
+        if c.strip()
+    ]
+    extractor_args = {"youtube": {"player_client": player_client}} if player_client else {}
+    if player_client:
+        print(f"📺 yt-dlp YouTube player clients: {', '.join(player_client)}")
+
     # Let yt-dlp use its current default YouTube clients. Forcing older clients
     # can hide high-quality formats and fall back to 360p format 18.
     _COMMON_YDL_OPTS = {
@@ -690,6 +704,7 @@ def download_youtube_video(url, output_dir="."):
         'cachedir': False,
         'js_runtimes': js_runtimes,
         'remote_components': remote_components,
+        'extractor_args': extractor_args,
         'http_headers': {
             'User-Agent': (
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -751,6 +766,11 @@ Technical Details: {str(e)}
     ydl_opts = {
         **_COMMON_YDL_OPTS,
         'format': (
+            # Prefer resilient HLS (fragmented, survives the mid-download reconnect
+            # 403 that kills android_vr's progressive URLs) when it's offered, then
+            # fall back to progressive/DASH mp4.
+            'best[height<=1080][protocol^=m3u8]/'
+            'bestvideo[height<=1080][protocol^=m3u8]+bestaudio/'
             'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/'
             'bestvideo[height<=1080]+bestaudio/'
             'best[height<=1080]/best'
