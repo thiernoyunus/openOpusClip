@@ -1,7 +1,14 @@
 import { useReducer } from 'react';
 import { cropForFace, smoothedFaceRect } from '@remotion-src/compositions/ReframedVideo';
+import { framingToClips } from '@remotion-src/lib/edl';
 
 const HISTORY_LIMIT = 50;
+const MIN_CLIP_LEN = 2; // frames — keeps every clip seekable / non-degenerate
+
+// Unique clip ids. A module counter disambiguates clips created in the same
+// tick (e.g. a multi-range cut that splits several clips at once).
+let _clipSeq = 0;
+const newClipId = () => `clip-${Date.now().toString(36)}-${(_clipSeq++).toString(36)}`;
 
 /**
  * Editor state: the framing config being edited (docs/video-editor-plan.md §2),
@@ -40,20 +47,20 @@ export const editorReducer = (state, action) => {
             };
         }
         case 'SET_LAYOUT': {
-            // Applies to every selected segment; switching layout clears any
+            // Applies to every selected clip; switching layout clears any
             // manual crop (it belongs to the previous framing decision)
-            const segments = state.framing.segments.map((s) =>
-                state.selectedIds.includes(s.id)
-                    ? { ...s, layout: action.layout, manualCrop: null }
-                    : s
+            const clips = state.framing.clips.map((c) =>
+                state.selectedIds.includes(c.id)
+                    ? { ...c, layout: action.layout, manualCrop: null }
+                    : c
             );
-            return withHistory({ ...state.framing, segments });
+            return withHistory({ ...state.framing, clips });
         }
         case 'SET_TRACKED_FACES': {
-            const segments = state.framing.segments.map((s) =>
-                s.id === action.segmentId
+            const clips = state.framing.clips.map((c) =>
+                c.id === action.clipId
                     ? {
-                          ...s,
+                          ...c,
                           trackedFaceIds: action.faceIds,
                           // For fill layouts the composition follows cameraKeyframes,
                           // so changing the tracked person supplies regenerated ones
@@ -61,15 +68,15 @@ export const editorReducer = (state, action) => {
                               ? { cameraKeyframes: action.cameraKeyframes }
                               : {}),
                       }
-                    : s
+                    : c
             );
-            return withHistory({ ...state.framing, segments });
+            return withHistory({ ...state.framing, clips });
         }
         case 'SET_MANUAL_CROP': {
-            const segments = state.framing.segments.map((s) =>
-                s.id === action.segmentId ? { ...s, manualCrop: action.crop } : s
+            const clips = state.framing.clips.map((c) =>
+                c.id === action.clipId ? { ...c, manualCrop: action.crop } : c
             );
-            return withHistory({ ...state.framing, segments });
+            return withHistory({ ...state.framing, clips });
         }
         case 'SET_SUBTITLES': {
             // Caption config lives on the framing object (optional key) so it
@@ -104,79 +111,86 @@ export const editorReducer = (state, action) => {
                 subtitles: { ...subs, captions },
             });
         }
-        case 'SET_BOUNDARY': {
-            // Move the shared boundary between segment[i] and segment[i+1];
-            // contiguity is preserved by construction
-            const { boundaryIndex, frame } = action;
-            const segs = state.framing.segments;
-            const left = segs[boundaryIndex];
-            const right = segs[boundaryIndex + 1];
-            if (!left || !right) return state;
-            const MIN_LEN = 10; // frames
-            const clamped = Math.max(
-                left.startFrame + MIN_LEN,
-                Math.min(frame, right.endFrame - MIN_LEN)
-            );
-            if (clamped === left.endFrame) return state;
-            const segments = segs.map((s, i) => {
-                if (i === boundaryIndex) return { ...s, endFrame: clamped };
-                if (i === boundaryIndex + 1) return { ...s, startFrame: clamped };
-                return s;
-            });
-            return withHistory({ ...state.framing, segments });
-        }
-        case 'SPLIT_SEGMENT': {
-            // Razor split: divide the segment under the playhead into two
-            // independent halves so each can get its own layout/reframe. The
-            // frame is a SOURCE frame and must fall strictly inside a segment.
-            const { frame } = action;
-            const MIN_LEN = 10; // frames
-            const segs = state.framing.segments;
-            const idx = segs.findIndex((s) => s.startFrame < frame && frame < s.endFrame);
+        case 'SPLIT_CLIP': {
+            // Razor split: divide one clip into two adjacent independent clips
+            // at a SOURCE frame inside it, so each half can get its own
+            // layout/reframe. The clip is identified explicitly (a source frame
+            // alone is ambiguous once clips can repeat/reorder).
+            const { clipId, sourceFrame } = action;
+            const clips = state.framing.clips;
+            const idx = clips.findIndex((c) => c.id === clipId);
             if (idx === -1) return state;
-            const seg = segs[idx];
-            if (frame - seg.startFrame < MIN_LEN || seg.endFrame - frame < MIN_LEN) return state;
-            const left = { ...seg, endFrame: frame };
-            const right = { ...seg, startFrame: frame, id: `${seg.id}-s${Date.now().toString(36)}` };
-            const segments = [...segs.slice(0, idx), left, right, ...segs.slice(idx + 1)];
-            return withHistory({ ...state.framing, segments });
+            const c = clips[idx];
+            if (sourceFrame - c.sourceStart < MIN_CLIP_LEN || c.sourceEnd - sourceFrame < MIN_CLIP_LEN) return state;
+            const left = { ...c, sourceEnd: sourceFrame };
+            const right = { ...c, sourceStart: sourceFrame, id: newClipId() };
+            const next = [...clips.slice(0, idx), left, right, ...clips.slice(idx + 1)];
+            return withHistory({ ...state.framing, clips: next });
         }
-        case 'SET_CLIP_BOUNDS': {
-            // Trim (inward) or extend (outward into the padded source).
-            // Invariant: segments always cover exactly [clipIn, clipOut].
-            const f = state.framing;
-            const MIN_CLIP = 10;
-            let clipIn = action.clipInFrame ?? f.clipInFrame;
-            let clipOut = action.clipOutFrame ?? f.clipOutFrame;
-            clipIn = Math.max(0, Math.min(clipIn, f.source.durationFrames - MIN_CLIP));
-            clipOut = Math.max(clipIn + MIN_CLIP, Math.min(clipOut, f.source.durationFrames));
-            if (clipIn === f.clipInFrame && clipOut === f.clipOutFrame) return state;
-            const segments = fitSegmentsToBounds(f.segments, clipIn, clipOut);
-            const cuts = f.cuts
-                .map((c) => ({
-                    startFrame: Math.max(c.startFrame, clipIn),
-                    endFrame: Math.min(c.endFrame, clipOut),
-                }))
-                .filter((c) => c.endFrame - c.startFrame > 0);
-            return withHistory({ ...f, clipInFrame: clipIn, clipOutFrame: clipOut, segments, cuts });
+        case 'SET_CLIP_SOURCE': {
+            // Per-clip trim/extend. Later clips ripple automatically (output
+            // position is the running cursor in placedClips), so no neighbor edits.
+            // Each edge is clamped against the clip's OTHER (original) edge — not
+            // against the just-updated one — so the committed value matches the
+            // drag preview (which clamps the same way) and one trim never shifts
+            // the opposite edge.
+            const dur = state.framing.source.durationFrames;
+            let changed = false;
+            const clips = state.framing.clips.map((c) => {
+                if (c.id !== action.id) return c;
+                let ss = c.sourceStart;
+                let se = c.sourceEnd;
+                if (action.sourceStart !== undefined) {
+                    ss = Math.max(0, Math.min(action.sourceStart, c.sourceEnd - MIN_CLIP_LEN));
+                }
+                if (action.sourceEnd !== undefined) {
+                    se = Math.min(dur, Math.max(action.sourceEnd, c.sourceStart + MIN_CLIP_LEN));
+                }
+                if (ss === c.sourceStart && se === c.sourceEnd) return c;
+                changed = true;
+                return { ...c, sourceStart: ss, sourceEnd: se };
+            });
+            return changed ? withHistory({ ...state.framing, clips }) : state;
         }
-        case 'ADD_CUT': {
-            const f = state.framing;
-            const merged = mergeCuts(f.cuts, [{ startFrame: action.startFrame, endFrame: action.endFrame }], f.clipInFrame, f.clipOutFrame);
-            if (merged === null) return state;
-            return withHistory({ ...f, cuts: merged });
+        case 'MOVE_CLIP': {
+            // Reorder: array move (playback order == array order).
+            const clips = [...state.framing.clips];
+            const from = clips.findIndex((c) => c.id === action.id);
+            if (from === -1) return state;
+            const to = Math.max(0, Math.min(action.toIndex, clips.length - 1));
+            if (from === to) return state;
+            const [moved] = clips.splice(from, 1);
+            clips.splice(to, 0, moved);
+            return withHistory({ ...state.framing, clips });
         }
-        case 'ADD_CUTS': {
-            // Apply many cuts in ONE history entry (e.g. speech cleanup).
-            const f = state.framing;
-            const merged = mergeCuts(f.cuts, action.cuts ?? [], f.clipInFrame, f.clipOutFrame);
-            if (merged === null) return state;
-            return withHistory({ ...f, cuts: merged });
+        case 'INSERT_CLIP': {
+            // Insert / duplicate a slice of the same source after a given index.
+            // action.clip is a TimelineClip without an id (the UI builds it,
+            // typically by duplicating a neighbor's source range + framing).
+            const clips = [...state.framing.clips];
+            const at = Math.max(0, Math.min((action.afterIndex ?? clips.length - 1) + 1, clips.length));
+            clips.splice(at, 0, { ...action.clip, id: newClipId() });
+            return withHistory({ ...state.framing, clips });
         }
-        case 'REMOVE_CUT': {
-            const cuts = state.framing.cuts.filter((_, i) => i !== action.index);
-            if (cuts.length === state.framing.cuts.length) return state;
-            return withHistory({ ...state.framing, cuts });
+        case 'DELETE_CLIP': {
+            // Remove a clip; the gap closes by ripple. Never empty the track.
+            if (state.framing.clips.length <= 1) return state;
+            const clips = state.framing.clips.filter((c) => c.id !== action.id);
+            if (clips.length === state.framing.clips.length) return state;
+            return withHistory({ ...state.framing, clips });
+        }
+        case 'CUT_SOURCE_RANGE': {
+            // Remove one or more SOURCE ranges (transcript word-cut / speech
+            // cleanup): split the owning clip(s) at the boundaries and drop the
+            // covered middles. Batched into ONE history entry.
+            const ranges = action.ranges ?? [];
+            if (ranges.length === 0) return state;
+            const before = totalClipSource(state.framing.clips);
+            let clips = state.framing.clips;
+            for (const r of ranges) clips = cutRangeFromClips(clips, r.startFrame, r.endFrame);
+            if (clips.length === 0) return state; // refuse cutting everything
+            if (totalClipSource(clips) === before) return state; // nothing removed
+            return withHistory({ ...state.framing, clips });
         }
         case 'SET_TRANSITIONS':
             return withHistory({ ...state.framing, transitions: { ...state.framing.transitions, ...action.patch } });
@@ -214,32 +228,32 @@ export const editorReducer = (state, action) => {
             // Tracker click: in multi-panel layouts, reassign the clicked
             // panel; otherwise (fill/fit/manual) become a fill that follows
             // the clicked person
-            const segments = state.framing.segments.map((s) => {
-                if (s.id !== action.segmentId) return s;
+            const clips = state.framing.clips.map((c) => {
+                if (c.id !== action.clipId) return c;
                 // Multi-panel + screenshare/gameplay reassign the clicked panel
                 // in place; only true single-crop layouts convert to a tracked fill
-                if (['split', 'three', 'four', 'screenshare', 'gameplay'].includes(s.layout) && !s.manualCrop) {
-                    const faceIds = [...(s.trackedFaceIds || [])];
+                if (['split', 'three', 'four', 'screenshare', 'gameplay'].includes(c.layout) && !c.manualCrop) {
+                    const faceIds = [...(c.trackedFaceIds || [])];
                     // Fill any holes before the assigned panel so the array is
                     // dense — a sparse array serializes holes to null and fails
                     // schema validation.
                     for (let i = 0; i < action.panelIdx; i += 1) {
                         if (faceIds[i] === undefined) {
-                            faceIds[i] = s.trackedFaceIds?.[0] ?? action.trackId;
+                            faceIds[i] = c.trackedFaceIds?.[0] ?? action.trackId;
                         }
                     }
                     faceIds[action.panelIdx] = action.trackId;
-                    return { ...s, trackedFaceIds: faceIds };
+                    return { ...c, trackedFaceIds: faceIds };
                 }
                 return {
-                    ...s,
+                    ...c,
                     layout: 'fill',
                     trackedFaceIds: [action.trackId],
-                    cameraKeyframes: action.cameraKeyframes || s.cameraKeyframes,
+                    cameraKeyframes: action.cameraKeyframes || c.cameraKeyframes,
                     manualCrop: null,
                 };
             });
-            return withHistory({ ...state.framing, segments });
+            return withHistory({ ...state.framing, clips });
         }
         case 'UNDO': {
             if (state.past.length === 0) return state;
@@ -281,19 +295,19 @@ export default function useEditorState() {
 }
 
 /**
- * Face tracks visible inside a segment, sorted by coverage (how much of the
- * segment they span). Used to decide which multi-person layouts are possible
- * and to offer panel assignments. Samples are recorded every ~2 source frames.
+ * Face tracks visible inside a clip, sorted by coverage (how much of the clip's
+ * source range they span). Used to decide which multi-person layouts are
+ * possible and to offer panel assignments. Samples are recorded every ~2 frames.
  */
-export function tracksInSegment(framing, segment) {
-    if (!framing || !segment) return [];
-    const segLen = Math.max(1, segment.endFrame - segment.startFrame);
+export function tracksInClip(framing, clip) {
+    if (!framing || !clip) return [];
+    const len = Math.max(1, clip.sourceEnd - clip.sourceStart);
     return framing.faceTracks
         .map((t) => {
-            const inSeg = t.samples.filter(
-                (s) => s.frame >= segment.startFrame && s.frame < segment.endFrame
+            const inClip = t.samples.filter(
+                (s) => s.frame >= clip.sourceStart && s.frame < clip.sourceEnd
             );
-            return { id: t.id, coverage: inSeg.length / (segLen / 2) };
+            return { id: t.id, coverage: inClip.length / (len / 2) };
         })
         .filter((t) => t.coverage > 0.1)
         .sort((a, b) => b.coverage - a.coverage);
@@ -321,12 +335,12 @@ export const FACE_PANEL_INDICES = {
  * a segment (used when the user picks a different person to track). Mirrors
  * the pipeline's output shape; smoothing comes from smoothedFaceRect.
  */
-export function buildFillKeyframes(framing, segment, trackId) {
+export function buildFillKeyframes(framing, clip, trackId) {
     const track = framing.faceTracks.find((t) => t.id === trackId);
     if (!track) return [];
     const { width: srcW, height: srcH } = framing.source;
     const keyframes = [];
-    for (let frame = segment.startFrame; frame < segment.endFrame; frame += 3) {
+    for (let frame = clip.sourceStart; frame < clip.sourceEnd; frame += 3) {
         const face = smoothedFaceRect(track, frame);
         if (!face) continue;
         const crop = cropForFace(face, 9 / 16, srcW, srcH);
@@ -341,91 +355,64 @@ export function buildFillKeyframes(framing, segment, trackId) {
     return keyframes;
 }
 
-/**
- * Fold one or more new cut ranges into the existing cut list. Clamps each
- * addition to [clipIn, clipOut], drops ranges shorter than 2 frames, merges
- * any cuts that overlap or sit within 2 frames of each other, and refuses
- * (returns null) if the result would leave fewer than 10 kept frames so a cut
- * can never consume the whole clip. Shared by ADD_CUT and ADD_CUTS so both
- * paths use identical merge/clamp logic.
- */
-function mergeCuts(existing, additions, clipIn, clipOut) {
-    const clamped = (additions ?? [])
-        .map((c) => ({
-            startFrame: Math.max(c.startFrame, clipIn),
-            endFrame: Math.min(c.endFrame, clipOut),
-        }))
-        .filter((c) => c.endFrame - c.startFrame >= 2);
-    if (clamped.length === 0) return null;
-    const merged = [];
-    let cur = null;
-    for (const c of [...existing, ...clamped].sort((a, b) => a.startFrame - b.startFrame)) {
-        if (cur && c.startFrame <= cur.endFrame + 2) {
-            cur.endFrame = Math.max(cur.endFrame, c.endFrame);
-        } else {
-            if (cur) merged.push(cur);
-            cur = { startFrame: c.startFrame, endFrame: c.endFrame };
-        }
-    }
-    if (cur) merged.push(cur);
-    // never let cuts consume the whole clip
-    const kept = clipOut - clipIn - merged.reduce((acc, c) => acc + (c.endFrame - c.startFrame), 0);
-    if (kept < 10) return null;
-    return merged;
+/** Total source frames covered by the clip list (used to detect no-op cuts). */
+function totalClipSource(clips) {
+    return clips.reduce((acc, c) => acc + (c.sourceEnd - c.sourceStart), 0);
 }
 
 /**
- * Re-fit segments to new clip bounds: drop segments fully outside, clamp the
- * survivors, stretch the edges so coverage is exactly [clipIn, clipOut].
+ * Remove a SOURCE range [a, b) from a clip list: split each overlapping clip at
+ * the boundaries and drop the covered middle. Preserves order; the first
+ * survivor of a split keeps the original id (selection stability), the second
+ * gets a fresh one. Clips touched by nothing pass through unchanged.
  */
-function fitSegmentsToBounds(segments, clipIn, clipOut) {
-    let segs = segments
-        .filter((s) => s.endFrame > clipIn && s.startFrame < clipOut)
-        .map((s) => ({
-            ...s,
-            startFrame: Math.max(s.startFrame, clipIn),
-            endFrame: Math.min(s.endFrame, clipOut),
-        }));
-    if (segs.length === 0) {
-        segs = [{
-            id: 'seg-trim',
-            startFrame: clipIn,
-            endFrame: clipOut,
-            layout: 'fit',
-            trackedFaceIds: [],
-            cameraKeyframes: [],
-            manualCrop: null,
-        }];
-    } else {
-        segs[0] = { ...segs[0], startFrame: clipIn };
-        segs[segs.length - 1] = { ...segs[segs.length - 1], endFrame: clipOut };
+function cutRangeFromClips(clips, a, b) {
+    if (b <= a) return clips;
+    const next = [];
+    for (const c of clips) {
+        const lo = Math.max(c.sourceStart, a);
+        const hi = Math.min(c.sourceEnd, b);
+        if (hi <= lo) { next.push(c); continue; } // no overlap
+        const survivors = [];
+        if (lo - c.sourceStart >= MIN_CLIP_LEN) survivors.push({ ...c, sourceEnd: lo });
+        if (c.sourceEnd - hi >= MIN_CLIP_LEN) survivors.push({ ...c, sourceStart: hi });
+        survivors.forEach((s, i) => next.push(i === 0 ? { ...s, id: c.id } : { ...s, id: newClipId() }));
     }
-    return segs;
+    return next;
 }
 
 /**
- * Upgrade any loaded framing (v1 or partial v2) to a fully-populated v2 shape
- * so the reducer, composition, and validator can assume the EDL fields exist.
+ * Upgrade any loaded framing to v3: an ordered clips[] main track. v1/v2
+ * (contiguous segments + cuts) are converted via framingToClips so the kept
+ * content and order are preserved exactly. Legacy authority (segments, cuts,
+ * clip in/out) is dropped to avoid a second source of truth for "what plays".
  */
 export function normalizeFraming(framing) {
+    // captionsOriginFrame is the immutable caption anchor. New clips carry it;
+    // older files predate it, so default to the (pre-trim) clipInFrame so later
+    // edits don't shift captions. Computed BEFORE clipInFrame is dropped.
+    const captionsOriginFrame = framing.captionsOriginFrame ?? framing.clipInFrame ?? 0;
+    const clips =
+        Array.isArray(framing.clips) && framing.clips.length > 0
+            ? framing.clips
+            : framingToClips(framing);
+
+    // Drop legacy fields (segments/cuts/clipIn/clipOut) — clips is authoritative.
+    const { segments, cuts, clipInFrame, clipOutFrame, ...rest } = framing;
+    void segments; void cuts; void clipInFrame; void clipOutFrame;
+
     return {
-        ...framing,
-        version: 2,
+        ...rest,
+        version: 3,
+        clips,
+        captionsOriginFrame,
         // Output canvas dimensions (clip aspect ratio). Older clips predate the
         // field and were all 9:16, so default to 1080x1920.
         outputWidth: framing.outputWidth ?? 1080,
         outputHeight: framing.outputHeight ?? 1920,
-        clipInFrame: framing.clipInFrame ?? 0,
-        clipOutFrame: framing.clipOutFrame ?? framing.source.durationFrames,
-        // Pin the caption origin at load time. New clips already carry it from
-        // the backend; older files predate the field, so default to the current
-        // (not-yet-trimmed) clipInFrame so subsequent trims don't shift captions.
-        captionsOriginFrame: framing.captionsOriginFrame ?? framing.clipInFrame ?? 0,
-        cuts: framing.cuts ?? [],
         subtitles: framing.subtitles ?? null,
-        // True once captions have been explicitly enabled/disabled (by the user
-        // or the upload-time auto-enable), so we don't re-auto-enable a clip the
-        // user deliberately turned captions off on.
+        // True once captions have been explicitly enabled/disabled, so we don't
+        // re-auto-enable a clip the user deliberately turned captions off on.
         captionsInitialized: framing.captionsInitialized ?? false,
         textOverlays: framing.textOverlays ?? [],
         music: framing.music ?? null,

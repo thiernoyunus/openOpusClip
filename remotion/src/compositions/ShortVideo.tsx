@@ -25,13 +25,16 @@ export const ShortVideo: React.FC<Record<string, unknown>> = (rawProps) => {
     rawProps as unknown as ShortVideoProps;
   const { fps } = useVideoConfig();
 
-  // Caption words are stored in ms relative to the clip start (clipInFrame).
-  // With framing v2 EDL cuts, remap them onto the output timeline and drop
-  // words whose content was cut out.
+  // Caption words are stored in ms relative to captionsOriginFrame. Remap them
+  // onto the output timeline (handles trims/cuts/reorder/duplication), dropping
+  // words whose content was removed. Memoized so the O(clips×words) walk doesn't
+  // re-run every playback frame.
+  const remapped = React.useMemo(
+    () => (subtitles && framing ? remapCaptions(subtitles.captions, framing, fps) : null),
+    [subtitles, framing, fps]
+  );
   const effectiveSubtitles =
-    subtitles && framing
-      ? { ...subtitles, captions: remapCaptions(subtitles.captions, framing, fps) }
-      : subtitles;
+    subtitles && remapped ? { ...subtitles, captions: remapped } : subtitles;
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>

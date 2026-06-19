@@ -1,15 +1,17 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 import type { FramingConfig, TextOverlay } from "../lib/types";
-import { sourceToOutput } from "../lib/edl";
+import { sourceRangeToOutputWindows } from "../lib/edl";
 import { getFontStack } from "../lib/fonts";
 
 const SIZE_PX: Record<TextOverlay["size"], number> = { S: 44, M: 64, L: 92 };
 
 /**
  * Up to 5 free-positioned text overlays. Overlay times are stored in SOURCE
- * frames (like cuts) and mapped onto the output timeline through the EDL, so
- * they stay anchored to their content across trims and cuts.
+ * frames and mapped onto the output timeline through the EDL, so they stay
+ * anchored to their content across trims/cuts/reorder. A source span can land
+ * in several output windows (reordered/duplicated clips), so each overlay is
+ * shown in every window the current frame falls into.
  */
 export const TextOverlays: React.FC<{ framing: FramingConfig }> = ({
   framing,
@@ -21,11 +23,10 @@ export const TextOverlays: React.FC<{ framing: FramingConfig }> = ({
 
   return (
     <AbsoluteFill style={{ pointerEvents: "none" }}>
-      {overlays.map((o) => {
-        const start = sourceToOutput(framing, o.startFrame, fps, true);
-        const end = sourceToOutput(framing, o.endFrame, fps);
-        if (start === null || end === null) return null;
-        if (frame < start || frame >= end) return null;
+      {overlays.flatMap((o) => {
+        const windows = sourceRangeToOutputWindows(framing, o.startFrame, o.endFrame, fps);
+        const visible = windows.some((w) => frame >= w.outStart && frame < w.outEnd);
+        if (!visible) return [];
         return (
           <div
             key={o.id}

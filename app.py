@@ -1023,11 +1023,62 @@ def _crop_rect_valid(rect) -> bool:
             return False
     return True
 
+def _validate_framing_features(framing: dict) -> Optional[str]:
+    """Optional feature payloads shared by all framing versions — light shape
+    checks (the composition tolerates missing fields, so only reject obviously
+    malformed types)."""
+    for key in ("textOverlays", "broll"):
+        if key in framing and not isinstance(framing[key], list):
+            return f"{key} must be a list"
+    if len(framing.get("textOverlays", [])) > 5:
+        return "at most 5 text overlays are allowed"
+    if len(framing.get("broll", [])) > 3:
+        return "at most 3 b-roll inserts are allowed"
+    music = framing.get("music")
+    if music is not None and not isinstance(music, dict):
+        return "music must be an object or null"
+    transitions = framing.get("transitions")
+    if transitions is not None and not isinstance(transitions, dict):
+        return "transitions must be an object"
+    subtitles = framing.get("subtitles")
+    if subtitles is not None and not isinstance(subtitles, dict):
+        return "subtitles must be an object or null"
+    return None
+
+def _validate_framing_clips(framing: dict, duration: int) -> Optional[str]:
+    """v3: the main track is an ordered clips[] list (decoupled from source order)."""
+    clips = framing.get("clips")
+    if not isinstance(clips, list) or not clips:
+        return "clips must be a non-empty list"
+    for i, clip in enumerate(clips):
+        if not isinstance(clip, dict):
+            return f"clips[{i}] must be an object"
+        if clip.get("layout") not in FRAMING_LAYOUTS:
+            return f"clips[{i}].layout must be one of {sorted(FRAMING_LAYOUTS)}"
+        start, end = clip.get("sourceStart"), clip.get("sourceEnd")
+        if isinstance(start, bool) or isinstance(end, bool) or not isinstance(start, int) or not isinstance(end, int):
+            return f"clips[{i}] sourceStart/sourceEnd must be integers"
+        if not (0 <= start < end <= duration):
+            return f"clips[{i}] source range is out of bounds"
+        tracked = clip.get("trackedFaceIds")
+        if not isinstance(tracked, list) or not all(isinstance(x, int) and not isinstance(x, bool) for x in tracked):
+            return f"clips[{i}].trackedFaceIds must be a list of integers"
+        keyframes = clip.get("cameraKeyframes")
+        if not isinstance(keyframes, list):
+            return f"clips[{i}].cameraKeyframes must be a list"
+        for kf in keyframes:
+            if not _crop_rect_valid(kf):
+                return f"clips[{i}] has an out-of-bounds camera keyframe"
+        manual = clip.get("manualCrop")
+        if manual is not None and not _crop_rect_valid(manual):
+            return f"clips[{i}].manualCrop is out of bounds"
+    return None
+
 def _validate_framing(framing: dict) -> Optional[str]:
     """Returns an error message, or None if the framing config is valid."""
     if not isinstance(framing, dict):
         return "Framing must be an object"
-    if framing.get("version") not in (1, 2):
+    if framing.get("version") not in (1, 2, 3):
         return "Unsupported framing version"
     source = framing.get("source")
     if not isinstance(source, dict):
@@ -1035,18 +1086,30 @@ def _validate_framing(framing: dict) -> Optional[str]:
     for key in ("file", "fps", "width", "height", "durationFrames"):
         if key not in source:
             return f"source.{key} is required"
-
-    # v2 EDL fields: playable content = [clipInFrame, clipOutFrame] minus cuts
     duration = source["durationFrames"]
+    if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
+        return "source.durationFrames must be a positive integer"
+
+    origin = framing.get("captionsOriginFrame")
+    if origin is not None and (isinstance(origin, bool) or not isinstance(origin, int) or not (0 <= origin <= duration)):
+        return "captionsOriginFrame out of range"
+    if not isinstance(framing.get("faceTracks"), list):
+        return "faceTracks must be a list"
+
+    # v3: ordered clip list is the source of truth (no contiguity/coverage rules).
+    if framing.get("version") == 3 or isinstance(framing.get("clips"), list):
+        err = _validate_framing_clips(framing, duration)
+        if err:
+            return err
+        return _validate_framing_features(framing)
+
+    # --- v1/v2: contiguous, source-ordered segments + cuts ---
     clip_in = framing.get("clipInFrame", 0)
     clip_out = framing.get("clipOutFrame", duration)
     if not isinstance(clip_in, int) or not isinstance(clip_out, int):
         return "clipInFrame/clipOutFrame must be integers"
     if not (0 <= clip_in < clip_out <= duration):
         return "clip bounds out of range"
-    origin = framing.get("captionsOriginFrame")
-    if origin is not None and (isinstance(origin, bool) or not isinstance(origin, int) or not (0 <= origin <= duration)):
-        return "captionsOriginFrame out of range"
     cuts = framing.get("cuts", [])
     if not isinstance(cuts, list):
         return "cuts must be a list"
@@ -1093,28 +1156,8 @@ def _validate_framing(framing: dict) -> Optional[str]:
             return f"segments[{i}].manualCrop is out of bounds"
     if prev_end != clip_out:
         return "segments must cover the clip bounds exactly"
-    if not isinstance(framing.get("faceTracks"), list):
-        return "faceTracks must be a list"
 
-    # Optional v2 feature payloads — light shape checks (composition tolerates
-    # missing fields, so only reject obviously malformed types)
-    for key in ("textOverlays", "broll"):
-        if key in framing and not isinstance(framing[key], list):
-            return f"{key} must be a list"
-    if len(framing.get("textOverlays", [])) > 5:
-        return "at most 5 text overlays are allowed"
-    if len(framing.get("broll", [])) > 3:
-        return "at most 3 b-roll inserts are allowed"
-    music = framing.get("music")
-    if music is not None and not isinstance(music, dict):
-        return "music must be an object or null"
-    transitions = framing.get("transitions")
-    if transitions is not None and not isinstance(transitions, dict):
-        return "transitions must be an object"
-    subtitles = framing.get("subtitles")
-    if subtitles is not None and not isinstance(subtitles, dict):
-        return "subtitles must be an object or null"
-    return None
+    return _validate_framing_features(framing)
 
 @app.get("/api/clips/{job_id}/{clip_index}/framing")
 async def get_clip_framing(job_id: str, clip_index: int):

@@ -165,6 +165,24 @@ export interface FramingSegment {
   manualCrop: CropRect | null; // user override; wins over keyframes/tracks
 }
 
+/**
+ * v3 timeline clip — the main video track is an ORDERED list of these; the
+ * array index is the playback order, decoupled from source time (so clips can
+ * be reordered/duplicated/inserted). A clip is a slice of the source video
+ * [sourceStart, sourceEnd) carrying the same framing decision a v2 segment did.
+ * cameraKeyframes[].frame stay ABSOLUTE source frames (a clip reads the subset
+ * that falls inside its range).
+ */
+export interface TimelineClip {
+  id: string;
+  sourceStart: number; // SOURCE frames, 0 <= sourceStart < sourceEnd <= source.durationFrames
+  sourceEnd: number; // exclusive
+  layout: FramingLayout;
+  trackedFaceIds: number[]; // one per panel, reading order
+  cameraKeyframes: CameraKeyframe[];
+  manualCrop: CropRect | null;
+}
+
 export interface FramingSource {
   file: string;
   fps: number;
@@ -220,12 +238,22 @@ export interface BrollItem {
 export interface FramingConfig {
   version: number;
   source: FramingSource;
-  segments: FramingSegment[];
   faceTracks: FaceTrack[];
+  /**
+   * v3 main track: an ordered list of clips. When present this is the single
+   * source of truth for what plays and in what order. The editor migrates v1/v2
+   * files to this on load (see useEditorState.normalizeFraming).
+   */
+  clips?: TimelineClip[];
+  /**
+   * v1/v2 legacy: contiguous, source-ordered layout segments. Optional now —
+   * v3 files omit it. Kept so old saved files still load and migrate.
+   */
+  segments?: FramingSegment[];
   /**
    * v2 (EDL): playable content = [clipInFrame, clipOutFrame] minus cuts.
    * v1 files omit these; consumers default to 0..durationFrames with no cuts.
-   * Segments must stay contiguous and cover exactly [clipInFrame, clipOutFrame].
+   * v3: legacy/back-compat only — superseded by clips[]; not consulted by EDL math.
    */
   clipInFrame?: number;
   clipOutFrame?: number;
@@ -356,6 +384,16 @@ export const framingSegmentSchema = z.object({
   manualCrop: cropRectSchema.nullable(),
 });
 
+export const timelineClipSchema = z.object({
+  id: z.string(),
+  sourceStart: z.number().int().min(0),
+  sourceEnd: z.number().int().positive(),
+  layout: z.enum(["fill", "fit", "split", "three", "four", "screenshare", "gameplay"]),
+  trackedFaceIds: z.array(z.number().int()),
+  cameraKeyframes: z.array(cameraKeyframeSchema),
+  manualCrop: cropRectSchema.nullable(),
+});
+
 export const sourceCutSchema = z.object({
   startFrame: z.number().int().min(0),
   endFrame: z.number().int().positive(),
@@ -402,7 +440,12 @@ export const framingConfigSchema = z.object({
     height: z.number().int().positive(),
     durationFrames: z.number().int().positive(),
   }),
-  segments: z.array(framingSegmentSchema),
+  // v3 main track. MUST be in the schema: the render path enforces this schema
+  // via Remotion selectComposition, and zod strips unknown keys — an unlisted
+  // `clips` would be dropped and v3 renders would come out empty.
+  clips: z.array(timelineClipSchema).optional(),
+  // v1/v2 legacy layout segments — optional so v3 files (which omit it) validate
+  segments: z.array(framingSegmentSchema).optional(),
   faceTracks: z.array(faceTrackSchema),
   // v2 EDL + feature payloads — optional so v1 files still validate
   clipInFrame: z.number().int().min(0).optional(),
