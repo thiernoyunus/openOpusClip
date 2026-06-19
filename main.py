@@ -660,7 +660,21 @@ def download_youtube_video(url, output_dir="."):
         print(f"🧩 yt-dlp JavaScript runtime enabled: node ({node_path})")
     else:
         print("⚠️ Node.js was not found on PATH. YouTube may hide some high-quality formats.")
-    
+
+    # YouTube throttles streams whose `n` signature challenge isn't solved, which
+    # truncates large downloads ("X bytes read, Y more expected. Giving up..."),
+    # not a 429 ban. yt-dlp's EJS remote solver fixes it, but it needs a JS
+    # runtime (node) to execute the downloaded solver. Override the component
+    # spec — or disable it (empty) — with YTDLP_REMOTE_COMPONENTS.
+    remote_components = set()
+    if node_path:
+        rc_env = os.environ.get("YTDLP_REMOTE_COMPONENTS", "ejs:github")
+        remote_components = {c.strip() for c in rc_env.split(",") if c.strip()}
+        if remote_components:
+            print(f"🔓 yt-dlp n-challenge solver enabled: {', '.join(sorted(remote_components))}")
+    elif os.environ.get("YTDLP_REMOTE_COMPONENTS"):
+        print("⚠️ YTDLP_REMOTE_COMPONENTS is set but no JS runtime (node) was found; the n-challenge solver can't run.")
+
     # Let yt-dlp use its current default YouTube clients. Forcing older clients
     # can hide high-quality formats and fall back to 360p format 18.
     _COMMON_YDL_OPTS = {
@@ -675,6 +689,7 @@ def download_youtube_video(url, output_dir="."):
         'nocheckcertificate': True,
         'cachedir': False,
         'js_runtimes': js_runtimes,
+        'remote_components': remote_components,
         'http_headers': {
             'User-Agent': (
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
