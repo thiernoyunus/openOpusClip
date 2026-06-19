@@ -72,26 +72,11 @@ export const editorReducer = (state, action) => {
             return withHistory({ ...state.framing, segments });
         }
         case 'SET_ASPECT': {
-            // Change the clip's output ratio and re-derive aspect-locked crops:
-            // fill keyframes are regenerated from the face track at the new aspect,
-            // manual crops are re-cropped around their center. Panel/fit layouts
-            // recompute from face tracks/source at render time, so they pass through.
+            // Just set the output ratio. Non-9:16 ignores the per-segment layouts
+            // at render time (ReframedVideo), so the 9:16 framing is preserved and
+            // restored if the user switches back — no crop recompute needed here.
             const { outputWidth, outputHeight } = action;
-            const aspect = outputWidth / outputHeight;
-            const { width: srcW, height: srcH } = state.framing.source;
-            const segments = state.framing.segments.map((s) => {
-                let { cameraKeyframes, manualCrop } = s;
-                if (manualCrop) {
-                    manualCrop = recropToAspect(manualCrop, aspect, srcW, srcH);
-                } else if (s.layout === 'fill' && cameraKeyframes?.length) {
-                    const trackId = s.trackedFaceIds?.[0];
-                    if (trackId != null) {
-                        cameraKeyframes = buildFillKeyframes(state.framing, s, trackId, aspect);
-                    }
-                }
-                return { ...s, cameraKeyframes, manualCrop };
-            });
-            return withHistory({ ...state.framing, outputWidth, outputHeight, segments });
+            return withHistory({ ...state.framing, outputWidth, outputHeight });
         }
         case 'SET_SUBTITLES': {
             // Caption config lives on the framing object (optional key) so it
@@ -519,21 +504,4 @@ export function centerCropRect(panelAspect, srcW, srcH) {
         w: cropWpx / srcW,
         h: cropHpx / srcH,
     };
-}
-
-/**
- * Re-crop an existing normalized crop to a new aspect, preserving its center.
- * Keeps vertical coverage (the crop's height) and adjusts width for the new
- * aspect — used when switching a clip's aspect ratio so manual crops follow.
- */
-export function recropToAspect(crop, aspect, srcW, srcH) {
-    const cxPx = (crop.x + crop.w / 2) * srcW;
-    const cyPx = (crop.y + crop.h / 2) * srcH;
-    let cropHpx = crop.h * srcH;
-    let cropWpx = cropHpx * aspect;
-    if (cropWpx > srcW) { cropWpx = srcW; cropHpx = cropWpx / aspect; }
-    if (cropHpx > srcH) { cropHpx = srcH; cropWpx = cropHpx * aspect; }
-    const leftPx = Math.min(Math.max(cxPx - cropWpx / 2, 0), srcW - cropWpx);
-    const topPx = Math.min(Math.max(cyPx - cropHpx / 2, 0), srcH - cropHpx);
-    return { x: leftPx / srcW, y: topPx / srcH, w: cropWpx / srcW, h: cropHpx / srcH };
 }

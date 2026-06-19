@@ -131,7 +131,11 @@ function LayoutPanel({ framing, selectedIds, dispatch, sourceUrl }) {
 
             <div className="p-3">
                 <h3 className="text-[11px] font-semibold text-fg uppercase tracking-wide mb-1">Layout</h3>
-                {!primary ? (
+                {curAspectId !== '9:16' ? (
+                    <p className="text-xs text-muted mt-2">
+                        Layout options apply to 9:16 only. {curAspectId === '16:9' ? 'At 16:9 the full frame is shown.' : 'Other ratios crop to the active speaker automatically.'}
+                    </p>
+                ) : !primary ? (
                     <p className="text-xs text-muted mt-2">
                         Select a segment in the timeline to change its framing.
                     </p>
