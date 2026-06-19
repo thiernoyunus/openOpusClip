@@ -2,11 +2,12 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+COPY dashboard/package.json dashboard/package-lock.json* ./
 
 RUN npm install
 
-COPY . .
+COPY dashboard/ .
+COPY remotion/src /remotion/src
 
 EXPOSE 5173
 
