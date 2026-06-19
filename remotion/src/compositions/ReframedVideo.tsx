@@ -379,6 +379,42 @@ const RangeContent: React.FC<{
     );
   }
 
+  // Non-9:16 outputs don't need the per-segment layout machinery (fill/split/
+  // fit exist to fit a wide scene into a tall frame). Show the source as-is:
+  // full frame when the output is as wide as the source (16:9), otherwise a
+  // single crop tracking the active speaker (1:1 / 4:5). The segment's original
+  // 9:16 layout is left untouched, so switching back to 9:16 restores it.
+  const is916 = Math.abs(width / height - 9 / 16) < 0.01;
+  if (!is916) {
+    const outAspect = width / height;
+    const srcAspect = source.width / source.height;
+    let crop;
+    if (outAspect >= srcAspect - 1e-3) {
+      crop = { x: 0, y: 0, w: 1, h: 1 }; // full frame — nothing to crop
+    } else {
+      const trackId = segment.trackedFaceIds?.[0];
+      const track = trackId != null ? faceTracks.find((t) => t.id === trackId) : undefined;
+      const face = track ? smoothedFaceRect(track, sourceFrame) : null;
+      crop = face
+        ? cropForFace(face, outAspect, source.width, source.height)
+        : centerCrop(outAspect, source.width, source.height);
+    }
+    return (
+      <AbsoluteFill style={{ backgroundColor: "#000" }}>
+        <CroppedVideo
+          src={src}
+          crop={crop}
+          panel={{ left: 0, top: 0, width, height }}
+          srcW={source.width}
+          srcH={source.height}
+          muted={false}
+          trimBefore={trimBefore}
+          volume={originalVolume}
+        />
+      </AbsoluteFill>
+    );
+  }
+
   // Manual crop always wins, regardless of layout
   if (segment.manualCrop) {
     return (

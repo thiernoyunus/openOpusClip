@@ -71,6 +71,13 @@ export const editorReducer = (state, action) => {
             );
             return withHistory({ ...state.framing, segments });
         }
+        case 'SET_ASPECT': {
+            // Just set the output ratio. Non-9:16 ignores the per-segment layouts
+            // at render time (ReframedVideo), so the 9:16 framing is preserved and
+            // restored if the user switches back — no crop recompute needed here.
+            const { outputWidth, outputHeight } = action;
+            return withHistory({ ...state.framing, outputWidth, outputHeight });
+        }
         case 'SET_SUBTITLES': {
             // Caption config lives on the framing object (optional key) so it
             // rides the existing save/export paths. null disables captions.
@@ -321,15 +328,17 @@ export const FACE_PANEL_INDICES = {
  * a segment (used when the user picks a different person to track). Mirrors
  * the pipeline's output shape; smoothing comes from smoothedFaceRect.
  */
-export function buildFillKeyframes(framing, segment, trackId) {
+export function buildFillKeyframes(framing, segment, trackId, aspect) {
     const track = framing.faceTracks.find((t) => t.id === trackId);
     if (!track) return [];
     const { width: srcW, height: srcH } = framing.source;
+    // Crop aspect follows the clip's output ratio (defaults to 9:16).
+    const ar = aspect ?? (framing.outputWidth ?? 1080) / (framing.outputHeight ?? 1920);
     const keyframes = [];
     for (let frame = segment.startFrame; frame < segment.endFrame; frame += 3) {
         const face = smoothedFaceRect(track, frame);
         if (!face) continue;
-        const crop = cropForFace(face, 9 / 16, srcW, srcH);
+        const crop = cropForFace(face, ar, srcW, srcH);
         keyframes.push({
             frame,
             x: Number(crop.x.toFixed(4)),

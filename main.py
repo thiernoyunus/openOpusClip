@@ -823,8 +823,15 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
     
     # --- New Strategy: Per-Scene Analysis ---
     print("\n   🤖 Step 3: Analyzing Scenes for Strategy (Single vs Group)...")
-    scene_strategies = analyze_scenes_strategy(input_video, scenes)
-    # scene_strategies is a list of 'TRACK' or 'General' corresponding to scenes
+    if aspect_ratio != "9:16":
+        # GENERAL/SPLIT layouts exist to fit a wide scene into a tall 9:16 frame.
+        # Other ratios don't need them: a single tracked fill keeps the speaker
+        # framed, and for 16:9 the crop fills the width so it's the full frame.
+        print(f"      Aspect {aspect_ratio} ≠ 9:16 → single fill for all scenes (no GENERAL/SPLIT).")
+        scene_strategies = ['TRACK'] * len(scenes)
+    else:
+        scene_strategies = analyze_scenes_strategy(input_video, scenes)
+    # scene_strategies is a list of 'TRACK' / 'GENERAL' / 'SPLIT' per scene
     
     print("\n   ✂️ Step 4: Processing video frames...")
     
