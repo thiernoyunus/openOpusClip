@@ -29,7 +29,15 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # Default to 1 if not set, but user can set higher for powerful servers
 MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "5"))
 MAX_FILE_SIZE_MB = 2048  # 2GB limit
-JOB_RETENTION_SECONDS = 3600  # 1 hour retention
+# Output projects are kept until the user deletes them by default. Set
+# JOB_RETENTION_SECONDS > 0 to auto-purge finished projects older than that many
+# seconds (0 / unset = permanent). Raw uploads are transient inputs and still get
+# cleaned on their own (shorter) TTL.
+JOB_RETENTION_SECONDS = int(os.environ.get("JOB_RETENTION_SECONDS", "0"))
+UPLOAD_RETENTION_SECONDS = int(os.environ.get("UPLOAD_RETENTION_SECONDS", "3600"))
+# Shared subdirectories that live inside OUTPUT_DIR but are NOT projects (e.g. the
+# thumbnail studio's "thumbnails" dir). Never auto-purged or deletable as a job.
+RESERVED_OUTPUT_DIRS = {"thumbnails"}
 DISABLE_YOUTUBE_URL = os.environ.get("DISABLE_YOUTUBE_URL", "false").lower() in ("1", "true", "yes")
 
 # Application State
@@ -101,47 +109,94 @@ def _attach_editor_urls(clip: dict, job_id: str, output_dir: str, base_name: str
     if os.path.exists(os.path.join(output_dir, framing_filename)):
         clip['framing_url'] = f"/videos/{job_id}/{framing_filename}"
 
+def _safe_job_id(job_id: str) -> bool:
+    """A job id must be a single, non-reserved path segment (rmtree/IO safety)."""
+    return bool(job_id) and job_id not in (".", "..") and job_id not in RESERVED_OUTPUT_DIRS \
+        and "/" not in job_id and "\\" not in job_id and os.path.basename(job_id) == job_id
+
+def _persist_result(job_id: str) -> None:
+    """Snapshot a job's result to output/<job_id>/result.json so completed (and
+    edited) projects survive a server restart — get_status rehydrates from it.
+    Best-effort; never raises into the request path."""
+    try:
+        job = jobs.get(job_id)
+        if not job or 'result' not in job or not _safe_job_id(job_id):
+            return
+        out_dir = os.path.join(OUTPUT_DIR, job_id)
+        if not os.path.isdir(out_dir):
+            return
+        tmp = os.path.join(out_dir, "result.json.tmp")
+        with open(tmp, 'w') as f:
+            json.dump({"status": job.get('status', 'completed'), "result": job['result']}, f)
+        os.replace(tmp, os.path.join(out_dir, "result.json"))
+    except Exception:
+        pass
+
+def _load_persisted_result(job_id: str):
+    """Load a persisted result snapshot from disk, or None."""
+    if not _safe_job_id(job_id):
+        return None
+    path = os.path.join(OUTPUT_DIR, job_id, "result.json")
+    try:
+        if os.path.isfile(path):
+            with open(path) as f:
+                return json.load(f)
+    except Exception:
+        return None
+    return None
+
 async def cleanup_jobs():
-    """Background task to remove old jobs and files."""
+    """Background task to remove old raw uploads and (optionally) old projects.
+
+    Output projects are kept permanently unless JOB_RETENTION_SECONDS > 0; raw
+    uploads are always cleaned on UPLOAD_RETENTION_SECONDS since they're just the
+    transient input to a job.
+    """
     import time
-    print("🧹 Cleanup task started.")
+    if JOB_RETENTION_SECONDS > 0:
+        print(f"🧹 Cleanup task started (projects auto-purge after {JOB_RETENTION_SECONDS}s).")
+    else:
+        print("🧹 Cleanup task started (projects kept until deleted; only raw uploads are pruned).")
     while True:
         try:
             await asyncio.sleep(300) # Check every 5 minutes
             now = time.time()
-            
-            # Simple directory cleanup based on modification time
-            # Check OUTPUT_DIR
-            for job_id in os.listdir(OUTPUT_DIR):
-                job_path = os.path.join(OUTPUT_DIR, job_id)
-                if os.path.isdir(job_path):
-                    if now - os.path.getmtime(job_path) > JOB_RETENTION_SECONDS:
-                        print(f"🧹 Purging old job: {job_id}")
-                        shutil.rmtree(job_path, ignore_errors=True)
-                        if job_id in jobs:
-                            del jobs[job_id]
 
-            # Cleanup SaaSShorts jobs from memory
-            try:
-                saas_expired = [
-                    jid for jid, jdata in list(saas_jobs.items())
-                    if jdata.get("status") in ("completed", "failed")
-                    and jdata.get("output_dir")
-                    and os.path.isdir(jdata["output_dir"])
-                    and now - os.path.getmtime(jdata["output_dir"]) > JOB_RETENTION_SECONDS
-                ]
-                for jid in saas_expired:
-                    del saas_jobs[jid]
-            except NameError:
-                pass
+            # Output projects: only time-purge when a positive retention is set.
+            if JOB_RETENTION_SECONDS > 0:
+                for job_id in os.listdir(OUTPUT_DIR):
+                    if job_id in RESERVED_OUTPUT_DIRS:
+                        continue  # shared dir (e.g. thumbnails), not a project
+                    job_path = os.path.join(OUTPUT_DIR, job_id)
+                    if os.path.isdir(job_path):
+                        if now - os.path.getmtime(job_path) > JOB_RETENTION_SECONDS:
+                            print(f"🧹 Purging old job: {job_id}")
+                            shutil.rmtree(job_path, ignore_errors=True)
+                            if job_id in jobs:
+                                del jobs[job_id]
 
-            # Cleanup Uploads
-            for filename in os.listdir(UPLOAD_DIR):
-                file_path = os.path.join(UPLOAD_DIR, filename)
+                # Cleanup SaaSShorts jobs from memory
                 try:
-                    if now - os.path.getmtime(file_path) > JOB_RETENTION_SECONDS:
-                         os.remove(file_path)
-                except Exception: pass
+                    saas_expired = [
+                        jid for jid, jdata in list(saas_jobs.items())
+                        if jdata.get("status") in ("completed", "failed")
+                        and jdata.get("output_dir")
+                        and os.path.isdir(jdata["output_dir"])
+                        and now - os.path.getmtime(jdata["output_dir"]) > JOB_RETENTION_SECONDS
+                    ]
+                    for jid in saas_expired:
+                        del saas_jobs[jid]
+                except NameError:
+                    pass
+
+            # Cleanup raw uploads (transient inputs) on their own TTL.
+            if UPLOAD_RETENTION_SECONDS > 0:
+                for filename in os.listdir(UPLOAD_DIR):
+                    file_path = os.path.join(UPLOAD_DIR, filename)
+                    try:
+                        if now - os.path.getmtime(file_path) > UPLOAD_RETENTION_SECONDS:
+                             os.remove(file_path)
+                    except Exception: pass
 
         except Exception as e:
             print(f"⚠️ Cleanup error: {e}")
@@ -320,6 +375,7 @@ async def run_job(job_id, job_data):
                      _attach_editor_urls(clip, job_id, output_dir, base_name, i + 1)
 
                 jobs[job_id]['result'] = {'clips': clips, 'cost_analysis': cost_analysis}
+                _persist_result(job_id)  # snapshot so the project survives a restart
             else:
                  jobs[job_id]['status'] = 'failed'
                  jobs[job_id]['logs'].append("No metadata file generated.")
@@ -476,14 +532,47 @@ async def process_endpoint(
 @app.get("/api/status/{job_id}")
 async def get_status(job_id: str):
     if job_id not in jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
+        # Projects persist on disk; rehydrate a finished one whose in-memory
+        # state was lost (e.g. server restart) so it stays openable, not "expired".
+        # Populate `jobs` (not just return the snapshot) so follow-up edit
+        # endpoints — which gate on `job_id in jobs` — keep working on it.
+        snap = _load_persisted_result(job_id)
+        if snap is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        jobs[job_id] = {"status": snap.get("status", "completed"), "logs": [], "result": snap.get("result")}
+
     job = jobs[job_id]
     return {
         "status": job['status'],
         "logs": job['logs'],
         "result": job.get('result')
     }
+
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: str):
+    """Permanently delete a project: its output files + in-memory state. Projects
+    are kept until this is called (see cleanup_jobs / JOB_RETENTION_SECONDS)."""
+    # rmtree is destructive: only accept a plain, non-reserved single path
+    # segment, and verify the resolved path is really inside OUTPUT_DIR.
+    if not _safe_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job id")
+    out_root = os.path.abspath(OUTPUT_DIR)
+    job_path = os.path.abspath(os.path.join(OUTPUT_DIR, job_id))
+    if os.path.commonpath([out_root, job_path]) != out_root or job_path == out_root:
+        raise HTTPException(status_code=400, detail="Invalid job id")
+    # Don't delete a job that's still running — its worker would keep writing
+    # (re-creating the dir / crashing on jobs[job_id]). Let it finish first.
+    if jobs.get(job_id, {}).get('status') in ('queued', 'processing'):
+        raise HTTPException(status_code=409, detail="Project is still processing; try again once it finishes.")
+    removed = os.path.isdir(job_path)
+    if removed:
+        shutil.rmtree(job_path, ignore_errors=True)
+    jobs.pop(job_id, None)
+    try:
+        saas_jobs.pop(job_id, None)
+    except NameError:
+        pass
+    return {"success": True, "removed": removed}
 
 from editor import VideoEditor
 from subtitles import generate_srt, burn_subtitles, generate_srt_from_video
@@ -982,7 +1071,8 @@ async def add_subtitles(req: SubtitleRequest):
     # Update InMemory Jobs
     if req.clip_index < len(job['result']['clips']):
          job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
-    
+         _persist_result(req.job_id)  # keep the on-disk snapshot in sync with edits
+
     # Update Metadata on Disk (Persistence)
     try:
         if req.clip_index < len(clips):
@@ -1213,6 +1303,7 @@ async def apply_render(req: ApplyRenderRequest):
     job = jobs.get(req.job_id)
     if job and 'result' in job and req.clip_index < len(job['result'].get('clips', [])):
         job['result']['clips'][req.clip_index]['video_url'] = new_video_url
+        _persist_result(req.job_id)  # keep the on-disk snapshot in sync with edits
 
     return {"success": True, "new_video_url": new_video_url}
 
@@ -1299,7 +1390,8 @@ async def add_hook(req: HookRequest):
     # Update InMemory Jobs
     if req.clip_index < len(job['result']['clips']):
          job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
-    
+         _persist_result(req.job_id)  # keep the on-disk snapshot in sync with edits
+
     # Update Metadata on Disk
     try:
         if req.clip_index < len(clips):
