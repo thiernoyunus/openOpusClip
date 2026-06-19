@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Loader2, AlertCircle, LayoutGrid, Captions, Crosshair, Sparkles, Type, Music, Clapperboard } from 'lucide-react';
+import { Loader2, AlertCircle, LayoutGrid, Captions, Crosshair, Sparkles, Type, Music, Clapperboard, ChevronRight } from 'lucide-react';
 import { getApiUrl } from '../../config';
 import useEditorState, { defaultSubtitleConfig, loadDefaultCaptionStyle } from './useEditorState';
 import { outputDurationFrames, outputToSource } from '@remotion-src/lib/edl';
@@ -58,6 +58,9 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     const [exportProgress, setExportProgress] = useState(0);
     const [captions, setCaptions] = useState([]);
     const [activeTab, setActiveTab] = useState('layout'); // layout | captions
+    // Right tool panel is collapsed by default (max canvas space); a rail click
+    // opens it, clicking the active tool (or the header chevron) collapses it.
+    const [panelOpen, setPanelOpen] = useState(false);
     const [trackerOn, setTrackerOn] = useState(false);
     const playerRef = useRef(null);
 
@@ -144,6 +147,16 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         setActionError(message);
         setTimeout(() => setActionError(null), 6000);
     }, []);
+
+    // Rail click: collapse if it's the already-open tool, else open that tool.
+    const handleToolSelect = useCallback((id) => {
+        if (panelOpen && id === activeTab) {
+            setPanelOpen(false);
+        } else {
+            setActiveTab(id);
+            setPanelOpen(true);
+        }
+    }, [panelOpen, activeTab]);
 
     const saveFraming = useCallback(async () => {
         const res = await fetch(getApiUrl(`/api/clips/${jobId}/${index}/framing`), {
@@ -363,9 +376,23 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                             </div>
                         </div>
 
-                        {/* Tool panel (scroll body only — the tab strip moved
-                            into the vertical icon rail on the far right). */}
-                        <div className="w-[300px] shrink-0 border-l border-edge bg-surface flex flex-col min-h-0">
+                        {/* Tool panel — collapsed by default; opens from the
+                            rail. Header carries the tab label + a collapse chevron. */}
+                        {panelOpen && (
+                        <div className="w-[280px] shrink-0 border-l border-edge bg-surface flex flex-col min-h-0">
+                            <div className="flex items-center justify-between h-9 pl-3 pr-1.5 border-b border-edge shrink-0">
+                                <span className="text-[11px] font-semibold uppercase tracking-wide text-fg">
+                                    {(TABS.find((t) => t.id === activeTab) || {}).label}
+                                </span>
+                                <button
+                                    onClick={() => setPanelOpen(false)}
+                                    title="Collapse panel"
+                                    aria-label="Collapse panel"
+                                    className="p-1 rounded-md text-muted hover:text-fg hover:bg-white/5 transition-colors"
+                                >
+                                    <ChevronRight size={15} />
+                                </button>
+                            </div>
                             <div className="flex-1 overflow-y-auto custom-scrollbar">
                                 {activeTab === 'layout' && (
                                     <LayoutPanel
@@ -392,9 +419,15 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                 )}
                             </div>
                         </div>
+                        )}
 
-                        {/* Vertical icon-only rail (far right edge) */}
-                        <EditorToolRail tabs={TABS} activeId={activeTab} onSelect={setActiveTab} />
+                        {/* Vertical icon-only rail (far right edge). Clicking the
+                            active tool collapses the panel; any other opens it. */}
+                        <EditorToolRail
+                            tabs={TABS}
+                            activeId={panelOpen ? activeTab : null}
+                            onSelect={handleToolSelect}
+                        />
                     </div>
 
                     <EditorTimeline
