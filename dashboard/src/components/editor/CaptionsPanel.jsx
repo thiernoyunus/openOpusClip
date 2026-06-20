@@ -516,12 +516,25 @@ function CaptionsPanel({ framing, captions, dispatch }) {
                                 label="Emoji size"
                                 value={st.emojiSize ?? 1}
                                 min={0.5}
-                                max={2}
+                                max={4}
                                 step={0.1}
                                 fmt={(v) => `${Number(v).toFixed(1)}×`}
                                 onChange={(v) => setStyle({ emojiSize: v })}
                             />
                         </div>
+                        {/* Spacing only matters for above/below overlays. */}
+                        {(st.emojiPlacement ?? 'above-word') !== 'inline' &&
+                            (st.emojiPlacement ?? 'above-word') !== 'none' && (
+                            <RangeRow
+                                label="Emoji spacing"
+                                value={st.emojiGap ?? 0.2}
+                                min={0}
+                                max={1}
+                                step={0.05}
+                                fmt={(v) => `${Math.round(Number(v) * 100)}%`}
+                                onChange={(v) => setStyle({ emojiGap: v })}
+                            />
+                        )}
                     </div>
 
                     {/* Per-style tunables (e.g. typewriter/matrix speed) */}

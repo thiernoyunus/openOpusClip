@@ -78,8 +78,14 @@ function emojiStyle(
   const popScale = animation === "pop" ? 0.45 + p * 0.65 : 1;
   const bounceY = animation === "bounce" ? -Math.sin(p * Math.PI) * style.fontSize * 0.18 : 0;
   const floatY = animation === "float" ? Math.sin((frame - wordStartFrame) / 6) * style.fontSize * 0.06 : 0;
-  const anchor =
-    placement === "above-word" ? { bottom: "72%" } : { top: "72%" };
+  // Gap between the emoji and the caption word, scaled to the caption size so it
+  // reads the same across font sizes. Anchor the emoji's near edge to the word
+  // edge and push it away by the gap; with the matching transform-origin, larger
+  // emojis grow away from the text instead of overlapping it.
+  const gap = (style.emojiGap ?? 0.2) * style.fontSize;
+  const isAbove = placement === "above-word";
+  const anchor = isAbove ? { bottom: "100%" } : { top: "100%" };
+  const gapOffset = isAbove ? -gap : gap;
 
   return {
     position: "absolute",
@@ -88,8 +94,8 @@ function emojiStyle(
     fontSize: Math.round(style.fontSize * 0.82 * size),
     lineHeight: 1,
     opacity: p,
-    transform: `translate(-50%, ${(bounceY + floatY).toFixed(1)}px) scale(${popScale.toFixed(3)})`,
-    transformOrigin: "center",
+    transform: `translate(-50%, ${(gapOffset + bounceY + floatY).toFixed(1)}px) scale(${popScale.toFixed(3)})`,
+    transformOrigin: isAbove ? "center bottom" : "center top",
     WebkitTextStroke: 0,
     textShadow: "none",
     filter: "drop-shadow(0 3px 8px rgba(0,0,0,0.5))",

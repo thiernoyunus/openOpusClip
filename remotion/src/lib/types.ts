@@ -86,6 +86,12 @@ export interface SubtitleStyle {
   emojiAnimation?: SubtitleEmojiAnimation;
   /** Emoji size multiplier relative to caption text. Defaults to 1. */
   emojiSize?: number;
+  /**
+   * Gap between an above/below emoji and the caption word, as a fraction of the
+   * caption font size (0.2 = 20%). Larger values push the emoji further away.
+   * Defaults to 0.2.
+   */
+  emojiGap?: number;
 }
 
 export interface SubtitleConfig {
@@ -332,7 +338,8 @@ export const subtitleStyleSchema = z.object({
   glowIntensity: z.number().min(0).max(100).optional(),
   emojiPlacement: z.enum(["none", "above-word", "below-word", "inline"]).optional(),
   emojiAnimation: z.enum(["none", "pop", "bounce", "float"]).optional(),
-  emojiSize: z.number().min(0.5).max(2).optional(),
+  emojiSize: z.number().min(0.5).max(4).optional(),
+  emojiGap: z.number().min(0).max(1).optional(),
 });
 
 export const subtitleConfigSchema = z.object({
