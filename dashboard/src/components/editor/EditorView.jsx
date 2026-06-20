@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Loader2, AlertCircle, Captions, Crosshair, Sparkles, Type, Music, Clapperboard, ChevronRight, ChevronDown, Check } from 'lucide-react';
+import { Loader2, AlertCircle, Captions, Crosshair, Sparkles, Type, Music, Clapperboard, ChevronRight, ChevronDown, Check, Crop, Trash2 } from 'lucide-react';
 import { getApiUrl } from '../../config';
 import useEditorState, { defaultSubtitleConfig, loadDefaultCaptionStyle, tracksInClip, LAYOUT_PANELS } from './useEditorState';
 import { outputDurationFrames, outputToSource } from '@remotion-src/lib/edl';
@@ -13,6 +13,7 @@ import TransitionsPanel from './TransitionsPanel';
 import TextPanel from './TextPanel';
 import AudioPanel from './AudioPanel';
 import BrollPanel from './BrollPanel';
+import ManualCropModal from './ManualCropModal';
 
 const LAYOUT_LABEL = {
     fill: 'Fill',
@@ -82,10 +83,11 @@ function AspectIcon({ width, height }) {
     );
 }
 
-function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker, dispatch }) {
+function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker, dispatch, sourceUrl }) {
     const [aspectOpen, setAspectOpen] = useState(false);
     const [layoutOpen, setLayoutOpen] = useState(false);
     const [globalOpen, setGlobalOpen] = useState(false);
+    const [showCropModal, setShowCropModal] = useState(false);
     const controlsRef = useRef(null);
     const selected = framing.clips.filter((c) => selectedIds.includes(c.id));
     const primary = selected[0] || framing.clips[0];
@@ -94,13 +96,18 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
     const peopleAvailable = selectedForRules.length
         ? Math.min(...selectedForRules.map((c) => tracksInClip(framing, c).length))
         : 0;
+    const globalPeopleAvailable = framing.clips.length
+        ? Math.min(...framing.clips.map((c) => tracksInClip(framing, c).length))
+        : 0;
     const outW = framing.outputWidth ?? 1080;
     const outH = framing.outputHeight ?? 1920;
     const currentAspect = ASPECT_OPTIONS.find((a) => a.width === outW && a.height === outH) || ASPECT_OPTIONS[0];
+    const canManuallyReframe = selected.length <= 1 && primary;
 
-    const applyLayout = (layout) => {
-        if (!selected.length && primary) dispatch({ type: 'SELECT', id: primary.id, multi: false });
-        dispatch({ type: 'SET_LAYOUT', layout });
+    const applyLayout = (layout, global = false) => {
+        const clipIds = selected.length ? selectedIds : primary ? [primary.id] : [];
+        if (!global && !selected.length && primary) dispatch({ type: 'SELECT', id: primary.id, multi: false });
+        dispatch({ type: 'SET_LAYOUT', layout, global, clipIds });
         setLayoutOpen(false);
         setGlobalOpen(false);
     };
@@ -121,15 +128,18 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
     const layoutRows = (global = false) => (
         <div className="py-1">
             {LAYOUT_OPTIONS.map((id) => {
-                const disabled = (LAYOUT_PANELS[id] || 1) > 1 && peopleAvailable < (LAYOUT_PANELS[id] || 1);
-                const active = selectedForRules.length
-                    ? selectedForRules.every((c) => c.layout === id)
+                const needed = LAYOUT_PANELS[id] || 1;
+                const availablePeople = global ? globalPeopleAvailable : peopleAvailable;
+                const targetClips = global ? framing.clips : selectedForRules;
+                const disabled = needed > 1 && availablePeople < needed;
+                const active = targetClips.length
+                    ? targetClips.every((c) => c.layout === id)
                     : activeLayout === id;
                 return (
                     <button
                         key={`${global ? 'g' : 'c'}-${id}`}
                         disabled={disabled}
-                        onClick={() => applyLayout(id)}
+                        onClick={() => applyLayout(id, global)}
                         className={`w-full h-8 px-3 flex items-center gap-2 text-xs text-left transition-colors ${
                             disabled
                                 ? 'text-zinc-600 cursor-not-allowed'
@@ -149,7 +159,7 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
         <div ref={controlsRef} className="relative z-30 flex items-center justify-center gap-3 text-[11px] text-zinc-300">
             <div className="relative">
                 <button
-                    onClick={() => { setAspectOpen((v) => !v); setLayoutOpen(false); }}
+                    onClick={() => { setAspectOpen((v) => !v); setLayoutOpen(false); setGlobalOpen(false); }}
                     className="h-7 px-2 rounded-md hover:bg-white/5 flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viral/50"
                     aria-haspopup="menu"
                     aria-expanded={aspectOpen}
@@ -183,7 +193,7 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
 
             <div className="relative">
                 <button
-                    onClick={() => { setLayoutOpen((v) => !v); setAspectOpen(false); }}
+                    onClick={() => { setLayoutOpen((v) => !v); setAspectOpen(false); setGlobalOpen(false); }}
                     className="h-7 px-2 rounded-md hover:bg-white/5 flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viral/50"
                     aria-haspopup="menu"
                     aria-expanded={layoutOpen}
@@ -195,7 +205,7 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
                 </button>
                 {layoutOpen && (
                     <div className="absolute left-0 top-full mt-1 w-52 rounded-md border border-edge bg-surface2 shadow-xl py-1">
-                        <div className="relative">
+                        <div className="relative" onMouseLeave={() => setGlobalOpen(false)}>
                             <button
                                 onMouseEnter={() => setGlobalOpen(true)}
                                 onFocus={() => setGlobalOpen(true)}
@@ -206,8 +216,6 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
                             </button>
                             {globalOpen && (
                                 <div
-                                    onMouseEnter={() => setGlobalOpen(true)}
-                                    onMouseLeave={() => setGlobalOpen(false)}
                                     className="absolute left-full top-0 ml-1 w-36 rounded-md border border-edge bg-surface2 shadow-xl"
                                 >
                                     {layoutRows(true)}
@@ -216,6 +224,35 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
                         </div>
                         <div className="px-3 pt-2 pb-1 text-[10px] text-zinc-500">Current layout</div>
                         {layoutRows(false)}
+                        {canManuallyReframe && (
+                            <div className="mt-1 border-t border-edge p-2">
+                                <button
+                                    onClick={() => {
+                                        if (!selected.length) dispatch({ type: 'SELECT', id: primary.id, multi: false });
+                                        setShowCropModal(true);
+                                        setLayoutOpen(false);
+                                        setGlobalOpen(false);
+                                    }}
+                                    className="w-full h-8 px-2 rounded-md flex items-center gap-2 text-xs text-zinc-300 hover:bg-white/5 hover:text-fg"
+                                >
+                                    <Crop size={13} />
+                                    {primary.manualCrop ? 'Adjust manual reframe' : 'Set manual reframe'}
+                                </button>
+                                {primary.manualCrop && (
+                                    <button
+                                        onClick={() => {
+                                            dispatch({ type: 'SET_MANUAL_CROP', clipId: primary.id, crop: null });
+                                            setLayoutOpen(false);
+                                            setGlobalOpen(false);
+                                        }}
+                                        className="mt-1 w-full h-8 px-2 rounded-md flex items-center gap-2 text-xs text-muted hover:bg-white/5 hover:text-fg"
+                                    >
+                                        <Trash2 size={12} />
+                                        Remove manual reframe
+                                    </button>
+                                )}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -230,6 +267,18 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
                 <Crosshair size={13} />
                 Tracker: {trackerOn ? 'ON' : 'OFF'}
             </button>
+            {showCropModal && primary && (
+                <ManualCropModal
+                    sourceUrl={sourceUrl}
+                    source={framing.source}
+                    segment={primary}
+                    onApply={(crop) => {
+                        dispatch({ type: 'SET_MANUAL_CROP', clipId: primary.id, crop });
+                        setShowCropModal(false);
+                    }}
+                    onClose={() => setShowCropModal(false)}
+                />
+            )}
         </div>
     );
 }
@@ -546,6 +595,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                         trackerOn={trackerOn}
                                         onToggleTracker={() => setTrackerOn((v) => !v)}
                                         dispatch={dispatch}
+                                        sourceUrl={sourceUrl}
                                     />
                                 </div>
                                 <div className="relative flex-1 min-h-0 w-full p-4 pt-0">

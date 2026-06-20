@@ -47,10 +47,12 @@ export const editorReducer = (state, action) => {
             };
         }
         case 'SET_LAYOUT': {
-            // Applies to every selected clip; switching layout clears any
-            // manual crop (it belongs to the previous framing decision)
+            // Applies to every selected clip, or every clip when requested by
+            // the global layout menu. Switching layout clears any manual crop
+            // because it belongs to the previous framing decision.
+            const targetIds = new Set(action.clipIds || state.selectedIds);
             const clips = state.framing.clips.map((c) =>
-                state.selectedIds.includes(c.id)
+                action.global || targetIds.has(c.id)
                     ? { ...c, layout: action.layout, manualCrop: null }
                     : c
             );
