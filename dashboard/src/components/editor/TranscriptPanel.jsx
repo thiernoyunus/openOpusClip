@@ -245,7 +245,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     const selCount = selRange ? selRange.hi - selRange.lo + 1 : 0;
 
     return (
-        <div className="w-[280px] shrink-0 border-r border-edge bg-surface flex flex-col min-h-0">
+        <div className="w-[420px] shrink-0 border-r border-edge bg-surface flex flex-col min-h-0">
             <div className="px-3 pt-3 pb-2 shrink-0 relative">
                 <div className="flex items-center gap-1.5 text-xs text-muted">
                     <FileText size={12} /> Transcript
@@ -304,7 +304,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                 )}
                 <div className="mt-1 text-[10px] text-zinc-600">shift-click to select · ✂ to cut</div>
             </div>
-            <div ref={containerRef} className="flex-1 overflow-y-auto custom-scrollbar px-4 pb-4 leading-7">
+            <div ref={containerRef} className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 leading-8">
                 {captions.length === 0 ? (
                     <p className="text-xs text-muted mt-2">No transcript available for this clip.</p>
                 ) : (

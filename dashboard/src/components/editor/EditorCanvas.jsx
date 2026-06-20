@@ -42,9 +42,11 @@ const EditorCanvas = forwardRef(function EditorCanvas(
     // Height-bound when the area is wider than the clip (clip is relatively
     // taller). Before the first measure, fall back to the clip's orientation.
     const heightBound = avail ? avail.w / avail.h > clipAspect : clipAspect < 1;
+    const maxPreviewHeight = clipAspect < 1 ? 620 : 520;
+    const maxPreviewWidth = clipAspect < 1 ? 420 : 840;
     const boxStyle = heightBound
-        ? { height: '100%', width: 'auto', aspectRatio: `${outW} / ${outH}` }
-        : { width: '100%', height: 'auto', aspectRatio: `${outW} / ${outH}` };
+        ? { height: `min(100%, ${maxPreviewHeight}px)`, width: 'auto', aspectRatio: `${outW} / ${outH}` }
+        : { width: `min(100%, ${maxPreviewWidth}px)`, height: 'auto', aspectRatio: `${outW} / ${outH}` };
 
     const inputProps = useMemo(
         () => ({

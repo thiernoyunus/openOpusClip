@@ -1,19 +1,37 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Loader2, AlertCircle, LayoutGrid, Captions, Crosshair, Sparkles, Type, Music, Clapperboard, ChevronRight } from 'lucide-react';
+import { Loader2, AlertCircle, Captions, Crosshair, Sparkles, Type, Music, Clapperboard, ChevronRight, ChevronDown, Check } from 'lucide-react';
 import { getApiUrl } from '../../config';
-import useEditorState, { defaultSubtitleConfig, loadDefaultCaptionStyle } from './useEditorState';
+import useEditorState, { defaultSubtitleConfig, loadDefaultCaptionStyle, tracksInClip, LAYOUT_PANELS } from './useEditorState';
 import { outputDurationFrames, outputToSource } from '@remotion-src/lib/edl';
 import EditorTopBar from './EditorTopBar';
 import EditorCanvas, { EDITOR_FPS } from './EditorCanvas';
 import EditorTimeline from './EditorTimeline';
 import EditorToolRail from './EditorToolRail';
-import LayoutPanel from './LayoutPanel';
 import TranscriptPanel from './TranscriptPanel';
 import CaptionsPanel from './CaptionsPanel';
 import TransitionsPanel from './TransitionsPanel';
 import TextPanel from './TextPanel';
 import AudioPanel from './AudioPanel';
 import BrollPanel from './BrollPanel';
+
+const LAYOUT_LABEL = {
+    fill: 'Fill',
+    fit: 'Fit',
+    split: 'Split',
+    three: 'Three',
+    four: 'Four',
+    screenshare: 'ScreenShare',
+    gameplay: 'Gameplay',
+};
+
+const LAYOUT_OPTIONS = ['fill', 'fit', 'split', 'three', 'four', 'screenshare', 'gameplay'];
+
+const ASPECT_OPTIONS = [
+    { label: 'Vertical 9:16', width: 1080, height: 1920 },
+    { label: 'Square 1:1', width: 1080, height: 1080 },
+    { label: 'Landscape 16:9', width: 1920, height: 1080 },
+    { label: 'Portrait 4:5', width: 1080, height: 1350 },
+];
 
 /** Save a video URL to the browser's Downloads folder (fetch→blob→<a download>). */
 async function downloadVideo(url, filename) {
@@ -35,13 +53,186 @@ async function downloadVideo(url, filename) {
 }
 
 const TABS = [
-    { id: 'layout', label: 'Layout', icon: LayoutGrid },
     { id: 'captions', label: 'Captions', icon: Captions },
+    { id: 'broll', label: 'B-Roll', icon: Clapperboard },
+    { id: 'transitions', label: 'Transitions', icon: Sparkles },
     { id: 'text', label: 'Text', icon: Type },
     { id: 'audio', label: 'Audio', icon: Music },
-    { id: 'broll', label: 'B-Roll', icon: Clapperboard },
-    { id: 'transitions', label: 'Effects', icon: Sparkles },
 ];
+
+function MiniLayoutIcon({ layout }) {
+    const cell = 'bg-zinc-500 rounded-[1px]';
+    if (layout === 'fill') return <div className={`w-3 h-4 ${cell}`} />;
+    if (layout === 'fit') return <div className="w-4 h-3 border border-zinc-500 rounded-[1px]" />;
+    if (layout === 'split') return <div className="w-4 h-4 grid grid-rows-2 gap-px"><div className={cell} /><div className={cell} /></div>;
+    if (layout === 'three') return <div className="w-4 h-4 grid grid-rows-3 gap-px"><div className={cell} /><div className={cell} /><div className={cell} /></div>;
+    if (layout === 'four') return <div className="w-4 h-4 grid grid-cols-2 gap-px"><div className={cell} /><div className={cell} /><div className={cell} /><div className={cell} /></div>;
+    return <div className="w-4 h-4 border border-zinc-500 rounded-[1px]" />;
+}
+
+function AspectIcon({ width, height }) {
+    const vertical = height > width;
+    const square = height === width;
+    return (
+        <span
+            className={`inline-block border border-current rounded-[1px] opacity-80 ${
+                square ? 'w-3 h-3' : vertical ? 'w-2 h-4' : 'w-4 h-2'
+            }`}
+        />
+    );
+}
+
+function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker, dispatch }) {
+    const [aspectOpen, setAspectOpen] = useState(false);
+    const [layoutOpen, setLayoutOpen] = useState(false);
+    const [globalOpen, setGlobalOpen] = useState(false);
+    const controlsRef = useRef(null);
+    const selected = framing.clips.filter((c) => selectedIds.includes(c.id));
+    const primary = selected[0] || framing.clips[0];
+    const activeLayout = primary?.layout || 'fill';
+    const selectedForRules = selected.length ? selected : primary ? [primary] : [];
+    const peopleAvailable = selectedForRules.length
+        ? Math.min(...selectedForRules.map((c) => tracksInClip(framing, c).length))
+        : 0;
+    const outW = framing.outputWidth ?? 1080;
+    const outH = framing.outputHeight ?? 1920;
+    const currentAspect = ASPECT_OPTIONS.find((a) => a.width === outW && a.height === outH) || ASPECT_OPTIONS[0];
+
+    const applyLayout = (layout) => {
+        if (!selected.length && primary) dispatch({ type: 'SELECT', id: primary.id, multi: false });
+        dispatch({ type: 'SET_LAYOUT', layout });
+        setLayoutOpen(false);
+        setGlobalOpen(false);
+    };
+
+    useEffect(() => {
+        if (!aspectOpen && !layoutOpen) return;
+        const onPointerDown = (e) => {
+            if (!controlsRef.current?.contains(e.target)) {
+                setAspectOpen(false);
+                setLayoutOpen(false);
+                setGlobalOpen(false);
+            }
+        };
+        window.addEventListener('pointerdown', onPointerDown);
+        return () => window.removeEventListener('pointerdown', onPointerDown);
+    }, [aspectOpen, layoutOpen]);
+
+    const layoutRows = (global = false) => (
+        <div className="py-1">
+            {LAYOUT_OPTIONS.map((id) => {
+                const disabled = (LAYOUT_PANELS[id] || 1) > 1 && peopleAvailable < (LAYOUT_PANELS[id] || 1);
+                const active = selectedForRules.length
+                    ? selectedForRules.every((c) => c.layout === id)
+                    : activeLayout === id;
+                return (
+                    <button
+                        key={`${global ? 'g' : 'c'}-${id}`}
+                        disabled={disabled}
+                        onClick={() => applyLayout(id)}
+                        className={`w-full h-8 px-3 flex items-center gap-2 text-xs text-left transition-colors ${
+                            disabled
+                                ? 'text-zinc-600 cursor-not-allowed'
+                                : 'text-zinc-300 hover:bg-white/5 hover:text-fg'
+                        }`}
+                    >
+                        <MiniLayoutIcon layout={id} />
+                        <span className="flex-1">{LAYOUT_LABEL[id] || id}</span>
+                        {active && !disabled && <Check size={13} />}
+                    </button>
+                );
+            })}
+        </div>
+    );
+
+    return (
+        <div ref={controlsRef} className="relative z-30 flex items-center justify-center gap-3 text-[11px] text-zinc-300">
+            <div className="relative">
+                <button
+                    onClick={() => { setAspectOpen((v) => !v); setLayoutOpen(false); }}
+                    className="h-7 px-2 rounded-md hover:bg-white/5 flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viral/50"
+                    aria-haspopup="menu"
+                    aria-expanded={aspectOpen}
+                >
+                    <AspectIcon width={outW} height={outH} />
+                    {currentAspect.label.match(/\d+:\d+/)?.[0] || '9:16'}
+                    <ChevronDown size={12} />
+                </button>
+                {aspectOpen && (
+                    <div className="absolute left-0 top-full mt-1 w-44 rounded-md border border-edge bg-surface2 shadow-xl py-1">
+                        {ASPECT_OPTIONS.map((opt) => {
+                            const active = opt.width === outW && opt.height === outH;
+                            return (
+                                <button
+                                    key={opt.label}
+                                    disabled={!active}
+                                    onClick={() => setAspectOpen(false)}
+                                    className={`w-full h-8 px-3 flex items-center gap-2 text-xs text-left ${
+                                        active ? 'text-zinc-400' : 'text-zinc-500 cursor-not-allowed'
+                                    }`}
+                                >
+                                    <AspectIcon width={opt.width} height={opt.height} />
+                                    <span className="flex-1">{opt.label}</span>
+                                    {active && <Check size={13} className="text-zinc-300" />}
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+
+            <div className="relative">
+                <button
+                    onClick={() => { setLayoutOpen((v) => !v); setAspectOpen(false); }}
+                    className="h-7 px-2 rounded-md hover:bg-white/5 flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viral/50"
+                    aria-haspopup="menu"
+                    aria-expanded={layoutOpen}
+                >
+                    <MiniLayoutIcon layout={activeLayout} />
+                    <span className="text-zinc-500">Layout:</span>
+                    <span>{LAYOUT_LABEL[activeLayout] || activeLayout}</span>
+                    <ChevronDown size={12} />
+                </button>
+                {layoutOpen && (
+                    <div className="absolute left-0 top-full mt-1 w-52 rounded-md border border-edge bg-surface2 shadow-xl py-1">
+                        <div className="relative">
+                            <button
+                                onMouseEnter={() => setGlobalOpen(true)}
+                                onFocus={() => setGlobalOpen(true)}
+                                className="w-full h-9 px-3 flex items-center gap-2 text-xs text-left text-zinc-300 hover:bg-white/5"
+                            >
+                                <span className="flex-1">Global layout settings</span>
+                                <ChevronRight size={13} />
+                            </button>
+                            {globalOpen && (
+                                <div
+                                    onMouseEnter={() => setGlobalOpen(true)}
+                                    onMouseLeave={() => setGlobalOpen(false)}
+                                    className="absolute left-full top-0 ml-1 w-36 rounded-md border border-edge bg-surface2 shadow-xl"
+                                >
+                                    {layoutRows(true)}
+                                </div>
+                            )}
+                        </div>
+                        <div className="px-3 pt-2 pb-1 text-[10px] text-zinc-500">Current layout</div>
+                        {layoutRows(false)}
+                    </div>
+                )}
+            </div>
+
+            <button
+                onClick={onToggleTracker}
+                title="Click a person on the canvas to track them"
+                className={`h-7 px-2 rounded-md flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viral/50 ${
+                    trackerOn ? 'bg-viral/15 text-viral' : 'hover:bg-white/5'
+                }`}
+            >
+                <Crosshair size={13} />
+                Tracker: {trackerOn ? 'ON' : 'OFF'}
+            </button>
+        </div>
+    );
+}
 
 /**
  * Full-screen clip editor (docs/video-editor-plan.md Phases 3-6).
@@ -57,7 +248,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     const [exporting, setExporting] = useState(false);
     const [exportProgress, setExportProgress] = useState(0);
     const [captions, setCaptions] = useState([]);
-    const [activeTab, setActiveTab] = useState('layout'); // layout | captions
+    const [activeTab, setActiveTab] = useState('captions');
     // Right tool panel is collapsed by default (max canvas space); a rail click
     // opens it, clicking the active tool (or the header chevron) collapses it.
     const [panelOpen, setPanelOpen] = useState(false);
@@ -346,80 +537,67 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                             dispatch={dispatch}
                         />
 
-                        {/* Canvas — tracker toggle floats over the top so it
-                            doesn't steal vertical space from the preview. */}
-                        <div className="flex-1 min-w-0 bg-canvas flex flex-col items-center justify-center min-h-0 p-4 relative">
-                            <div className="relative flex-1 min-h-0 w-full">
-                                <div className="absolute inset-0 flex items-center justify-center">
-                                    <EditorCanvas
-                                        ref={playerRef}
-                                        sourceUrl={sourceUrl}
+                        <div className="flex-1 min-w-0 bg-background flex min-h-0">
+                            <div data-editor-canvas-column className="flex-1 min-w-0 flex flex-col min-h-0">
+                                <div className="h-10 shrink-0 flex items-center justify-center">
+                                    <EditorCanvasControls
                                         framing={framing}
-                                        subtitles={framing.subtitles || null}
-                                        durationInFrames={durationInFrames}
+                                        selectedIds={state.selectedIds}
                                         trackerOn={trackerOn}
+                                        onToggleTracker={() => setTrackerOn((v) => !v)}
                                         dispatch={dispatch}
                                     />
                                 </div>
-                                <button
-                                    onClick={() => setTrackerOn((v) => !v)}
-                                    title="Click a person on the canvas to track them"
-                                    className={`absolute top-2.5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-medium transition-colors backdrop-blur-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viral ${
-                                        trackerOn
-                                            ? 'bg-viral/20 border-viral/50 text-viral'
-                                            : 'bg-surface2/70 border-edge text-muted hover:text-fg'
-                                    }`}
-                                >
-                                    <Crosshair size={12} />
-                                    {trackerOn ? 'Tracker: ON' : 'Tracker'}
-                                </button>
+                                <div className="relative flex-1 min-h-0 w-full p-4 pt-0">
+                                    <div data-editor-preview-shell className="absolute inset-x-4 top-0 bottom-4 flex items-center justify-center">
+                                        <EditorCanvas
+                                            ref={playerRef}
+                                            sourceUrl={sourceUrl}
+                                            framing={framing}
+                                            subtitles={framing.subtitles || null}
+                                            durationInFrames={durationInFrames}
+                                            trackerOn={trackerOn}
+                                            dispatch={dispatch}
+                                        />
+                                    </div>
+                                </div>
                             </div>
-                        </div>
 
-                        {/* Tool panel — collapsed by default; opens from the
-                            rail. Header carries the tab label + a collapse chevron. */}
-                        {panelOpen && (
-                        <div className="w-[280px] shrink-0 border-l border-edge bg-surface flex flex-col min-h-0">
-                            <div className="flex items-center justify-between h-9 pl-3 pr-1.5 border-b border-edge shrink-0">
-                                <span className="text-[11px] font-semibold uppercase tracking-wide text-fg">
-                                    {(TABS.find((t) => t.id === activeTab) || {}).label}
-                                </span>
-                                <button
-                                    onClick={() => setPanelOpen(false)}
-                                    title="Collapse panel"
-                                    aria-label="Collapse panel"
-                                    className="p-1 rounded-md text-muted hover:text-fg hover:bg-white/5 transition-colors"
-                                >
-                                    <ChevronRight size={15} />
-                                </button>
-                            </div>
-                            <div className="flex-1 overflow-y-auto custom-scrollbar">
-                                {activeTab === 'layout' && (
-                                    <LayoutPanel
-                                        framing={framing}
-                                        selectedIds={state.selectedIds}
-                                        dispatch={dispatch}
-                                        sourceUrl={sourceUrl}
-                                    />
-                                )}
-                                {activeTab === 'captions' && (
-                                    <CaptionsPanel framing={framing} captions={captions} dispatch={dispatch} />
-                                )}
-                                {activeTab === 'text' && (
-                                    <TextPanel framing={framing} dispatch={dispatch} getCurrentSourceFrame={getCurrentSourceFrame} />
-                                )}
-                                {activeTab === 'audio' && (
-                                    <AudioPanel framing={framing} jobId={jobId} clipIndex={index} dispatch={dispatch} />
-                                )}
-                                {activeTab === 'broll' && (
-                                    <BrollPanel framing={framing} dispatch={dispatch} getCurrentSourceFrame={getCurrentSourceFrame} captions={captions} />
-                                )}
-                                {activeTab === 'transitions' && (
-                                    <TransitionsPanel framing={framing} dispatch={dispatch} />
-                                )}
-                            </div>
+                            {panelOpen && (
+                                <div data-editor-tool-panel className="w-[360px] shrink-0 my-3 mr-3 rounded-md border border-edge bg-surface shadow-2xl flex flex-col min-h-0">
+                                    <div className="flex items-center justify-between h-10 pl-3 pr-1.5 border-b border-edge shrink-0">
+                                        <span className="text-xs font-medium text-fg">
+                                            {(TABS.find((t) => t.id === activeTab) || {}).label}
+                                        </span>
+                                        <button
+                                            onClick={() => setPanelOpen(false)}
+                                            title="Collapse panel"
+                                            aria-label="Collapse panel"
+                                            className="p-1 rounded-md text-muted hover:text-fg hover:bg-white/5 transition-colors"
+                                        >
+                                            <ChevronRight size={15} />
+                                        </button>
+                                    </div>
+                                    <div className="flex-1 overflow-y-auto custom-scrollbar">
+                                        {activeTab === 'captions' && (
+                                            <CaptionsPanel framing={framing} captions={captions} dispatch={dispatch} />
+                                        )}
+                                        {activeTab === 'text' && (
+                                            <TextPanel framing={framing} dispatch={dispatch} getCurrentSourceFrame={getCurrentSourceFrame} />
+                                        )}
+                                        {activeTab === 'audio' && (
+                                            <AudioPanel framing={framing} jobId={jobId} clipIndex={index} dispatch={dispatch} />
+                                        )}
+                                        {activeTab === 'broll' && (
+                                            <BrollPanel framing={framing} dispatch={dispatch} getCurrentSourceFrame={getCurrentSourceFrame} captions={captions} />
+                                        )}
+                                        {activeTab === 'transitions' && (
+                                            <TransitionsPanel framing={framing} dispatch={dispatch} />
+                                        )}
+                                    </div>
+                                </div>
+                            )}
                         </div>
-                        )}
 
                         {/* Vertical icon-only rail (far right edge). Clicking the
                             active tool collapses the panel; any other opens it. */}
