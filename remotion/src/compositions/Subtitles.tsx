@@ -60,47 +60,62 @@ function blockFilter(style: SubtitleStyle): string | undefined {
   return parts.length ? parts.join(" ") : undefined;
 }
 
-function emojiStyle(
+// Above/below emojis are tied to the caption LINE, not a single word: every
+// emoji in the on-screen block shows centered above (or below) the line for the
+// block's full duration, so the viewer actually has time to register it. The row
+// container handles placement; each item handles size + entrance animation.
+function emojiRowStyle(
   style: SubtitleStyle,
-  placement: "above-word" | "below-word",
+  placement: "above-word" | "below-word"
+): React.CSSProperties {
+  // Gap between the emoji row and the caption line, scaled to the caption size.
+  const gap = (style.emojiGap ?? 0.2) * style.fontSize;
+  const isAbove = placement === "above-word";
+  return {
+    position: "absolute",
+    left: "50%",
+    transform: "translateX(-50%)",
+    ...(isAbove ? { bottom: "100%", marginBottom: gap } : { top: "100%", marginTop: gap }),
+    display: "flex",
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "center",
+    gap: `${Math.round(style.fontSize * 0.15)}px`,
+    whiteSpace: "nowrap",
+    pointerEvents: "none",
+    zIndex: 2,
+  };
+}
+
+function emojiItemStyle(
+  style: SubtitleStyle,
   animation: NonNullable<SubtitleStyle["emojiAnimation"]>,
   frame: number,
-  fps: number,
-  wordStartFrame: number
+  fps: number
 ): React.CSSProperties {
   const size = style.emojiSize ?? 1;
+  // Entrance is anchored to the block start (frame 0 of the block Sequence) so
+  // every emoji is up for the whole time the caption line is on screen.
   const introFrames = Math.max(1, Math.round(0.25 * fps));
-  const p = interpolate(frame, [wordStartFrame, wordStartFrame + introFrames], [0, 1], {
+  const p = interpolate(frame, [0, introFrames], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: Easing.out(Easing.cubic),
   });
   const popScale = animation === "pop" ? 0.45 + p * 0.65 : 1;
   const bounceY = animation === "bounce" ? -Math.sin(p * Math.PI) * style.fontSize * 0.18 : 0;
-  const floatY = animation === "float" ? Math.sin((frame - wordStartFrame) / 6) * style.fontSize * 0.06 : 0;
-  // Gap between the emoji and the caption word, scaled to the caption size so it
-  // reads the same across font sizes. Anchor the emoji's near edge to the word
-  // edge and push it away by the gap; with the matching transform-origin, larger
-  // emojis grow away from the text instead of overlapping it.
-  const gap = (style.emojiGap ?? 0.2) * style.fontSize;
-  const isAbove = placement === "above-word";
-  const anchor = isAbove ? { bottom: "100%" } : { top: "100%" };
-  const gapOffset = isAbove ? -gap : gap;
+  const floatY = animation === "float" ? Math.sin(frame / 6) * style.fontSize * 0.06 : 0;
 
   return {
-    position: "absolute",
-    left: "50%",
-    ...anchor,
+    display: "inline-block",
     fontSize: Math.round(style.fontSize * 0.82 * size),
     lineHeight: 1,
     opacity: p,
-    transform: `translate(-50%, ${(gapOffset + bounceY + floatY).toFixed(1)}px) scale(${popScale.toFixed(3)})`,
-    transformOrigin: isAbove ? "center bottom" : "center top",
+    transform: `translateY(${(bounceY + floatY).toFixed(1)}px) scale(${popScale.toFixed(3)})`,
+    transformOrigin: "center bottom",
     WebkitTextStroke: "none",
     textShadow: "none",
     filter: "drop-shadow(0 3px 8px rgba(0,0,0,0.5))",
-    pointerEvents: "none",
-    zIndex: 2,
   };
 }
 
@@ -245,6 +260,15 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   // the row-wrap container.
   const columnStack = !template.selfStacks && style.verticalStack === true;
 
+  // Above/below emojis render once per line (centered over the block), not per
+  // word. Inline emojis stay baked into the word text below. "none" → no emojis.
+  const emojiPlacement = style.emojiPlacement ?? "above-word";
+  const emojiAnimation = style.emojiAnimation ?? "pop";
+  const lineEmojis =
+    emojiPlacement === "above-word" || emojiPlacement === "below-word"
+      ? block.words.filter((w) => w.emoji).map((w) => w.emoji as string)
+      : [];
+
   // Block entrance animation (layers over the per-word template animation).
   // The composed transform also carries the free-drag centering when placed.
   const entrance = style.captionAnimation ?? "fade";
@@ -293,6 +317,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
     >
       <div
         style={{
+          position: "relative",
           display: "flex",
           flexDirection: columnStack ? "column" : "row",
           flexWrap: "wrap",
@@ -333,8 +358,8 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
             style.punctuation === false
               ? word.text.replace(/[.,!?;:…]+$/u, "")
               : word.text;
-          const emojiPlacement = style.emojiPlacement ?? "above-word";
-          const emojiAnimation = style.emojiAnimation ?? "pop";
+          // Inline keeps the emoji baked into the word; above/below are rendered
+          // once per line in the emoji row below, so the word renders plain here.
           const renderedText =
             word.emoji && emojiPlacement === "inline" ? `${text} ${word.emoji}` : text;
           const renderedWord = template.renderWord({
@@ -352,36 +377,17 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
             isEmphasis: i === emphasisIndex,
           });
 
-          if (!word.emoji || emojiPlacement === "none" || emojiPlacement === "inline") {
-            return <React.Fragment key={i}>{renderedWord}</React.Fragment>;
-          }
-
-          return (
-            <span
-              key={i}
-              style={{
-                position: "relative",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              {renderedWord}
-              <span
-                style={emojiStyle(
-                  style,
-                  emojiPlacement,
-                  emojiAnimation,
-                  frame,
-                  fps,
-                  wordStartFrame
-                )}
-              >
-                {word.emoji}
-              </span>
-            </span>
-          );
+          return <React.Fragment key={i}>{renderedWord}</React.Fragment>;
         })}
+        {lineEmojis.length > 0 && (
+          <div style={emojiRowStyle(style, emojiPlacement as "above-word" | "below-word")}>
+            {lineEmojis.map((emoji, k) => (
+              <span key={k} style={emojiItemStyle(style, emojiAnimation, frame, fps)}>
+                {emoji}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
