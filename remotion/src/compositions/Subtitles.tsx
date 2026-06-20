@@ -89,6 +89,7 @@ function emojiRowStyle(
 
 function emojiItemStyle(
   style: SubtitleStyle,
+  placement: "above-word" | "below-word",
   animation: NonNullable<SubtitleStyle["emojiAnimation"]>,
   frame: number,
   fps: number
@@ -102,9 +103,12 @@ function emojiItemStyle(
     extrapolateRight: "clamp",
     easing: Easing.out(Easing.cubic),
   });
+  const isAbove = placement === "above-word";
   const popScale = animation === "pop" ? 0.45 + p * 0.65 : 1;
-  const bounceY = animation === "bounce" ? -Math.sin(p * Math.PI) * style.fontSize * 0.18 : 0;
-  const floatY = animation === "float" ? Math.sin(frame / 6) * style.fontSize * 0.06 : 0;
+  // Bounce/float away from the caption line: up when above, down when below.
+  const dir = isAbove ? -1 : 1;
+  const bounceY = animation === "bounce" ? dir * Math.sin(p * Math.PI) * style.fontSize * 0.18 : 0;
+  const floatY = animation === "float" ? dir * Math.sin(frame / 6) * style.fontSize * 0.06 : 0;
 
   return {
     display: "inline-block",
@@ -112,7 +116,8 @@ function emojiItemStyle(
     lineHeight: 1,
     opacity: p,
     transform: `translateY(${(bounceY + floatY).toFixed(1)}px) scale(${popScale.toFixed(3)})`,
-    transformOrigin: "center bottom",
+    // Scale grows away from the caption line (bottom edge when above, top when below).
+    transformOrigin: isAbove ? "center bottom" : "center top",
     WebkitTextStroke: "none",
     textShadow: "none",
     filter: "drop-shadow(0 3px 8px rgba(0,0,0,0.5))",
@@ -382,7 +387,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
         {lineEmojis.length > 0 && (
           <div style={emojiRowStyle(style, emojiPlacement as "above-word" | "below-word")}>
             {lineEmojis.map((emoji, k) => (
-              <span key={k} style={emojiItemStyle(style, emojiAnimation, frame, fps)}>
+              <span key={k} style={emojiItemStyle(style, emojiPlacement as "above-word" | "below-word", emojiAnimation, frame, fps)}>
                 {emoji}
               </span>
             ))}
