@@ -364,7 +364,6 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
-                lineHeight: 1,
               }}
             >
               {renderedWord}
