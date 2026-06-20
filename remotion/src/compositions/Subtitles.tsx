@@ -96,7 +96,7 @@ function emojiStyle(
     opacity: p,
     transform: `translate(-50%, ${(gapOffset + bounceY + floatY).toFixed(1)}px) scale(${popScale.toFixed(3)})`,
     transformOrigin: isAbove ? "center bottom" : "center top",
-    WebkitTextStroke: 0,
+    WebkitTextStroke: "none",
     textShadow: "none",
     filter: "drop-shadow(0 3px 8px rgba(0,0,0,0.5))",
     pointerEvents: "none",
