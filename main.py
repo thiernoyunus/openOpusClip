@@ -18,6 +18,7 @@ import yt_dlp
 from google import genai
 from dotenv import load_dotenv
 import json
+from transcription import WHISPER_MODELS, transcribe
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module='google.protobuf')
@@ -90,6 +91,27 @@ def get_face_detection():
         mp_face_detection = mp.solutions.face_detection
         _face_detection = mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
     return _face_detection
+
+
+def run_logged_command(command, label, output_path=None, check=False, interval=10):
+    print(f"   ▶️  {label}...")
+    start = time.time()
+    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    while process.poll() is None:
+        time.sleep(interval)
+        message = f"   ⏳ {label} still running ({time.time() - start:.0f}s)"
+        if output_path and os.path.exists(output_path):
+            message += f", output {os.path.getsize(output_path) / (1024 * 1024):.1f} MB"
+        print(message)
+
+    stderr = process.stderr.read()
+    if process.returncode != 0:
+        print(f"   ❌ {label} failed (exit code {process.returncode}).")
+        if check:
+            raise subprocess.CalledProcessError(process.returncode, command, stderr=stderr)
+    else:
+        print(f"   ✅ {label} finished in {time.time() - start:.0f}s")
+    return subprocess.CompletedProcess(command, process.returncode, stderr=stderr)
 
 class SmoothedCameraman:
     """
@@ -1064,7 +1086,7 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
         'ffmpeg', '-y', '-i', input_video, '-vn', '-acodec', 'copy', temp_audio_output
     ]
     try:
-        subprocess.run(audio_extract_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        run_logged_command(audio_extract_command, "Extracting audio", temp_audio_output, check=True)
     except subprocess.CalledProcessError:
         print("\n   ❌ Audio extraction failed (maybe no audio?). Proceeding without audio.")
         pass
@@ -1082,11 +1104,11 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
         ]
         
     try:
-        subprocess.run(merge_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        run_logged_command(merge_command, "Merging audio/video", final_output_video, check=True)
         print(f"   ✅ Clip saved to {final_output_video}")
     except subprocess.CalledProcessError as e:
         print("\n   ❌ Final merge failed.")
-        print("   Stderr:", e.stderr.decode())
+        print("   Stderr:", e.stderr.decode(errors="replace"))
         return False
 
     # Clean up temp files
@@ -1174,55 +1196,8 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
 
     return True
 
-WHISPER_MODELS = {"tiny", "base", "small", "medium", "large-v3"}
-
 def transcribe_video(video_path, whisper_model="base"):
-    if whisper_model not in WHISPER_MODELS:
-        print(f"⚠️  Unknown Whisper model '{whisper_model}', falling back to 'base'.")
-        whisper_model = "base"
-
-    print(f"🎙️  Transcribing video with Faster-Whisper model '{whisper_model}' (CPU Optimized)...")
-    from faster_whisper import WhisperModel
-    
-    # Run on CPU with INT8 quantization for speed
-    model = WhisperModel(whisper_model, device="cpu", compute_type="int8")
-    
-    segments, info = model.transcribe(video_path, word_timestamps=True)
-    
-    print(f"   Detected language '{info.language}' with probability {info.language_probability:.2f}")
-    
-    # Convert to openai-whisper compatible format
-    transcript_segments = []
-    full_text = ""
-    
-    for segment in segments:
-        # Print progress to keep user informed (and prevent timeouts feeling)
-        print(f"   [{segment.start:.2f}s -> {segment.end:.2f}s] {segment.text}")
-        
-        seg_dict = {
-            'text': segment.text,
-            'start': segment.start,
-            'end': segment.end,
-            'words': []
-        }
-        
-        if segment.words:
-            for word in segment.words:
-                seg_dict['words'].append({
-                    'word': word.word,
-                    'start': word.start,
-                    'end': word.end,
-                    'probability': word.probability
-                })
-        
-        transcript_segments.append(seg_dict)
-        full_text += segment.text + " "
-        
-    return {
-        'text': full_text.strip(),
-        'segments': transcript_segments,
-        'language': info.language
-    }
+    return transcribe(video_path, whisper_model)
 
 class ClipAnalysisError(Exception):
     """Raised when Gemini cannot produce viral clip selections."""
@@ -1523,7 +1498,7 @@ if __name__ == '__main__':
                 '-c:a', 'aac',
                 clip_cut_path
             ]
-            subprocess.run(cut_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            run_logged_command(cut_command, f"Cutting clip {i+1}", clip_cut_path)
 
             # Padded cut: the editor's source (extend headroom on both sides)
             EXTEND_PAD_SECONDS = 3.0
@@ -1541,7 +1516,7 @@ if __name__ == '__main__':
                 '-c:a', 'aac',
                 clip_source_path
             ]
-            padded_result = subprocess.run(padded_cut_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            padded_result = run_logged_command(padded_cut_command, f"Preparing editor source for clip {i+1}", clip_source_path)
 
             # If the padded cut failed, fall back to keeping the unpadded
             # cut as the editor source (no extend headroom, offset 0) so a

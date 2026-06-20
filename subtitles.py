@@ -4,40 +4,14 @@ import subprocess
 
 def transcribe_audio(video_path):
     """
-    Transcribe audio from a video file using faster-whisper.
+    Transcribe audio from a video file.
     Returns transcript in the same format as main.py for compatibility.
     """
-    from faster_whisper import WhisperModel
+    from transcription import transcribe
 
     print(f"🎙️  Transcribing audio from: {video_path}")
-
-    # Run on CPU with INT8 quantization for speed
-    model = WhisperModel("base", device="cpu", compute_type="int8")
-
-    segments, info = model.transcribe(video_path, word_timestamps=True)
-
-    transcript = {
-        "segments": [],
-        "language": info.language
-    }
-
-    for segment in segments:
-        seg_data = {
-            "start": segment.start,
-            "end": segment.end,
-            "text": segment.text,
-            "words": []
-        }
-        if segment.words:
-            for word in segment.words:
-                seg_data["words"].append({
-                    "word": word.word.strip(),
-                    "start": word.start,
-                    "end": word.end
-                })
-        transcript["segments"].append(seg_data)
-
-    print(f"✅ Transcription complete. Language: {info.language}")
+    transcript = transcribe(video_path, strip_words=True)
+    print(f"✅ Transcription complete. Language: {transcript.get('language')}")
     return transcript
 
 
@@ -234,4 +208,3 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
         raise Exception(f"FFmpeg failed: {result.stderr.decode()}")
 
     return True
-

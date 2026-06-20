@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from s3_uploader import upload_job_artifacts
+from transcription import WHISPER_MODELS
 
 load_dotenv()
 
@@ -286,6 +287,7 @@ async def run_job(job_id, job_data):
     output_dir = job_data['output_dir']
     
     jobs[job_id]['status'] = 'processing'
+    jobs[job_id]['started_at'] = time.time()
     jobs[job_id]['logs'].append("Job started by worker.")
     print(f"🎬 [run_job] Executing command for {job_id}: {' '.join(cmd)}")
     
@@ -347,7 +349,9 @@ async def run_job(job_id, job_data):
         
         if returncode == 0:
             jobs[job_id]['status'] = 'completed'
-            jobs[job_id]['logs'].append("Process finished successfully.")
+            jobs[job_id]['completed_at'] = time.time()
+            jobs[job_id]['duration_seconds'] = jobs[job_id]['completed_at'] - jobs[job_id].get('started_at', jobs[job_id]['completed_at'])
+            jobs[job_id]['logs'].append(f"Process finished successfully in {jobs[job_id]['duration_seconds']:.1f}s.")
             
             # Start S3 upload in background (silent, non-blocking)
             loop = asyncio.get_event_loop()
@@ -378,13 +382,19 @@ async def run_job(job_id, job_data):
                 _persist_result(job_id)  # snapshot so the project survives a restart
             else:
                  jobs[job_id]['status'] = 'failed'
+                 jobs[job_id]['completed_at'] = time.time()
+                 jobs[job_id]['duration_seconds'] = jobs[job_id]['completed_at'] - jobs[job_id].get('started_at', jobs[job_id]['completed_at'])
                  jobs[job_id]['logs'].append("No metadata file generated.")
         else:
             jobs[job_id]['status'] = 'failed'
+            jobs[job_id]['completed_at'] = time.time()
+            jobs[job_id]['duration_seconds'] = jobs[job_id]['completed_at'] - jobs[job_id].get('started_at', jobs[job_id]['completed_at'])
             jobs[job_id]['logs'].append(f"Process failed with exit code {returncode}")
-            
+
     except Exception as e:
         jobs[job_id]['status'] = 'failed'
+        jobs[job_id]['completed_at'] = time.time()
+        jobs[job_id]['duration_seconds'] = jobs[job_id]['completed_at'] - jobs[job_id].get('started_at', jobs[job_id].get('created_at', jobs[job_id]['completed_at']))
         jobs[job_id]['logs'].append(f"Execution error: {str(e)}")
 
 @app.get("/api/config")
@@ -434,8 +444,7 @@ async def process_endpoint(
     if aspect_ratio not in allowed_aspect_ratios:
         aspect_ratio = "9:16"
 
-    allowed_whisper_models = {"tiny", "base", "small", "medium", "large-v3"}
-    if whisper_model not in allowed_whisper_models:
+    if whisper_model not in WHISPER_MODELS:
         raise HTTPException(status_code=400, detail="Invalid Whisper model")
 
     if not url and not file:
@@ -522,7 +531,8 @@ async def process_endpoint(
         'cmd': cmd,
         'env': env,
         'output_dir': job_output_dir,
-        'attestation': attestation
+        'attestation': attestation,
+        'created_at': time.time(),
     }
 
     await job_queue.put(job_id)
@@ -542,10 +552,19 @@ async def get_status(job_id: str):
         jobs[job_id] = {"status": snap.get("status", "completed"), "logs": [], "result": snap.get("result")}
 
     job = jobs[job_id]
+    now = time.time()
+    started_at = job.get('started_at') or job.get('created_at')
+    completed_at = job.get('completed_at')
+    duration_seconds = job.get('duration_seconds')
     return {
         "status": job['status'],
         "logs": job['logs'],
-        "result": job.get('result')
+        "result": job.get('result'),
+        "created_at": job.get('created_at'),
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "elapsed_seconds": (completed_at or now) - started_at if started_at else None,
+        "duration_seconds": duration_seconds,
     }
 
 @app.delete("/api/jobs/{job_id}")
