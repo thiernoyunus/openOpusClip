@@ -60,6 +60,44 @@ function blockFilter(style: SubtitleStyle): string | undefined {
   return parts.length ? parts.join(" ") : undefined;
 }
 
+function emojiStyle(
+  style: SubtitleStyle,
+  placement: "above-word" | "below-word",
+  animation: NonNullable<SubtitleStyle["emojiAnimation"]>,
+  frame: number,
+  fps: number,
+  wordStartFrame: number
+): React.CSSProperties {
+  const size = style.emojiSize ?? 1;
+  const introFrames = Math.max(1, Math.round(0.25 * fps));
+  const p = interpolate(frame, [wordStartFrame, wordStartFrame + introFrames], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.out(Easing.cubic),
+  });
+  const popScale = animation === "pop" ? 0.45 + p * 0.65 : 1;
+  const bounceY = animation === "bounce" ? -Math.sin(p * Math.PI) * style.fontSize * 0.18 : 0;
+  const floatY = animation === "float" ? Math.sin((frame - wordStartFrame) / 6) * style.fontSize * 0.06 : 0;
+  const anchor =
+    placement === "above-word" ? { bottom: "72%" } : { top: "72%" };
+
+  return {
+    position: "absolute",
+    left: "50%",
+    ...anchor,
+    fontSize: Math.round(style.fontSize * 0.82 * size),
+    lineHeight: 1,
+    opacity: p,
+    transform: `translate(-50%, ${(bounceY + floatY).toFixed(1)}px) scale(${popScale.toFixed(3)})`,
+    transformOrigin: "center",
+    WebkitTextStroke: 0,
+    textShadow: "none",
+    filter: "drop-shadow(0 3px 8px rgba(0,0,0,0.5))",
+    pointerEvents: "none",
+    zIndex: 2,
+  };
+}
+
 /** How long a block lingers after its last word, clamped to the next block. */
 const TAIL_MS = 320;
 /** Block fade in/out length, in frames (~0.27s at 30fps so it reads clearly). */
@@ -285,30 +323,58 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           // always wins so its live animation is never overridden.
           const highlighted = word.highlight === true;
           const forceHighlight = highlighted && !isActive && frame >= wordStartFrame;
-          // Append the emoji to the word text so it lives inside the same
-          // animated span the template renders (timing/animation still apply).
           const text =
             style.punctuation === false
               ? word.text.replace(/[.,!?;:…]+$/u, "")
               : word.text;
-          const renderedText = word.emoji ? `${text} ${word.emoji}` : text;
+          const emojiPlacement = style.emojiPlacement ?? "above-word";
+          const emojiAnimation = style.emojiAnimation ?? "pop";
+          const renderedText =
+            word.emoji && emojiPlacement === "inline" ? `${text} ${word.emoji}` : text;
+          const renderedWord = template.renderWord({
+            word: renderedText,
+            isActive: isActive || forceHighlight,
+            isPast,
+            frame,
+            fps,
+            wordStartFrame,
+            wordEndFrame,
+            style,
+            fontStack,
+            uppercase,
+            seed: Math.round(word.startMs),
+            isEmphasis: i === emphasisIndex,
+          });
+
+          if (!word.emoji || emojiPlacement === "none" || emojiPlacement === "inline") {
+            return <React.Fragment key={i}>{renderedWord}</React.Fragment>;
+          }
+
           return (
-            <React.Fragment key={i}>
-              {template.renderWord({
-                word: renderedText,
-                isActive: isActive || forceHighlight,
-                isPast,
-                frame,
-                fps,
-                wordStartFrame,
-                wordEndFrame,
-                style,
-                fontStack,
-                uppercase,
-                seed: Math.round(word.startMs),
-                isEmphasis: i === emphasisIndex,
-              })}
-            </React.Fragment>
+            <span
+              key={i}
+              style={{
+                position: "relative",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                lineHeight: 1,
+              }}
+            >
+              {renderedWord}
+              <span
+                style={emojiStyle(
+                  style,
+                  emojiPlacement,
+                  emojiAnimation,
+                  frame,
+                  fps,
+                  wordStartFrame
+                )}
+              >
+                {word.emoji}
+              </span>
+            </span>
           );
         })}
       </div>

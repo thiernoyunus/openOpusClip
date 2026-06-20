@@ -33,6 +33,18 @@ const CAPTION_ANIM_OPTIONS = [
     { v: 'zoom-in', l: 'Zoom in' },
     { v: 'slide-up-zoom', l: 'Slide + Zoom' },
 ];
+const EMOJI_PLACEMENTS = [
+    { value: 'above-word', label: 'Above' },
+    { value: 'below-word', label: 'Below' },
+    { value: 'inline', label: 'Inline' },
+    { value: 'none', label: 'Off' },
+];
+const EMOJI_ANIM_OPTIONS = [
+    { v: 'pop', l: 'Pop' },
+    { v: 'bounce', l: 'Bounce' },
+    { v: 'float', l: 'Float' },
+    { v: 'none', l: 'None' },
+];
 
 const EFFECT_TEMPLATES = CAPTION_TEMPLATES.filter((t) => t.category === 'effects');
 const CLASSIC_TEMPLATES = CAPTION_TEMPLATES.filter((t) => t.category === 'classic');
@@ -475,6 +487,41 @@ function CaptionsPanel({ framing, captions, dispatch }) {
                                 <option key={o.v} value={o.v}>{o.l}</option>
                             ))}
                         </select>
+                    </div>
+
+                    {/* Emoji overlays */}
+                    <div className="pt-2 border-t border-edge/60 space-y-3">
+                        <div>
+                            <span className="block text-[11px] text-muted mb-1.5">Emoji placement</span>
+                            <Seg
+                                options={EMOJI_PLACEMENTS}
+                                value={st.emojiPlacement ?? 'above-word'}
+                                onChange={(v) => setStyle({ emojiPlacement: v })}
+                            />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <span className="block text-[11px] text-muted mb-1.5">Emoji motion</span>
+                                <select
+                                    value={st.emojiAnimation ?? 'pop'}
+                                    onChange={(e) => setStyle({ emojiAnimation: e.target.value })}
+                                    className="w-full bg-surface2 border border-edge rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-white/30 [color-scheme:dark]"
+                                >
+                                    {EMOJI_ANIM_OPTIONS.map((o) => (
+                                        <option key={o.v} value={o.v}>{o.l}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <RangeRow
+                                label="Emoji size"
+                                value={st.emojiSize ?? 1}
+                                min={0.5}
+                                max={2}
+                                step={0.1}
+                                fmt={(v) => `${Number(v).toFixed(1)}×`}
+                                onChange={(v) => setStyle({ emojiSize: v })}
+                            />
+                        </div>
                     </div>
 
                     {/* Per-style tunables (e.g. typewriter/matrix speed) */}
