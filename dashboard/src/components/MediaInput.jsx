@@ -10,6 +10,7 @@ const WHISPER_MODELS = [
     { value: 'base', label: 'Base', help: 'Current default' },
     { value: 'small', label: 'Small', help: 'Better accuracy, slower' },
     { value: 'medium', label: 'Medium', help: 'Strong accuracy, much slower' },
+    { value: 'large-v3-turbo', label: 'Large v3 Turbo', help: 'Near-best accuracy, much faster' },
     { value: 'large-v3', label: 'Large v3', help: 'Best accuracy, slowest' },
 ];
 

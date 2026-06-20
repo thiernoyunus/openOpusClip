@@ -32,7 +32,7 @@ function save(list) {
   return list.slice(0, MAX);
 }
 
-export function addProject({ id, title, type, model, thumb, src }) {
+export function addProject({ id, title, type, model, thumb, src, startedAt }) {
   const list = getProjects().filter((p) => p.id !== id);
   const entry = {
     id,
@@ -42,7 +42,7 @@ export function addProject({ id, title, type, model, thumb, src }) {
     src: src || null,
     thumb: thumb || null,
     status: 'processing',
-    createdAt: Date.now(),
+    createdAt: startedAt || Date.now(),
     cost: null,
     clipCount: 0,
   };

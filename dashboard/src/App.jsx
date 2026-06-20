@@ -127,6 +127,17 @@ const LEGACY_SESSION_KEY = 'openshorts_session_v1';
 const SESSION_MAX_AGE = 3600000; // 1 hour (matches server job retention)
 const MAX_POLL_FAILURES = 5;
 
+const formatJobDuration = (seconds) => {
+  if (seconds == null || Number.isNaN(Number(seconds))) return null;
+  const total = Math.max(0, Math.round(Number(seconds)));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m ${s}s`;
+  return `${s}s`;
+};
+
 class JobExpiredError extends Error {
   constructor(message = 'Job expired') {
     super(message);
@@ -179,6 +190,10 @@ function App() {
     getProjects().filter((p) => p.status === 'processing').map((p) => p.id)
   ));
   const pollFailureCounts = useRef({});
+  const fallbackDurationSeconds = (id) => {
+    const project = getProjects().find((p) => p.id === id);
+    return project?.createdAt ? (Date.now() - project.createdAt) / 1000 : null;
+  };
 
   // Sync state for original video playback
   const [_syncedTime, setSyncedTime] = useState(0);
@@ -218,6 +233,11 @@ function App() {
             if (session.processingMedia) setProcessingMedia(session.processingMedia);
             if (session.activeTab) setActiveTab(session.activeTab);
             setStatus(data.status === 'completed' ? 'complete' : data.status === 'failed' ? 'error' : 'processing');
+            const recoveredDone = data.status === 'completed' || data.status === 'failed';
+            setProjects(updateProject(session.jobId, {
+              durationSeconds: data.duration_seconds ?? (recoveredDone ? fallbackDurationSeconds(session.jobId) : null),
+              elapsedSeconds: data.elapsed_seconds ?? null,
+            }));
             setSessionRecovered(true);
             setTimeout(() => setSessionRecovered(false), 5000);
           })
@@ -327,19 +347,28 @@ function App() {
               status: 'complete',
               clipCount: data.result?.clips?.length || 0,
               cost: data.result?.cost_analysis?.total_cost ?? null,
+              durationSeconds: data.duration_seconds ?? fallbackDurationSeconds(id),
+              elapsedSeconds: data.elapsed_seconds ?? null,
             }));
             if (id === jobId) {
               setStatus('complete');
               if (data.result) setResults(data.result);
             }
           } else if (data.status === 'failed') {
-            setProjects(updateProject(id, { status: 'failed' }));
+            setProjects(updateProject(id, {
+              status: 'failed',
+              durationSeconds: data.duration_seconds ?? fallbackDurationSeconds(id),
+              elapsedSeconds: data.elapsed_seconds ?? null,
+            }));
             if (id === jobId) {
               setStatus('error');
               const errorMsg = data.error || (data.logs && data.logs.length > 0 ? data.logs[data.logs.length - 1] : "Process failed");
               setLogs(prev => [...prev, "Error: " + errorMsg]);
             }
           } else {
+            setProjects(updateProject(id, {
+              elapsedSeconds: data.elapsed_seconds ?? null,
+            }));
             nextIds.push(id);
           }
         } catch (e) {
@@ -464,6 +493,7 @@ function App() {
       type: data.type,
       model: data.whisperModel,
       thumb: thumbFromPayload(data),
+      startedAt: Date.now(),
       src: data.type === 'url' ? data.payload : null,
     }));
     setProcessingJobIds((ids) => ids.includes(newId) ? ids : [...ids, newId]);
@@ -555,10 +585,16 @@ function App() {
               status: 'complete',
               clipCount: data.result?.clips?.length || 0,
               cost: data.result?.cost_analysis?.total_cost ?? null,
+              durationSeconds: data.duration_seconds ?? (p.createdAt ? (Date.now() - p.createdAt) / 1000 : null),
+              elapsedSeconds: data.elapsed_seconds ?? null,
             }));
           } else if (data.status === 'failed') {
             setStatus('error');
-            setProjects(updateProject(p.id, { status: 'failed' }));
+            setProjects(updateProject(p.id, {
+              status: 'failed',
+              durationSeconds: data.duration_seconds ?? (p.createdAt ? (Date.now() - p.createdAt) / 1000 : null),
+              elapsedSeconds: data.elapsed_seconds ?? null,
+            }));
           } else {
             setStatus('processing');
           }
@@ -657,6 +693,9 @@ function App() {
     const failed = p.status === 'failed';
     const expired = p.status === 'expired';
     const phase = isActive ? phaseFromLogs(logs) : 'Processing';
+    const durationLabel = formatJobDuration(
+      p.durationSeconds ?? p.elapsedSeconds ?? (proc && p.createdAt ? (Date.now() - p.createdAt) / 1000 : null)
+    );
     const cover = p.thumb || coverFromString(p.src || p.title);
     const handleDelete = async (e) => {
       e.stopPropagation();
@@ -703,6 +742,7 @@ function App() {
           <div className="flex items-center justify-between mt-1">
             <span className="text-[11px] text-muted">
               {proc ? 'Processing' : failed ? 'Failed' : expired ? 'Expired' : `${p.clipCount} clip${p.clipCount === 1 ? '' : 's'}`}
+              {durationLabel ? ` · ${proc ? 'running ' : ''}${durationLabel}` : ''}
             </span>
             {p.cost != null && (
               <span className="text-[10px] text-muted bg-surface2 px-1.5 py-0.5 rounded">${p.cost.toFixed(3)}</span>
@@ -721,6 +761,13 @@ function App() {
       </div>
     );
   };
+
+  const activeProject = projects.find((p) => p.id === jobId);
+  const activeDuration = formatJobDuration(
+    activeProject?.durationSeconds ??
+    activeProject?.elapsedSeconds ??
+    (activeProject?.createdAt ? (Date.now() - activeProject.createdAt) / 1000 : null)
+  );
 
   return (
     <div className="flex h-screen bg-background overflow-hidden selection:bg-primary/30">
@@ -1249,6 +1296,7 @@ function App() {
         logs={logs}
         status={status}
         phase={phaseFromLogs(logs)}
+        duration={activeDuration}
         onViewClips={() => { setShowProcessingModal(false); setViewingResults(true); }}
       />
 

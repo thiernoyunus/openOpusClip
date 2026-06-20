@@ -11,7 +11,7 @@ function logColor(line) {
   return 'text-muted';
 }
 
-export default function ProcessingModal({ open, onClose, title: _title, logs = [], status, phase, onViewClips }) {
+export default function ProcessingModal({ open, onClose, title: _title, logs = [], status, phase, duration, onViewClips }) {
   const endRef = useRef(null);
 
   useEffect(() => {
@@ -36,10 +36,10 @@ export default function ProcessingModal({ open, onClose, title: _title, logs = [
             </h2>
             <p className="text-xs text-muted mt-1 truncate">
               {done
-                ? 'Open the project to review and edit your clips.'
+                ? `Open the project to review and edit your clips${duration ? ` — finished in ${duration}` : ''}.`
                 : failed
                   ? 'Something went wrong — see the log below.'
-                  : "You'll get a notification once it's done — check back soon."}
+                  : `You'll get a notification once it's done${duration ? ` — running ${duration}` : ''}.`}
             </p>
           </div>
           <button onClick={onClose} aria-label="Close" className="text-muted hover:text-fg transition-colors shrink-0 ml-3">
