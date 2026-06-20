@@ -296,7 +296,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     const [saving, setSaving] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [exportProgress, setExportProgress] = useState(0);
-    const [captions, setCaptions] = useState([]);
+    const [captions, setCaptions] = useState(() => clip.transcript_captions || clip.transcriptCaptions || []);
     const [activeTab, setActiveTab] = useState('captions');
     // Right tool panel is collapsed by default (max canvas space); a rail click
     // opens it, clicking the active tool (or the header chevron) collapses it.

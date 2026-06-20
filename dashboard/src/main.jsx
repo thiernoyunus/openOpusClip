@@ -6,6 +6,43 @@ import Landing from './Landing.jsx'
 import Legal from './Legal.jsx'
 import EditorView from './components/editor/EditorView.jsx'
 
+const buildDevTranscript = (items) => {
+  let t = 0;
+  const words = [];
+  items.forEach((item) => {
+    if (typeof item === 'number') {
+      t += Math.max(0, item * 1000 - 80);
+      return;
+    }
+    const word = typeof item === 'string' ? { text: item } : item;
+    const duration = Math.max(180, Math.min(520, word.text.length * 42 + 120));
+    words.push({
+      text: word.text,
+      startMs: Math.round(t),
+      endMs: Math.round(t + duration),
+      emoji: word.emoji,
+      highlight: word.highlight,
+    });
+    t += duration + 80;
+  });
+  return words;
+};
+
+const TEST_TRANSCRIPT = buildDevTranscript([
+  "It's", 0.46, 'just', 'what', 'I', 'need', 0.34,
+  { text: 'Something', highlight: true }, 'like', 'this', "doesn't", { text: 'exist', highlight: true }, { text: 'anywhere', highlight: true },
+  'in', 'the', 'world', 'where', 0.42, 'young', 0.82,
+  { text: 'Muslim', highlight: true }, 'practicing', 'brothers', 'who', 'are', 'also', { text: 'successful', highlight: true },
+  'in', 'their', 'own', 'careers', 'come', { text: 'together', highlight: true }, 0.78,
+  { text: 'share', highlight: true }, { text: 'insights', highlight: true }, 'work', { text: 'together', highlight: true },
+  0.34, 'It', "doesn't", { text: 'happen', highlight: true }, 'anywhere', "it's", 'not', 'something', "that's",
+  { text: 'available', highlight: true }, 'anywhere', 'in', 'the', 'world', 'So', 'this', 'has', 'been',
+  { text: 'amazing', highlight: true, emoji: '🔥' }, 0.4, { text: 'meeting', highlight: true }, 'with', 'a', 'lot',
+  'of', 'brothers', 'from', 0.5, 'all', { text: 'corners', highlight: true }, 'of', 'the', 'world',
+  { text: 'connecting', highlight: true }, 'with', 'them', 0.28, 'possibly', 'doing', 'some',
+  { text: 'business', highlight: true },
+]);
+
 // Dev harness: open /?editorDev=1 to mount the clip editor against local
 // fixtures in dashboard/public/dev-fixtures/ (gitignored). Lets you work on the
 // editor without processing a job first.
@@ -21,6 +58,7 @@ const EDITOR_DEV_FIXTURES = {
     framing_url: '/dev-fixtures/test.framing.json',
     source_url: '/dev-fixtures/test-source.mp4',
     video_title_for_youtube_short: 'Test clip (Dubai network)',
+    transcript_captions: TEST_TRANSCRIPT,
   },
   demo: {
     framing_url: '/dev-fixtures/demo.framing.json',

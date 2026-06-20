@@ -37,6 +37,27 @@ export const FILLER_WORDS = new Set([
     'sort of',
 ]);
 
+export const MIN_VISIBLE_PAUSE_MS = 180;
+
+export function visibleTranscriptPauses(captions, thresholdMs = MIN_VISIBLE_PAUSE_MS) {
+    if (!captions || captions.length < 2) return [];
+    const pauses = [];
+    for (let index = 0; index < captions.length - 1; index += 1) {
+        const word = captions[index];
+        const next = captions[index + 1];
+        const gapMs = next.startMs - word.endMs;
+        if (gapMs < thresholdMs) continue;
+        pauses.push({
+            index,
+            startMs: word.endMs,
+            endMs: next.startMs,
+            durationMs: gapMs,
+            label: `${(gapMs / 1000).toFixed(gapMs >= 1000 ? 1 : 2)}s`,
+        });
+    }
+    return pauses;
+}
+
 /** Lowercase and strip surrounding/embedded punctuation so "Um," matches "um". */
 function cleanWord(text) {
     return (text || '')
