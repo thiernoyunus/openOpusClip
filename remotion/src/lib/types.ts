@@ -6,9 +6,8 @@ export interface CaptionWord {
   startMs: number;
   endMs: number;
   /**
-   * Optional emoji attached to this word (AI-inserted or manual). Rendered
-   * right after the word text inside the same animated span. Optional →
-   * existing caption data is unaffected (back-compat).
+   * Optional emoji attached to this word (AI-inserted or manual). Display style
+   * controls decide whether it renders inline, above, below, or hidden.
    */
   emoji?: string;
   /**
@@ -22,6 +21,8 @@ export interface CaptionWord {
 // --- Subtitle config ---
 export type SubtitleAnimation = "none" | "word-highlight" | "pop" | "karaoke";
 export type SubtitlePosition = "top" | "middle" | "bottom";
+export type SubtitleEmojiPlacement = "none" | "above-word" | "below-word" | "inline";
+export type SubtitleEmojiAnimation = "none" | "pop" | "bounce" | "float";
 
 export type SubtitleShadow = "none" | "small" | "medium" | "large";
 export type SubtitleEntrance =
@@ -79,6 +80,18 @@ export interface SubtitleStyle {
   glowColor?: string;
   /** Glow strength 0–100 (mapped to a font-size-relative blur). Default 30. */
   glowIntensity?: number;
+  /** Where word-attached emojis render. Defaults to above-word. */
+  emojiPlacement?: SubtitleEmojiPlacement;
+  /** Native emoji motion preset. Defaults to pop. */
+  emojiAnimation?: SubtitleEmojiAnimation;
+  /** Emoji size multiplier relative to caption text. Defaults to 1. */
+  emojiSize?: number;
+  /**
+   * Gap between an above/below emoji and the caption word, as a fraction of the
+   * caption font size (0.2 = 20%). Larger values push the emoji further away.
+   * Defaults to 0.2.
+   */
+  emojiGap?: number;
 }
 
 export interface SubtitleConfig {
@@ -323,6 +336,10 @@ export const subtitleStyleSchema = z.object({
   glow: z.boolean().optional(),
   glowColor: z.string().optional(),
   glowIntensity: z.number().min(0).max(100).optional(),
+  emojiPlacement: z.enum(["none", "above-word", "below-word", "inline"]).optional(),
+  emojiAnimation: z.enum(["none", "pop", "bounce", "float"]).optional(),
+  emojiSize: z.number().min(0.5).max(4).optional(),
+  emojiGap: z.number().min(0).max(1).optional(),
 });
 
 export const subtitleConfigSchema = z.object({
