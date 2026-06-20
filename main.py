@@ -96,15 +96,20 @@ def get_face_detection():
 def run_logged_command(command, label, output_path=None, check=False, interval=10):
     print(f"   ▶️  {label}...")
     start = time.time()
-    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    while process.poll() is None:
-        time.sleep(interval)
-        message = f"   ⏳ {label} still running ({time.time() - start:.0f}s)"
-        if output_path and os.path.exists(output_path):
-            message += f", output {os.path.getsize(output_path) / (1024 * 1024):.1f} MB"
-        print(message)
+    # ponytail: stderr -> temp file, not PIPE. We don't drain the pipe inside the
+    # poll loop, so a chatty ffmpeg could fill the 64KB pipe buffer and deadlock.
+    # A temp file has no such limit and avoids spinning up a reader thread.
+    with tempfile.TemporaryFile() as stderr_file:
+        process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=stderr_file)
+        while process.poll() is None:
+            time.sleep(interval)
+            message = f"   ⏳ {label} still running ({time.time() - start:.0f}s)"
+            if output_path and os.path.exists(output_path):
+                message += f", output {os.path.getsize(output_path) / (1024 * 1024):.1f} MB"
+            print(message)
 
-    stderr = process.stderr.read()
+        stderr_file.seek(0)
+        stderr = stderr_file.read()
     if process.returncode != 0:
         print(f"   ❌ {label} failed (exit code {process.returncode}).")
         if check:
