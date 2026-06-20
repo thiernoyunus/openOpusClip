@@ -233,8 +233,9 @@ function App() {
             if (session.processingMedia) setProcessingMedia(session.processingMedia);
             if (session.activeTab) setActiveTab(session.activeTab);
             setStatus(data.status === 'completed' ? 'complete' : data.status === 'failed' ? 'error' : 'processing');
+            const recoveredDone = data.status === 'completed' || data.status === 'failed';
             setProjects(updateProject(session.jobId, {
-              durationSeconds: data.duration_seconds ?? null,
+              durationSeconds: data.duration_seconds ?? (recoveredDone ? fallbackDurationSeconds(session.jobId) : null),
               elapsedSeconds: data.elapsed_seconds ?? null,
             }));
             setSessionRecovered(true);
@@ -584,14 +585,14 @@ function App() {
               status: 'complete',
               clipCount: data.result?.clips?.length || 0,
               cost: data.result?.cost_analysis?.total_cost ?? null,
-              durationSeconds: data.duration_seconds ?? fallbackDurationSeconds(p.id),
+              durationSeconds: data.duration_seconds ?? (p.createdAt ? (Date.now() - p.createdAt) / 1000 : null),
               elapsedSeconds: data.elapsed_seconds ?? null,
             }));
           } else if (data.status === 'failed') {
             setStatus('error');
             setProjects(updateProject(p.id, {
               status: 'failed',
-              durationSeconds: data.duration_seconds ?? fallbackDurationSeconds(p.id),
+              durationSeconds: data.duration_seconds ?? (p.createdAt ? (Date.now() - p.createdAt) / 1000 : null),
               elapsedSeconds: data.elapsed_seconds ?? null,
             }));
           } else {
