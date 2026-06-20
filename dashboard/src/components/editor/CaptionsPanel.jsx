@@ -186,7 +186,7 @@ function RangeRow({ label, value, min, max, step = 1, fmt, onChange }) {
  * Submagic-style. All edits flow through SET_SUBTITLES so the live preview updates
  * instantly and they persist with Save / are baked into the Export.
  */
-function CaptionsPanel({ framing, captions, dispatch }) {
+function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions }) {
     const subs = framing.subtitles || null;
     const [savedDefault, setSavedDefault] = useState(false);
     const [customizing, setCustomizing] = useState(false);
@@ -258,6 +258,7 @@ function CaptionsPanel({ framing, captions, dispatch }) {
                 return next;
             });
             dispatch({ type: 'SET_SUBTITLES', subtitles: { ...base, captions: merged } });
+            onEnhanceCaptions?.(merged);
         } catch (e) {
             setEnhanceError(e.message || 'AI enhancement failed. Try again.');
         } finally {
@@ -274,6 +275,7 @@ function CaptionsPanel({ framing, captions, dispatch }) {
             return rest;
         });
         dispatch({ type: 'SET_SUBTITLES', subtitles: { ...subs, captions: cleaned } });
+        onEnhanceCaptions?.(cleaned);
         setEnhanceError(null);
     };
 
