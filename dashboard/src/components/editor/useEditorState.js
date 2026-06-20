@@ -105,8 +105,9 @@ export const editorReducer = (state, action) => {
         case 'EDIT_CAPTION_WORD': {
             const subs = state.framing.subtitles;
             if (!subs) return state;
+            const patch = action.patch ?? { text: action.text };
             const captions = subs.captions.map((w, i) =>
-                i === action.index ? { ...w, text: action.text } : w
+                i === action.index ? { ...w, ...patch } : w
             );
             return withHistory({
                 ...state.framing,
