@@ -139,7 +139,7 @@ Complete free AI YouTube toolkit: thumbnails, titles, descriptions, and direct p
 ### Clip Generator
 - **Viral Moment Detection**: Google Gemini 3.0 Flash analyzes transcripts and scene boundaries to detect 3-15 high-potential moments
 - **Smart 9:16 Cropping**: Dual-mode AI reframing — TRACK mode (MediaPipe + YOLOv8 face tracking) and GENERAL mode (blurred background)
-- **Auto Subtitles**: faster-whisper with word-level timestamps, styled and burned into clips
+- **Auto Subtitles**: faster-whisper, plus optional MLX Whisper on Apple Silicon, with word-level timestamps styled and burned into clips
 - **AI Voice Dubbing**: ElevenLabs integration for 30+ languages with voice cloning
 - **Hook Text Overlays**: AI-generated attention-grabbing text overlays
 - **AI Video Effects**: Gemini-generated FFmpeg filters for professional effects
@@ -160,6 +160,12 @@ Complete free AI YouTube toolkit: thumbnails, titles, descriptions, and direct p
 ### Infrastructure
 - S3 cloud backup for generated clips
 - Async job queue with configurable concurrency
+
+### Transcription speed
+- Models: `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo`
+- Default backend: `faster-whisper` on Windows, Intel Mac, and Linux
+- Apple Silicon (native install): `mlx-whisper` installs automatically via `requirements.txt` and is used for acceleration. Docker always runs faster-whisper (mlx can't run in a Linux container).
+- Overrides: `WHISPER_BACKEND=auto|faster-whisper|mlx-whisper`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`
 
 ---
 

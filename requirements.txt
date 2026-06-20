@@ -11,6 +11,10 @@ python-dotenv==1.2.2
 mediapipe==0.10.14
 boto3==1.43.4
 
+# Auto-installs only on Apple Silicon for fast local transcription;
+# pip skips it on Docker/Linux/Intel (no mlx wheels there), so the build never breaks.
+mlx-whisper; sys_platform == "darwin" and platform_machine == "arm64"
+
 fastapi==0.136.1
 uvicorn==0.46.0
 python-multipart==0.0.27
