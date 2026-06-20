@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Loader2, AlertCircle, Captions, Crosshair, Sparkles, Type, Music, Clapperboard, ChevronRight, ChevronDown, Check, Crop, Trash2 } from 'lucide-react';
 import { getApiUrl } from '../../config';
 import useEditorState, { defaultSubtitleConfig, loadDefaultCaptionStyle, tracksInClip, LAYOUT_PANELS } from './useEditorState';
-import { outputDurationFrames, outputToSource } from '@remotion-src/lib/edl';
+import { outputDurationFrames, outputToSource, placedClips, sourceToOutputAll } from '@remotion-src/lib/edl';
 import EditorTopBar from './EditorTopBar';
 import EditorCanvas, { EDITOR_FPS } from './EditorCanvas';
 import EditorTimeline from './EditorTimeline';
@@ -83,7 +83,7 @@ function AspectIcon({ width, height }) {
     );
 }
 
-function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker, dispatch, sourceUrl }) {
+function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker, dispatch, sourceUrl, playerRef }) {
     const [aspectOpen, setAspectOpen] = useState(false);
     const [layoutOpen, setLayoutOpen] = useState(false);
     const [globalOpen, setGlobalOpen] = useState(false);
@@ -101,6 +101,7 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
         : 0;
     const outW = framing.outputWidth ?? 1080;
     const outH = framing.outputHeight ?? 1920;
+    const fitMatchesFill = Math.abs((framing.source.width / framing.source.height) - (outW / outH)) < 0.01;
     const currentAspect = ASPECT_OPTIONS.find((a) => a.width === outW && a.height === outH) || ASPECT_OPTIONS[0];
     const canManuallyReframe = selected.length <= 1 && primary;
 
@@ -108,6 +109,13 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
         const clipIds = selected.length ? selectedIds : primary ? [primary.id] : [];
         if (!global && !selected.length && primary) dispatch({ type: 'SELECT', id: primary.id, multi: false });
         dispatch({ type: 'SET_LAYOUT', layout, global, clipIds });
+        if (!global && primary) {
+            const outFrame = placedClips(framing, EDITOR_FPS).find((p) => p.clip.id === primary.id)?.outStart;
+            if (outFrame !== undefined) {
+                playerRef.current?.pause();
+                playerRef.current?.seekTo(outFrame);
+            }
+        }
         setLayoutOpen(false);
         setGlobalOpen(false);
     };
@@ -147,7 +155,7 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
                         }`}
                     >
                         <MiniLayoutIcon layout={id} />
-                        <span className="flex-1">{LAYOUT_LABEL[id] || id}</span>
+                        <span className="flex-1">{LAYOUT_LABEL[id] || id}{id === 'fit' && fitMatchesFill ? ' (same as Fill)' : ''}</span>
                         {active && !disabled && <Check size={13} />}
                     </button>
                 );
@@ -296,7 +304,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     const [saving, setSaving] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [exportProgress, setExportProgress] = useState(0);
-    const [captions, setCaptions] = useState([]);
+    const [captions, setCaptions] = useState(() => clip.transcript_captions || clip.transcriptCaptions || []);
     const [activeTab, setActiveTab] = useState('captions');
     // Right tool panel is collapsed by default (max canvas space); a rail click
     // opens it, clicking the active tool (or the header chevron) collapses it.
@@ -363,13 +371,14 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     }, [state.framing, captions, dispatch]);
 
     const handleEditWord = useCallback(
-        (wordIndex, text) => {
-            setCaptions((prev) => prev.map((w, i) => (i === wordIndex ? { ...w, text } : w)));
+        (wordIndex, edit) => {
+            const patch = typeof edit === 'string' ? { text: edit } : edit;
+            setCaptions((prev) => prev.map((w, i) => (i === wordIndex ? { ...w, ...patch } : w)));
             if (state.framing?.subtitles) {
-                dispatch({ type: 'EDIT_CAPTION_WORD', index: wordIndex, text });
+                dispatch({ type: 'EDIT_CAPTION_WORD', index: wordIndex, patch });
             } else if (state.framing) {
                 // Editing a caption implies wanting captions: enable with the edit applied
-                const edited = captions.map((w, i) => (i === wordIndex ? { ...w, text } : w));
+                const edited = captions.map((w, i) => (i === wordIndex ? { ...w, ...patch } : w));
                 dispatch({ type: 'SET_SUBTITLES', subtitles: defaultSubtitleConfig(edited) });
             }
         },
@@ -596,6 +605,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                         onToggleTracker={() => setTrackerOn((v) => !v)}
                                         dispatch={dispatch}
                                         sourceUrl={sourceUrl}
+                                        playerRef={playerRef}
                                     />
                                 </div>
                                 <div className="relative flex-1 min-h-0 w-full p-4 pt-0">
