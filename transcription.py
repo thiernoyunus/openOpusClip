@@ -1,6 +1,7 @@
 import importlib.util
 import os
 import platform
+import subprocess
 from functools import lru_cache
 
 
@@ -154,16 +155,100 @@ def _transcribe_mlx_whisper(video_path, model_size, strip_words=False):
     }
 
 
+# Silence detection tuned to the editor's pause thresholds: gaps >= ~180ms show
+# as pause chips, >= 400ms are cuttable. Detect a little below 180ms so a real
+# pause is never missed; the frontend thresholds do the final filtering.
+SILENCE_NOISE_DB = -30
+SILENCE_MIN_S = 0.15
+
+
+def detect_silences(video_path, noise_db=SILENCE_NOISE_DB, min_silence=SILENCE_MIN_S):
+    """Silence intervals [(start_s, end_s)] from ffmpeg's silencedetect filter."""
+    cmd = [
+        "ffmpeg", "-hide_banner", "-nostats", "-i", video_path,
+        "-af", f"silencedetect=noise={noise_db}dB:d={min_silence}",
+        "-f", "null", "-",
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    silences = []
+    start = None
+    for line in proc.stderr.splitlines():
+        if "silence_start:" in line:
+            try:
+                start = float(line.split("silence_start:")[1].split()[0])
+            except (ValueError, IndexError):
+                start = None
+        elif "silence_end:" in line and start is not None:
+            try:
+                end = float(line.split("silence_end:")[1].split("|")[0].split()[0])
+                if end > start:
+                    silences.append((start, end))
+            except (ValueError, IndexError):
+                pass
+            start = None
+    return silences
+
+
+def _apply_silence_gaps(segments, silences):
+    """Carve real gaps into the word timeline using detected silences. Whisper
+    word alignment sets each word's end == the next word's start (no silence),
+    so pause/silence editing finds nothing — most visibly on mlx-whisper. For
+    each silence [s, e], push the preceding word's end back to s and the
+    following word's start forward to e, so a genuine gap appears. Mutates word
+    start/end in place; all times in seconds.
+
+    ponytail: O(words * silences) linear scans — fine for clip-length transcripts
+    (hundreds of words, tens of silences); switch to a two-pointer merge if it
+    ever runs on multi-hour audio.
+    """
+    words = [
+        w
+        for seg in segments
+        for w in seg.get("words", [])
+        if isinstance(w.get("start"), (int, float)) and isinstance(w.get("end"), (int, float))
+    ]
+    if not words or not silences:
+        return
+    for s, e in silences:
+        # Word spoken just before the silence: the last one starting before s.
+        prev = None
+        for w in words:
+            if w["start"] < s:
+                prev = w
+            else:
+                break
+        # Word resuming after the silence: the first one still ending after e.
+        nxt = next((w for w in words if w["end"] > e), None)
+        if prev is not None and prev["end"] > s:
+            prev["end"] = max(s, prev["start"])
+        if nxt is not None and nxt is not prev and nxt["start"] < e:
+            nxt["start"] = min(e, nxt["end"])
+
+
 def transcribe(video_path, model_size="base", backend=None, strip_words=False):
     model = normalize_model(model_size)
     selected = resolve_backend(backend)
+    result = None
     if selected == "mlx-whisper":
         try:
-            return _transcribe_mlx_whisper(video_path, model, strip_words=strip_words)
+            result = _transcribe_mlx_whisper(video_path, model, strip_words=strip_words)
         except Exception as exc:
             # ponytail: MLX is optional; faster-whisper remains the portable path.
             print(f"⚠️  MLX Whisper failed ({exc}); falling back to Faster-Whisper.")
-    return _transcribe_faster_whisper(video_path, model, strip_words=strip_words)
+    if result is None:
+        result = _transcribe_faster_whisper(video_path, model, strip_words=strip_words)
+
+    # Recover real word gaps from the audio so pause/silence editing works
+    # regardless of backend. Best-effort: never fail transcription over this.
+    try:
+        silences = detect_silences(video_path)
+        if silences:
+            _apply_silence_gaps(result["segments"], silences)
+            print(f"   🔇 Recovered {len(silences)} silence gap(s) in word timings.")
+    except Exception as exc:
+        print(f"⚠️  Silence-gap pass skipped: {exc}")
+
+    return result
 
 
 def _self_check():
@@ -171,6 +256,21 @@ def _self_check():
     assert normalize_model("nope") == "base"
     assert resolve_backend("faster") == "faster-whisper"
     assert resolve_backend("mlx") == "mlx-whisper"
+
+    # Gapless words (end == next start) with a silence inside the boundary should
+    # come out with a real gap matching the silence interval.
+    segs = [{"words": [
+        {"word": "a", "start": 0.0, "end": 1.3},
+        {"word": "b", "start": 1.3, "end": 2.0},
+    ]}]
+    _apply_silence_gaps(segs, [(1.0, 1.6)])
+    w = segs[0]["words"]
+    assert w[0]["end"] == 1.0 and w[1]["start"] == 1.6, w
+    assert round(w[1]["start"] - w[0]["end"], 3) == 0.6  # genuine gap now
+    # No silence -> untouched.
+    segs2 = [{"words": [{"word": "x", "start": 0.0, "end": 0.5}]}]
+    _apply_silence_gaps(segs2, [])
+    assert segs2[0]["words"][0]["end"] == 0.5
 
 
 if __name__ == "__main__":
