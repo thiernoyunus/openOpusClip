@@ -171,7 +171,9 @@ def detect_silences(video_path, noise_db=SILENCE_NOISE_DB, min_silence=SILENCE_M
         "-af", f"silencedetect=noise={noise_db}dB:d={min_silence}",
         "-f", "null", "-",
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    # errors="replace": ffmpeg stderr can carry non-UTF8 bytes (paths/metadata),
+    # which would otherwise raise on non-UTF8 default encodings (e.g. Windows).
+    proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
     silences = []
     start = None
     for line in proc.stderr.splitlines():
@@ -221,9 +223,15 @@ def _apply_silence_gaps(segments, silences):
                 break
         # Word resuming after the silence: the first one still ending after e.
         nxt = next((w for w in words if w["end"] > e), None)
+        # Silence falls entirely inside one word's span (prev is nxt): there's a
+        # single word token covering it, so we can't split it without inventing a
+        # phantom gap (would truncate the word and let cleanup eat real speech).
+        # Leave it untouched.
+        if prev is not None and nxt is not None and prev is nxt:
+            continue
         if prev is not None and prev["end"] > s:
             prev["end"] = max(s, prev["start"])
-        if nxt is not None and nxt is not prev and nxt["start"] < e:
+        if nxt is not None and nxt["start"] < e:
             nxt["start"] = min(e, nxt["end"])
 
 
@@ -273,6 +281,14 @@ def _self_check():
     segs2 = [{"words": [{"word": "x", "start": 0.0, "end": 0.5}]}]
     _apply_silence_gaps(segs2, [])
     assert segs2[0]["words"][0]["end"] == 0.5
+    # Silence fully inside one word span (prev is nxt) -> leave word untouched,
+    # don't invent a phantom gap.
+    segs3 = [{"words": [
+        {"word": "a", "start": 0.0, "end": 2.0},
+        {"word": "b", "start": 2.0, "end": 3.0},
+    ]}]
+    _apply_silence_gaps(segs3, [(1.0, 1.6)])
+    assert segs3[0]["words"][0]["end"] == 2.0 and segs3[0]["words"][1]["start"] == 2.0, segs3
 
 
 if __name__ == "__main__":
