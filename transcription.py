@@ -164,8 +164,10 @@ SILENCE_MIN_S = 0.15
 
 def detect_silences(video_path, noise_db=SILENCE_NOISE_DB, min_silence=SILENCE_MIN_S):
     """Silence intervals [(start_s, end_s)] from ffmpeg's silencedetect filter."""
+    # -vn: silencedetect only needs the audio stream; decoding video here was
+    # ~20x slower for no reason.
     cmd = [
-        "ffmpeg", "-hide_banner", "-nostats", "-i", video_path,
+        "ffmpeg", "-hide_banner", "-nostats", "-vn", "-i", video_path,
         "-af", f"silencedetect=noise={noise_db}dB:d={min_silence}",
         "-f", "null", "-",
     ]
