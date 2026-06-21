@@ -14,7 +14,7 @@ const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three',
  * keeps the click/edit handlers stable (useCallback) and passes index+word
  * back through them, so this component's props stay referentially stable.
  */
-const Word = React.memo(function Word({ index, word, isActive, isCut, inSel, onWordClick, onEdit }) {
+const Word = React.memo(function Word({ index, word, isActive, suppressHighlight, isCut, inSel, onWordClick, onEdit }) {
     const displayText = word.emoji ? `${word.text} ${word.emoji}` : word.text;
     const colorClass = word.highlight ? 'text-[#04f827]' : 'text-white';
     return (
@@ -32,7 +32,7 @@ const Word = React.memo(function Word({ index, word, isActive, isCut, inSel, onW
                     ? 'line-through text-zinc-600 hover:text-zinc-400'
                     : inSel
                       ? 'bg-lime-300 text-black'
-                      : isActive
+                      : isActive && !suppressHighlight
                         ? 'bg-lime-300/35 text-fg'
                         : `${colorClass} hover:bg-white/10`
             }`}
@@ -473,6 +473,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                 index={row.index}
                                 word={row.word}
                                 isActive={row.index === activeIndex}
+                                suppressHighlight={!!selectedPause}
                                 isCut={isCutByWord[row.index]}
                                 inSel={!!(selRange && row.index >= selRange.lo && row.index <= selRange.hi)}
                                 onWordClick={onWordClick}
