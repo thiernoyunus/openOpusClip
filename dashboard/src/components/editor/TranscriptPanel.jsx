@@ -472,7 +472,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                 key={`w-${row.index}`}
                                 index={row.index}
                                 word={row.word}
-                                isActive={row.index === activeIndex}
+                                isActive={!selectedPause && row.index === activeIndex}
                                 isCut={isCutByWord[row.index]}
                                 inSel={!!(selRange && row.index >= selRange.lo && row.index <= selRange.hi)}
                                 onWordClick={onWordClick}
