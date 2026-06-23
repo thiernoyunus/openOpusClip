@@ -1,5 +1,19 @@
 import os
+import re
 import subprocess
+
+# Right-to-left scripts (Arabic incl. Persian/Urdu, Hebrew, Syriac, Thaana).
+_RTL_RE = re.compile(r"[֐-׿؀-ۿ܀-ݏݐ-ݿހ-޿ࢠ-ࣿיִ-﷿ﹰ-﻿]")
+
+# Bundled font with Arabic + Latin coverage (same dir Remotion captions use).
+# libass does the shaping + bidi itself once it has an Arabic-capable font.
+_FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "remotion", "public", "fonts")
+_ARABIC_FONT_NAME = "Noto Sans Arabic"
+
+
+def is_rtl(text):
+    """True if the text contains any right-to-left script characters."""
+    return bool(_RTL_RE.search(text or ""))
 
 
 def transcribe_audio(video_path):
@@ -161,6 +175,19 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
     # Path handling for FFmpeg filter syntax
     safe_srt_path = srt_path.replace('\\', '/').replace(':', '\\:')
 
+    # If the subtitles contain RTL text (Arabic, etc.), Verdana and friends have
+    # no Arabic glyphs → tofu. Switch to the bundled Arabic-capable font and point
+    # libass at its directory; libass handles shaping + bidi from there.
+    fontsdir_clause = ""
+    try:
+        with open(srt_path, encoding="utf-8") as f:
+            if is_rtl(f.read()):
+                font_name = _ARABIC_FONT_NAME
+                safe_fontsdir = _FONTS_DIR.replace('\\', '/').replace(':', '\\:')
+                fontsdir_clause = f":fontsdir='{safe_fontsdir}'"
+    except OSError:
+        pass
+
     # Convert colors to ASS format and build style
     primary_colour = hex_to_ass_color(font_color, 1.0)
 
@@ -194,7 +221,7 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
     cmd = [
         'ffmpeg', '-y',
         '-i', video_path,
-        '-vf', f"subtitles='{safe_srt_path}':force_style='{style_string}'",
+        '-vf', f"subtitles='{safe_srt_path}'{fontsdir_clause}:force_style='{style_string}'",
         '-c:a', 'copy',
         '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
         output_path

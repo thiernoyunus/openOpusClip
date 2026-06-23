@@ -78,6 +78,15 @@ export const captionFontFaces = `
   font-style: normal;
   font-display: block;
 }
+@font-face {
+  /* Arabic/RTL fallback. Bold static covers every requested weight (it's a
+     fallback for non-Latin glyphs, not a primary weight-variable face). */
+  font-family: 'Noto Sans Arabic';
+  src: url('${staticFile("fonts/NotoSansArabic-Bold.ttf")}') format('truetype');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
 `;
 
 /** Caption font families that need @font-face injection + a load wait before render. */
@@ -90,6 +99,9 @@ export const BUNDLED_CAPTION_FONTS = [
   "Anton",
   "Poppins",
   "Instrument Serif",
+  // Not user-selectable; appended as the RTL fallback in getFontStack. Listed
+  // here so the render service waits for it to load before rendering frames.
+  "Noto Sans Arabic",
 ];
 
 /**
@@ -115,5 +127,9 @@ export const SUBTITLE_FONTS: Record<string, string> = {
 };
 
 export function getFontStack(fontFamily: string): string {
-  return SUBTITLE_FONTS[fontFamily] ?? fontFamily;
+  // Append the Arabic/RTL fallback to every stack so non-Latin glyphs (Arabic,
+  // Persian, Urdu) render instead of tofu boxes, while Latin keeps the chosen
+  // font. The render service preloads 'Noto Sans Arabic' (see BUNDLED_CAPTION_FONTS).
+  const base = SUBTITLE_FONTS[fontFamily] ?? fontFamily;
+  return `${base}, 'Noto Sans Arabic'`;
 }

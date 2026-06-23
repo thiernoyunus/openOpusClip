@@ -46,6 +46,7 @@ const PauseChip = React.memo(function PauseChip({ pause, selected, isCut, onPaus
     return (
         <button
             type="button"
+            dir="ltr"
             data-transcript-pause=""
             data-pause-index={pause.index}
             onClick={() => onPauseClick(pause)}
@@ -412,7 +413,14 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                     <span className="inline-flex items-center gap-1"><Clock size={10} /> click pauses to cut</span>
                 </div>
             </div>
-            <div ref={containerRef} className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 leading-7">
+            <div
+                ref={containerRef}
+                className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 leading-7"
+                // plaintext: let the bidi algorithm reorder runs (Arabic RTL, Latin
+                // LTR) per the first strong char of each block, without isolating
+                // each word. textAlign:start makes Arabic lines hug the right edge.
+                style={{ unicodeBidi: 'plaintext', textAlign: 'start' }}
+            >
                 {captions.length === 0 ? (
                     <p className="text-xs text-muted mt-2">No transcript available for this clip.</p>
                 ) : (
@@ -436,6 +444,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                             <React.Fragment key={`w-${row.index}`}>
                                 <input
                                     data-transcript-editor=""
+                                    dir="auto"
                                     autoFocus
                                     value={draft}
                                     onChange={(e) => setDraft(e.target.value)}
@@ -451,7 +460,8 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                         }
                                     }}
                                     className="inline-block bg-surface2 border border-white/30 rounded px-1 text-sm leading-7 text-fg focus:outline-none"
-                                    style={{ width: `${Math.min(18, Math.max(5, [...draft].length + 2))}ch` }}
+                                    // ch-based width is approximate for Arabic; min/max keeps it usable.
+                                    style={{ minWidth: '5ch', maxWidth: '22ch', width: `${Math.min(18, Math.max(5, [...draft].length + 2))}ch` }}
                                 />
                                 <button
                                     type="button"

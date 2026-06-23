@@ -168,6 +168,12 @@ function App() {
     if (stored) return decrypt(stored);
     return '';
   });
+  // Soniox API State - Load encrypted (multilingual transcription engine)
+  const [sonioxKey, setSonioxKey] = useState(() => {
+    const stored = localStorage.getItem('soniox_key_v1');
+    if (stored) return decrypt(stored);
+    return '';
+  });
 
   const [uploadUserId, setUploadUserId] = useState(() => localStorage.getItem('uploadUserId') || '');
   const [userProfiles, setUserProfiles] = useState([]); // List of {username, connected: []}
@@ -313,6 +319,12 @@ function App() {
   }, [elevenLabsKey]);
 
   useEffect(() => {
+    if (sonioxKey) {
+      localStorage.setItem('soniox_key_v1', encrypt(sonioxKey));
+    }
+  }, [sonioxKey]);
+
+  useEffect(() => {
     if (uploadPostKey && userProfiles.length === 0) {
       fetchUserProfiles();
     }
@@ -454,6 +466,10 @@ function App() {
   const startProcessJob = async (data, { makeActive = true } = {}) => {
     let body;
     const headers = { 'X-Gemini-Key': apiKey };
+    // Soniox is bring-your-own key: only sent when that engine is selected.
+    if (data.transcriptionEngine === 'soniox' && sonioxKey) {
+      headers['X-Soniox-Key'] = sonioxKey;
+    }
 
     // Optional clip controls (omit when unset so the backend keeps its defaults).
     const clip = {};
@@ -467,19 +483,22 @@ function App() {
 
     if (data.type === 'url') {
       headers['Content-Type'] = 'application/json';
-      body = JSON.stringify({ url: data.payload, acknowledged: !!data.acknowledged, whisper_model: data.whisperModel, ...clip });
+      body = JSON.stringify({ url: data.payload, acknowledged: !!data.acknowledged, whisper_model: data.whisperModel, transcription_engine: data.transcriptionEngine, ...clip });
     } else {
       const formData = new FormData();
       formData.append('file', data.payload);
       formData.append('acknowledged', data.acknowledged ? 'true' : 'false');
       formData.append('whisper_model', data.whisperModel);
+      formData.append('transcription_engine', data.transcriptionEngine || 'whisper');
       Object.entries(clip).forEach(([k, v]) => formData.append(k, String(v)));
       body = formData;
     }
 
     const res = await fetch(getApiUrl('/api/process'), {
       method: 'POST',
-      headers: data.type === 'url' ? headers : { 'X-Gemini-Key': apiKey },
+      // For file uploads the browser sets Content-Type (multipart boundary), so
+      // only forward the auth headers — including X-Soniox-Key when present.
+      headers: data.type === 'url' ? headers : { 'X-Gemini-Key': apiKey, ...(headers['X-Soniox-Key'] ? { 'X-Soniox-Key': headers['X-Soniox-Key'] } : {}) },
       body
     });
 
@@ -534,6 +553,7 @@ function App() {
           payload: file,
           acknowledged: data.acknowledged,
           whisperModel: data.whisperModel,
+          transcriptionEngine: data.transcriptionEngine,
           minClipLength: data.minClipLength,
           maxClipLength: data.maxClipLength,
           momentPrompt: data.momentPrompt,
@@ -957,6 +977,59 @@ function App() {
                 </div>
               </div>
 
+              <div className="glass-panel p-6 mt-8">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold">Transcription (Soniox)</h2>
+                  <span className="text-[10px] bg-white/5 border border-white/5 px-2 py-0.5 rounded text-zinc-500 uppercase tracking-wider">Optional</span>
+                </div>
+                <p className="text-xs text-zinc-500 mb-6 leading-relaxed">
+                  Use <strong>Soniox</strong> for transcription instead of the built-in Whisper.
+                  It's far better at <strong>multilingual</strong> audio &mdash; it catches both
+                  languages when someone speaks, e.g., Arabic and English in the same video.
+                  Select it under "Transcription" when you start a clip.
+                </p>
+                <div className="space-y-4">
+                  <label className="block text-sm text-zinc-400">Soniox API Key</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="password"
+                      value={sonioxKey}
+                      onChange={(e) => setSonioxKey(e.target.value)}
+                      className="input-field"
+                      placeholder="soniox API key..."
+                    />
+                    <button
+                      onClick={() => {
+                        if (sonioxKey) {
+                          localStorage.setItem('soniox_key_v1', encrypt(sonioxKey));
+                          alert('Soniox API Key saved!');
+                        }
+                      }}
+                      className="btn-primary py-2 px-4 text-sm"
+                    >
+                      Save
+                    </button>
+                  </div>
+                  <p className="text-xs text-zinc-500 leading-relaxed">
+                    Get your API key from Soniox to enable multilingual transcription.
+                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <a href="https://console.soniox.com/" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
+                        <span className="text-zinc-400 font-medium">1. Sign Up</span>
+                        <span className="text-[10px] text-zinc-600">Create account</span>
+                      </a>
+                      <a href="https://console.soniox.com/api-keys" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
+                        <span className="text-zinc-400 font-medium">2. API Key</span>
+                        <span className="text-[10px] text-zinc-600">Generate key</span>
+                      </a>
+                    </div>
+                    <br />
+                    <span className="text-zinc-600 italic">
+                      Keys are only stored in your browser. They are sent to the backend only to process your request, never stored server-side.
+                    </span>
+                  </p>
+                </div>
+              </div>
+
             </div>
           )}
 
@@ -1093,7 +1166,7 @@ function App() {
                 </div>
 
                 <div className="relative max-w-lg mx-auto">
-                  <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'} />
+                  <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'} hasSonioxKey={!!sonioxKey} />
                 </div>
 
                 {/* 3-tool shortcut row */}

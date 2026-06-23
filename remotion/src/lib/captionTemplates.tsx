@@ -2,6 +2,7 @@ import React from "react";
 import { interpolate, spring, random, Easing } from "remotion";
 import type { SubtitleStyle, SubtitleAnimation } from "./types";
 import type { GroupingOptions } from "./captions";
+import { isRTL } from "./rtl";
 
 /**
  * Caption template system.
@@ -240,6 +241,9 @@ const GlitchWord: React.FC<WordRenderArgs> = ({
 const GLYPHS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
 
 function scramble(word: string, seed: number, frame: number, revealCount: number): string {
+  // RTL (Arabic, etc.): never scramble. Substituting Latin glyphs and rendering
+  // partial words would both garble the text and break Arabic letter-joining.
+  if (isRTL(word)) return word;
   // Split by code point so emojis / surrogate pairs aren't sliced in half.
   const chars = Array.from(word);
   let out = "";
@@ -683,7 +687,11 @@ const TypewriterWord: React.FC<WordRenderArgs> = ({ word, isActive, frame, fps, 
   const speed = style.effectParams?.typeSpeed ?? 1;
   // Split by code point so emojis / surrogate pairs aren't sliced in half.
   const chars = Array.from(word);
-  const shown = Math.min(chars.length, Math.floor((t / dur) * chars.length * speed) + 1);
+  // RTL: reveal the whole word at once. A partial Arabic word would render as
+  // disconnected, isolated letters (broken contextual shaping).
+  const shown = isRTL(word)
+    ? chars.length
+    : Math.min(chars.length, Math.floor((t / dur) * chars.length * speed) + 1);
   const blink = Math.floor(frame / Math.max(1, Math.round(0.4 * fps))) % 2 === 0;
   return (
     <span style={{ fontFamily: fontStack, fontSize: style.fontSize, fontWeight: style.fontWeight ?? 700, display: "inline-block", color: isActive ? style.highlightColor : style.fontColor, textShadow: "0 3px 10px rgba(0,0,0,0.5)" }}>

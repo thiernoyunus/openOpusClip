@@ -408,6 +408,7 @@ async def process_endpoint(
     url: Optional[str] = Form(None),
     acknowledged: Optional[str] = Form(None),
     whisper_model: Optional[str] = Form("base"),
+    transcription_engine: Optional[str] = Form("whisper"),
     min_clip_length: Optional[int] = Form(None),
     max_clip_length: Optional[int] = Form(None),
     moment_prompt: Optional[str] = Form(None),
@@ -429,6 +430,7 @@ async def process_endpoint(
         url = body.get("url")
         ack_flag = bool(body.get("acknowledged"))
         whisper_model = body.get("whisper_model", whisper_model)
+        transcription_engine = body.get("transcription_engine", transcription_engine)
         min_clip_length = body.get("min_clip_length", min_clip_length)
         max_clip_length = body.get("max_clip_length", max_clip_length)
         moment_prompt = body.get("moment_prompt", moment_prompt)
@@ -444,7 +446,16 @@ async def process_endpoint(
     if aspect_ratio not in allowed_aspect_ratios:
         aspect_ratio = "9:16"
 
-    if whisper_model not in WHISPER_MODELS:
+    transcription_engine = (transcription_engine or "whisper").strip().lower()
+    if transcription_engine not in {"whisper", "soniox"}:
+        raise HTTPException(status_code=400, detail="Invalid transcription engine")
+
+    soniox_key = request.headers.get("X-Soniox-Key")
+    if transcription_engine == "soniox" and not soniox_key:
+        raise HTTPException(status_code=400, detail="Missing X-Soniox-Key header")
+
+    # whisper_model only matters for the built-in engine; Soniox ignores it.
+    if transcription_engine == "whisper" and whisper_model not in WHISPER_MODELS:
         raise HTTPException(status_code=400, detail="Invalid Whisper model")
 
     if not url and not file:
@@ -478,6 +489,11 @@ async def process_endpoint(
     cmd = [sys.executable, "-u", "main.py"] # -u for unbuffered
     env = os.environ.copy()
     env["GEMINI_API_KEY"] = api_key # Override with key from request
+    if transcription_engine == "soniox":
+        # transcription.resolve_backend() reads WHISPER_BACKEND; Soniox key is
+        # bring-your-own and only lives in this subprocess env, never on disk.
+        env["WHISPER_BACKEND"] = "soniox"
+        env["SONIOX_API_KEY"] = soniox_key
 
     if url:
         cmd.extend(["-u", url])
@@ -771,11 +787,16 @@ async def get_clip_transcript(job_id: str, clip_index: int):
     for segment in transcript.get('segments', []):
         for word_info in segment.get('words', []):
             if word_info['end'] > clip_start and word_info['start'] < clip_end:
-                captions.append({
+                cap = {
                     "text": word_info.get('word', '').strip(),
                     "startMs": int((max(0, word_info['start'] - clip_start)) * 1000),
                     "endMs": int((max(0, word_info['end'] - clip_start)) * 1000),
-                })
+                }
+                # Soniox emits a per-word language tag (multilingual clips); pass
+                # it through when present. Whisper output omits it — harmless.
+                if word_info.get('language'):
+                    cap["language"] = word_info['language']
+                captions.append(cap)
 
     duration_sec = clip_end - clip_start
 

@@ -2,11 +2,27 @@ import os
 import textwrap
 import subprocess
 import urllib.request
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, features
+from subtitles import is_rtl
+
+# Arabic shaping + bidi in PIL needs Pillow built with libraqm. Without it we
+# fall back to the basic layout engine (Arabic renders unshaped/LTR — caveat).
+HAVE_RAQM = features.check("raqm")
+
+
+def _text_dir(text):
+    """'rtl' for right-to-left text when raqm is available, else None (default)."""
+    return "rtl" if (HAVE_RAQM and is_rtl(text)) else None
 
 FONT_URL = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSerif/NotoSerif-Bold.ttf"
 FONT_DIR = "fonts"
 FONT_PATH = os.path.join(FONT_DIR, "NotoSerif-Bold.ttf")
+
+# Noto Serif has no Arabic glyphs; use the bundled Arabic font for RTL hooks.
+ARABIC_FONT_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "remotion", "public", "fonts", "NotoSansArabic-Bold.ttf",
+)
 
 def download_font_if_needed():
     """Downloads a serif font for the hook text if not present."""
@@ -45,10 +61,13 @@ def create_hook_image(text, target_width, output_image_path="hook_overlay.png", 
     base_font_size = int(target_width * 0.05)
     font_size = int(base_font_size * font_scale)
     
+    # Pick a font that actually has the script's glyphs: Arabic font for RTL text.
+    font_path = ARABIC_FONT_PATH if (is_rtl(text) and os.path.exists(ARABIC_FONT_PATH)) else FONT_PATH
+    layout = ImageFont.Layout.RAQM if HAVE_RAQM else ImageFont.Layout.BASIC
     try:
-        font = ImageFont.truetype(FONT_PATH, font_size)
+        font = ImageFont.truetype(font_path, font_size, layout_engine=layout)
     except Exception as e:
-        print(f"⚠️ Warning: Could not load font {FONT_PATH}, using default. Error: {e}")
+        print(f"⚠️ Warning: Could not load font {font_path}, using default. Error: {e}")
         font = ImageFont.load_default()
 
     # Wrap text logic (Pixel-based)
@@ -57,49 +76,51 @@ def create_hook_image(text, target_width, output_image_path="hook_overlay.png", 
     
     max_text_width = target_width - (2 * padding_x)
     
-    # Handle manual newlines first
+    # Handle manual newlines first. Each entry is (text, direction) so RTL lines
+    # are measured and drawn right-to-left (direction is None for LTR/no-raqm).
     paragraphs = text.split('\n')
     lines = []
-    
+
     for p in paragraphs:
         if not p.strip():
-            lines.append("") 
+            lines.append(("", None))
             continue
-            
+
+        pdir = _text_dir(p)
         words = p.split()
         current_line = []
-        
+
         for word in words:
             # Test if adding word fits
             test_line = ' '.join(current_line + [word])
-            bbox = draw.textbbox((0, 0), test_line, font=font)
+            bbox = draw.textbbox((0, 0), test_line, font=font, direction=pdir)
             w = bbox[2] - bbox[0]
-            
+
             if w <= max_text_width:
                 current_line.append(word)
             else:
                 # Line full, push current_line and start new
                 if current_line:
-                    lines.append(' '.join(current_line))
+                    lines.append((' '.join(current_line), pdir))
                     current_line = [word]
                 else:
                     # Single word too long? Force it.
-                    lines.append(word)
+                    lines.append((word, pdir))
                     current_line = []
-        
+
         if current_line:
-            lines.append(' '.join(current_line))
+            lines.append((' '.join(current_line), pdir))
     
     # Recalculate true width/height
     max_line_width = 0
     text_heights = []
     
-    for line in lines:
+    for line, ldir in lines:
         if not line:
             text_heights.append(font_size) # Use font size for empty line height
             continue
-            
-        bbox = draw.textbbox((0, 0), line, font=font)
+
+        bbox = draw.textbbox((0, 0), line, font=font, direction=ldir)
         w = bbox[2] - bbox[0]
         h = bbox[3] - bbox[1]
         max_line_width = max(max_line_width, w)
@@ -148,21 +169,21 @@ def create_hook_image(text, target_width, output_image_path="hook_overlay.png", 
     
     # 5. Draw Text
     current_y = 20 + padding_y - 2 # Minor visual adjustment
-    for i, line in enumerate(lines):
+    for i, (line, ldir) in enumerate(lines):
         if not line:
-            current_y += font_size + line_spacing 
+            current_y += font_size + line_spacing
             continue
-            
-        bbox = draw_final.textbbox((0, 0), line, font=font)
+
+        bbox = draw_final.textbbox((0, 0), line, font=font, direction=ldir)
         line_w = bbox[2] - bbox[0]
         line_h = text_heights[i] if i < len(text_heights) else bbox[3] - bbox[1]
-        
+
         # Center X
         x = 20 + (box_width - line_w) // 2
-        
+
         # Draw Black Text
-        draw_final.text((x, current_y), line, font=font, fill="black")
-        
+        draw_final.text((x, current_y), line, font=font, fill="black", direction=ldir)
+
         current_y += line_h + line_spacing
         
     img.save(output_image_path)

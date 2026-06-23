@@ -16,6 +16,11 @@ export interface CaptionWord {
    * Optional → existing caption data is unaffected (back-compat).
    */
   highlight?: boolean;
+  /**
+   * BCP-47/ISO language code for this word (Soniox per-token language). Optional
+   * and informational — RTL detection is text-based, so nothing depends on it.
+   */
+  language?: string;
 }
 
 // --- Subtitle config ---
@@ -307,6 +312,7 @@ export const captionWordSchema = z.object({
   endMs: z.number(),
   emoji: z.string().optional(),
   highlight: z.boolean().optional(),
+  language: z.string().optional(),
 });
 
 export const subtitleStyleSchema = z.object({

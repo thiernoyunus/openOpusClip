@@ -11,6 +11,7 @@ import {
 } from "remotion";
 import type { SubtitleConfig, SubtitleStyle } from "../lib/types";
 import { groupCaptionsIntoBlocks, getActiveWordIndex } from "../lib/captions";
+import { dominantDir } from "../lib/rtl";
 import { getFontStack, captionFontFaces, BUNDLED_CAPTION_FONTS } from "../lib/fonts";
 import { getCaptionTemplate, resolveTemplateId } from "../lib/captionTemplates";
 
@@ -217,6 +218,10 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
 
   const currentTimeMs = block.startMs + (frame / fps) * 1000;
   const activeIndex = getActiveWordIndex(block.words, currentTimeMs);
+  // RTL blocks (Arabic/Hebrew/etc.) flow right-to-left; with flex-direction:row
+  // this reverses the visual word order. Per-word dir="auto" keeps a stray
+  // Latin word inside an Arabic line (or vice-versa) correctly oriented.
+  const blockDir = dominantDir(block.words);
 
   // The block's "key" word for size-contrast templates (e.g. Podcast): a
   // manually highlighted word wins, otherwise the longest word stands in.
@@ -328,6 +333,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           flexWrap: "wrap",
           justifyContent: "center",
           alignItems: "center",
+          direction: blockDir === "rtl" ? "rtl" : "ltr",
           gap: `${Math.round(style.fontSize * 0.12)}px ${Math.round(
             style.fontSize * 0.28 * (style.wordSpacing ?? 1)
           )}px`,
@@ -361,7 +367,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           const forceHighlight = highlighted && !isActive && frame >= wordStartFrame;
           const text =
             style.punctuation === false
-              ? word.text.replace(/[.,!?;:…]+$/u, "")
+              ? word.text.replace(/[.,!?;:…؟،؛۔]+$/u, "")
               : word.text;
           // Inline keeps the emoji baked into the word; above/below are rendered
           // once per line in the emoji row below, so the word renders plain here.
@@ -382,7 +388,19 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
             isEmphasis: i === emphasisIndex,
           });
 
-          return <React.Fragment key={i}>{renderedWord}</React.Fragment>;
+          // dir="auto" + isolate so each word's internal direction is decided by
+          // its own script. Word ORDER within the block is controlled by the
+          // container's flex `direction` (set from dominantDir): correct for
+          // pure-RTL, pure-LTR, and Arabic-dominant mixed blocks (the real
+          // traffic). ponytail: the one case this can't reorder is a
+          // Latin-DOMINANT block holding a multi-word Arabic phrase — rare here;
+          // fix would mean dropping flex for an unicode-bidi:plaintext inline
+          // flow (and re-checking every template's per-word animation).
+          return (
+            <span key={i} dir="auto" style={{ unicodeBidi: "isolate" }}>
+              {renderedWord}
+            </span>
+          );
         })}
         {lineEmojis.length > 0 && (
           <div style={emojiRowStyle(style, emojiPlacement as "above-word" | "below-word")}>

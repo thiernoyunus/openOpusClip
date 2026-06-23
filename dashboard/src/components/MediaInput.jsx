@@ -57,13 +57,15 @@ function fmtTime(s) {
     return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
 }
 
-export default function MediaInput({ onProcess, isProcessing }) {
+export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = false }) {
     const [youtubeUrlEnabled, setYoutubeUrlEnabled] = useState(true);
     const [mode, setMode] = useState('url'); // 'url' | 'file'
     const [url, setUrl] = useState('');
     const [files, setFiles] = useState([]);
     const [acknowledged, setAcknowledged] = useState(false);
     const [whisperModel, setWhisperModel] = useState('base');
+    // 'whisper' = built-in (free, on-server) | 'soniox' = cloud API (multilingual)
+    const [transcriptionEngine, setTranscriptionEngine] = useState('whisper');
 
     // Clip controls
     const [clipMode, setClipMode] = useState('ai'); // 'ai' | 'none'
@@ -157,9 +159,9 @@ export default function MediaInput({ onProcess, isProcessing }) {
         if (!acknowledged) return;
         const clip = buildClipSettings();
         if (mode === 'url' && url) {
-            onProcess({ type: 'url', payload: url, acknowledged: true, whisperModel, ...clip });
+            onProcess({ type: 'url', payload: url, acknowledged: true, whisperModel, transcriptionEngine, ...clip });
         } else if (mode === 'file' && files.length > 0) {
-            onProcess({ type: 'files', payload: files, acknowledged: true, whisperModel, ...clip });
+            onProcess({ type: 'files', payload: files, acknowledged: true, whisperModel, transcriptionEngine, ...clip });
             setFiles([]);
         }
     };
@@ -389,18 +391,36 @@ export default function MediaInput({ onProcess, isProcessing }) {
                 </div>
 
                 <label className="block mt-5">
-                    <span className="block text-xs font-medium text-zinc-400 mb-2">Whisper model</span>
+                    <span className="block text-xs font-medium text-zinc-400 mb-2">Transcription</span>
                     <select
-                        value={whisperModel}
-                        onChange={(e) => setWhisperModel(e.target.value)}
+                        value={transcriptionEngine === 'soniox' ? 'soniox' : `whisper:${whisperModel}`}
+                        onChange={(e) => {
+                            const v = e.target.value;
+                            if (v === 'soniox') {
+                                setTranscriptionEngine('soniox');
+                            } else {
+                                setTranscriptionEngine('whisper');
+                                setWhisperModel(v.split(':')[1]);
+                            }
+                        }}
                         className="input-field cursor-pointer"
                     >
-                        {WHISPER_MODELS.map((model) => (
-                            <option key={model.value} value={model.value}>
-                                {model.label} - {model.help}
-                            </option>
-                        ))}
+                        <optgroup label="Built-in · runs free on the server">
+                            {WHISPER_MODELS.map((model) => (
+                                <option key={model.value} value={`whisper:${model.value}`}>
+                                    {model.label} - {model.help}
+                                </option>
+                            ))}
+                        </optgroup>
+                        <optgroup label="Soniox · best for multilingual (Arabic, etc.) · needs API key">
+                            <option value="soniox">Soniox v5 - catches multiple languages in one video</option>
+                        </optgroup>
                     </select>
+                    {transcriptionEngine === 'soniox' && !hasSonioxKey && (
+                        <span className="block text-[11px] text-amber-400/90 mt-2">
+                            Add your Soniox API key in Settings to use this engine.
+                        </span>
+                    )}
                 </label>
 
                 <label className="flex items-start gap-2 mt-5 text-xs text-zinc-400 cursor-pointer select-none">
