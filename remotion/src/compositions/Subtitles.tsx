@@ -388,16 +388,15 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
             isEmphasis: i === emphasisIndex,
           });
 
-          // dir="auto" + isolate so each word's internal direction is decided by
-          // its own script. Word ORDER within the block is controlled by the
-          // container's flex `direction` (set from dominantDir): correct for
-          // pure-RTL, pure-LTR, and Arabic-dominant mixed blocks (the real
-          // traffic). ponytail: the one case this can't reorder is a
-          // Latin-DOMINANT block holding a multi-word Arabic phrase — rare here;
-          // fix would mean dropping flex for an unicode-bidi:plaintext inline
-          // flow (and re-checking every template's per-word animation).
+          // dir="auto" gives each word its own script direction. display:contents
+          // means this wrapper generates NO box, so the template's own element
+          // stays the flex item — template layout styles (e.g. Podcast's
+          // flexBasis:100%) keep working, and preview matches export. Word ORDER
+          // within the block is controlled by the container's flex `direction`
+          // (set from dominantDir), correct for the real traffic (pure-RTL,
+          // pure-LTR, Arabic-dominant mixed blocks).
           return (
-            <span key={i} dir="auto" style={{ unicodeBidi: "isolate" }}>
+            <span key={i} dir="auto" style={{ display: "contents" }}>
               {renderedWord}
             </span>
           );

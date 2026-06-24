@@ -154,15 +154,21 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
         return settings;
     };
 
-    const handleSubmit = (e) => {
+    // Soniox is bring-your-own key: don't let a submission go out without one
+    // (the backend would reject it and the files would already be cleared).
+    const sonioxBlocked = transcriptionEngine === 'soniox' && !hasSonioxKey;
+
+    const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!acknowledged) return;
+        if (!acknowledged || sonioxBlocked) return;
         const clip = buildClipSettings();
         if (mode === 'url' && url) {
             onProcess({ type: 'url', payload: url, acknowledged: true, whisperModel, transcriptionEngine, ...clip });
         } else if (mode === 'file' && files.length > 0) {
-            onProcess({ type: 'files', payload: files, acknowledged: true, whisperModel, transcriptionEngine, ...clip });
-            setFiles([]);
+            // Clear the selected files only after the job is accepted, so a
+            // failed submit doesn't lose the user's selection.
+            const ok = await onProcess({ type: 'files', payload: files, acknowledged: true, whisperModel, transcriptionEngine, ...clip });
+            if (ok !== false) setFiles([]);
         }
     };
 
@@ -437,7 +443,7 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
 
                 <button
                     type="submit"
-                    disabled={!acknowledged || (mode === 'url' && !url) || (mode === 'file' && files.length === 0)}
+                    disabled={!acknowledged || sonioxBlocked || (mode === 'url' && !url) || (mode === 'file' && files.length === 0)}
                     className="w-full mt-4 py-3 rounded-lg bg-fg text-[#18181b] font-medium text-sm hover:bg-white active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                     {isProcessing ? (

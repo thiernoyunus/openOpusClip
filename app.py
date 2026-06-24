@@ -299,6 +299,12 @@ async def run_job(job_id, job_data):
             env=env,
             cwd=os.getcwd()
         )
+
+        # The subprocess now has its own copy of env; scrub the BYO request keys
+        # from the retained in-memory job object (jobs live ~1h) so they aren't
+        # held server-side longer than the launch.
+        for _secret in ("GEMINI_API_KEY", "SONIOX_API_KEY"):
+            env.pop(_secret, None)
         
         # We need to capture logs in a thread because Popen isn't async
         t_log = threading.Thread(target=enqueue_output, args=(process.stdout, job_id))
@@ -446,7 +452,8 @@ async def process_endpoint(
     if aspect_ratio not in allowed_aspect_ratios:
         aspect_ratio = "9:16"
 
-    transcription_engine = (transcription_engine or "whisper").strip().lower()
+    # Cast first: a JSON body may send a non-string (int/bool) for the engine.
+    transcription_engine = str(transcription_engine or "whisper").strip().lower()
     if transcription_engine not in {"whisper", "soniox"}:
         raise HTTPException(status_code=400, detail="Invalid transcription engine")
 
@@ -454,9 +461,14 @@ async def process_endpoint(
     if transcription_engine == "soniox" and not soniox_key:
         raise HTTPException(status_code=400, detail="Missing X-Soniox-Key header")
 
-    # whisper_model only matters for the built-in engine; Soniox ignores it.
-    if transcription_engine == "whisper" and whisper_model not in WHISPER_MODELS:
-        raise HTTPException(status_code=400, detail="Invalid Whisper model")
+    if transcription_engine == "whisper":
+        if whisper_model not in WHISPER_MODELS:
+            raise HTTPException(status_code=400, detail="Invalid Whisper model")
+    else:
+        # Soniox ignores the Whisper model, but main.py's argparse still validates
+        # --whisper-model against its choices — coerce to a valid placeholder so a
+        # junk/legacy value can't make the job exit before Soniox runs.
+        whisper_model = "base"
 
     if not url and not file:
         raise HTTPException(status_code=400, detail="Must provide URL or File")

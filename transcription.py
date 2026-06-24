@@ -30,7 +30,13 @@ def _is_apple_silicon():
 def resolve_backend(backend=None):
     requested = (backend or os.getenv("WHISPER_BACKEND") or "auto").strip().lower()
     if requested == "soniox":
-        return "soniox"
+        # Only honour Soniox when its key is present in THIS process. The key is
+        # passed per-job to the worker subprocess; if WHISPER_BACKEND=soniox is
+        # set globally, the main API process (e.g. /api/subtitle re-transcription)
+        # has no key, so fall back to auto instead of crashing.
+        if os.getenv("SONIOX_API_KEY"):
+            return "soniox"
+        requested = "auto"
     if requested in {"faster", "faster_whisper"}:
         return "faster-whisper"
     if requested in {"mlx", "mlx_whisper"}:
@@ -272,7 +278,7 @@ def _soniox_tokens_to_transcript(tokens):
     current = []
     for i, w in enumerate(words):
         current.append(w)
-        ends_sentence = w["word"][-1] in SONIOX_SENTENCE_END
+        ends_sentence = bool(w["word"]) and w["word"][-1] in SONIOX_SENTENCE_END
         nxt = words[i + 1] if i + 1 < len(words) else None
         big_pause = nxt is not None and (nxt["start"] - w["end"]) >= 0.8
         if ends_sentence or big_pause or nxt is None:
@@ -493,7 +499,14 @@ def _self_check():
     assert normalize_model("nope") == "base"
     assert resolve_backend("faster") == "faster-whisper"
     assert resolve_backend("mlx") == "mlx-whisper"
-    assert resolve_backend("soniox") == "soniox"
+    # Soniox only resolves when its key is present in this process; otherwise it
+    # falls back (so a global WHISPER_BACKEND=soniox can't crash keyless callers).
+    os.environ["SONIOX_API_KEY"] = "test-key"
+    try:
+        assert resolve_backend("soniox") == "soniox"
+    finally:
+        del os.environ["SONIOX_API_KEY"]
+    assert resolve_backend("soniox") != "soniox"
 
     # Soniox returns SUB-WORD tokens (leading space = word start). They must
     # merge back into whole words: ms->s, per-word language, segment split on

@@ -273,8 +273,15 @@ const MatrixWord: React.FC<WordRenderArgs> = ({
   const speed = style.effectParams?.decodeSpeed ?? 1;
   const dur = Math.max(1, Math.round((0.28 * fps) / speed));
 
+  // RTL (Arabic) can't be scrambled per-letter (it breaks shaping), so it has no
+  // decode animation: keep it hidden until its own timestamp, then show the
+  // whole shaped word. Without this, scramble() returns the full RTL word even
+  // at t<0, leaking upcoming Arabic words at the block start.
+  const rtl = isRTL(word);
   let display: string;
-  if (t < 0) {
+  if (rtl) {
+    display = word;
+  } else if (t < 0) {
     display = scramble(word, seed, frame, 0);
   } else if (t < dur) {
     const reveal = Math.floor((t / dur) * word.length);
@@ -295,6 +302,7 @@ const MatrixWord: React.FC<WordRenderArgs> = ({
         textShadow: `0 0 10px ${color}99, 0 0 2px ${color}, 0 3px 10px rgba(0,0,0,0.5)`,
         display: "inline-block",
         whiteSpace: "pre",
+        opacity: rtl && t < 0 ? 0 : 1,
       }}
     >
       {display}

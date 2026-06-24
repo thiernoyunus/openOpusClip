@@ -321,6 +321,8 @@ function App() {
   useEffect(() => {
     if (sonioxKey) {
       localStorage.setItem('soniox_key_v1', encrypt(sonioxKey));
+    } else {
+      localStorage.removeItem('soniox_key_v1');
     }
   }, [sonioxKey]);
 
@@ -570,10 +572,11 @@ function App() {
         await startProcessJob(data, { makeActive: true });
       }
       setShowProcessingModal(true);
-
+      return true;
     } catch (e) {
       setStatus('error');
       setLogs(l => [...l, `Error starting job: ${e.message}`]);
+      return false;
     }
   };
 

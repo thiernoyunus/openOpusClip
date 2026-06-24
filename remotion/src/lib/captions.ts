@@ -103,6 +103,9 @@ export function groupCaptionsIntoBlocks(
   options: GroupingOptions = {}
 ): CaptionBlock[] {
   const opts = { ...DEFAULTS, ...options };
+  // Guard: maxWords <= 0 would make the foreign-phrase chunk size 0 (infinite
+  // loop) and a 0-word ceiling is meaningless. Clamp to at least 1.
+  if (opts.maxWords <= 0) opts.maxWords = 1;
   if (captions.length === 0) return [];
 
   const base = dominantKey(captions);

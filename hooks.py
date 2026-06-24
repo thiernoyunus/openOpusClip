@@ -9,11 +9,6 @@ from subtitles import is_rtl
 # fall back to the basic layout engine (Arabic renders unshaped/LTR — caveat).
 HAVE_RAQM = features.check("raqm")
 
-
-def _text_dir(text):
-    """'rtl' for right-to-left text when raqm is available, else None (default)."""
-    return "rtl" if (HAVE_RAQM and is_rtl(text)) else None
-
 FONT_URL = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSerif/NotoSerif-Bold.ttf"
 FONT_DIR = "fonts"
 FONT_PATH = os.path.join(FONT_DIR, "NotoSerif-Bold.ttf")
@@ -63,12 +58,14 @@ def create_hook_image(text, target_width, output_image_path="hook_overlay.png", 
     
     # Pick a font that actually has the script's glyphs: Arabic font for RTL text.
     font_path = ARABIC_FONT_PATH if (is_rtl(text) and os.path.exists(ARABIC_FONT_PATH)) else FONT_PATH
-    layout = ImageFont.Layout.RAQM if HAVE_RAQM else ImageFont.Layout.BASIC
+    use_raqm = HAVE_RAQM
+    layout = ImageFont.Layout.RAQM if use_raqm else ImageFont.Layout.BASIC
     try:
         font = ImageFont.truetype(font_path, font_size, layout_engine=layout)
     except Exception as e:
         print(f"⚠️ Warning: Could not load font {font_path}, using default. Error: {e}")
         font = ImageFont.load_default()
+        use_raqm = False  # the default bitmap font can't do raqm/direction
 
     # Wrap text logic (Pixel-based)
     dummy_img = Image.new('RGBA', (1, 1))
@@ -86,7 +83,7 @@ def create_hook_image(text, target_width, output_image_path="hook_overlay.png", 
             lines.append(("", None))
             continue
 
-        pdir = _text_dir(p)
+        pdir = "rtl" if (use_raqm and is_rtl(p)) else None
         words = p.split()
         current_line = []
 

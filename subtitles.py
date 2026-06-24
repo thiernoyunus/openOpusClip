@@ -185,7 +185,8 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
                 font_name = _ARABIC_FONT_NAME
                 safe_fontsdir = _FONTS_DIR.replace('\\', '/').replace(':', '\\:')
                 fontsdir_clause = f":fontsdir='{safe_fontsdir}'"
-    except OSError:
+    except (OSError, ValueError):
+        # ValueError covers UnicodeDecodeError on non-UTF8 SRT bytes.
         pass
 
     # Convert colors to ASS format and build style
