@@ -70,6 +70,7 @@ export default function CaptionPreview({ templateId, previewFontPx = 20, words =
 
     return (
         <span
+            dir="auto"
             style={{
                 display: 'inline-flex',
                 transform: `scale(${scale})`,
