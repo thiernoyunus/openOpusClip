@@ -40,6 +40,9 @@ const DEFAULT_PROPS: ShortVideoProps = {
       bgColor: "#000000",
       bgOpacity: 0,
       animation: "pop",
+      captionAnimation: "none",
+      wordAnimation: "none",
+      emojiAnimation: "pop-in",
     },
   },
   hook: {

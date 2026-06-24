@@ -105,24 +105,267 @@ function emojiItemStyle(
     easing: Easing.out(Easing.cubic),
   });
   const isAbove = placement === "above-word";
-  const popScale = animation === "pop" ? 0.45 + p * 0.65 : 1;
+  const normalized = animation === "pop" ? "pop-in" : animation === "bounce" ? "bounce-in" : animation;
+  const popScale =
+    normalized === "pop-in" || normalized === "scale" || normalized === "bounce-in" || normalized === "bounce-in-wiggle"
+      ? 0.45 + p * 0.65
+      : 1;
   // Bounce/float away from the caption line: up when above, down when below.
   const dir = isAbove ? -1 : 1;
-  const bounceY = animation === "bounce" ? dir * Math.sin(p * Math.PI) * style.fontSize * 0.18 : 0;
-  const floatY = animation === "float" ? dir * Math.sin(frame / 6) * style.fontSize * 0.06 : 0;
+  const bounceY =
+    normalized === "bounce-in" || normalized === "bounce-in-wiggle"
+      ? dir * Math.sin(p * Math.PI) * style.fontSize * 0.18
+      : 0;
+  const floatY = normalized === "float" ? dir * Math.sin(frame / 6) * style.fontSize * 0.06 : 0;
+  const slideDistance = style.fontSize * 0.65 * (1 - p);
+  const slideX =
+    normalized === "slide-right"
+      ? -slideDistance
+      : normalized === "slide-left"
+        ? slideDistance
+        : normalized === "slide-bottom-right" || normalized === "slide-diagonal-bottom-right"
+          ? -slideDistance
+          : normalized === "slide-top-right" || normalized === "slide-diagonal-top-right"
+            ? -slideDistance
+            : normalized === "slide-diagonal-bottom-left" || normalized === "slide-diagonal-top-left"
+              ? slideDistance
+              : 0;
+  const slideY =
+    normalized === "slide-up" || normalized === "slide-up-down"
+      ? style.fontSize * 0.65 * (1 - p)
+      : normalized === "slide-down"
+        ? -style.fontSize * 0.65 * (1 - p)
+        : normalized === "slide-bottom-right" || normalized === "slide-diagonal-bottom-right" || normalized === "slide-diagonal-bottom-left"
+          ? -slideDistance
+          : normalized === "slide-top-right" || normalized === "slide-diagonal-top-right" || normalized === "slide-diagonal-top-left"
+            ? slideDistance
+            : 0;
+  const wiggle = normalized === "bounce-in-wiggle" ? Math.sin(p * Math.PI * 4) * 10 * (1 - p) : 0;
+  const rotate = normalized === "rotate" ? 360 * p : wiggle;
 
   return {
     display: "inline-block",
     fontSize: Math.round(style.fontSize * 0.82 * size),
     lineHeight: 1,
-    opacity: p,
-    transform: `translateY(${(bounceY + floatY).toFixed(1)}px) scale(${popScale.toFixed(3)})`,
+    opacity: normalized === "none" ? 1 : p,
+    transform: `translate(${slideX.toFixed(1)}px, ${(slideY + bounceY + floatY).toFixed(1)}px) rotate(${rotate.toFixed(1)}deg) scale(${popScale.toFixed(3)})`,
     // Scale grows away from the caption line (bottom edge when above, top when below).
     transformOrigin: isAbove ? "center bottom" : "center top",
     WebkitTextStroke: "none",
     textShadow: "none",
     filter: "drop-shadow(0 3px 8px rgba(0,0,0,0.5))",
   };
+}
+
+function easeProgress(frame: number, frames: number): number {
+  return interpolate(frame, [0, Math.max(1, frames)], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.out(Easing.cubic),
+  });
+}
+
+function captionMotion(
+  animation: NonNullable<SubtitleStyle["captionAnimation"]>,
+  style: SubtitleStyle,
+  frame: number,
+  fps: number,
+  durationFrames: number
+): { opacity?: number; transformParts: string[]; innerStyle?: React.CSSProperties } {
+  const intro = Math.min(durationFrames, Math.max(1, Math.round(0.42 * fps)));
+  const p = easeProgress(frame, intro);
+  const transformParts: string[] = [];
+  let opacity: number | undefined = 1;
+  const innerStyle: React.CSSProperties = {};
+
+  switch (animation) {
+    case "none":
+      return { opacity: 1, transformParts };
+    case "show-in":
+      opacity = frame <= 1 ? 0 : 1;
+      break;
+    case "fade":
+    case "fade-in":
+      opacity = p;
+      break;
+    case "fade-out":
+      opacity = 1 - p;
+      break;
+    case "pop-in":
+      opacity = p;
+      transformParts.push(`scale(${(0.72 + p * 0.28).toFixed(3)})`);
+      break;
+    case "pop-out":
+      opacity = p;
+      transformParts.push(`scale(${(1.22 - p * 0.22).toFixed(3)})`);
+      break;
+    case "bounce-in":
+    case "scale-bounce":
+      opacity = p;
+      transformParts.push(`scale(${(1 + Math.sin(p * Math.PI) * 0.18).toFixed(3)})`);
+      break;
+    case "zoom-out":
+      opacity = p;
+      transformParts.push(`scale(${(1.35 - p * 0.35).toFixed(3)})`);
+      break;
+    case "zoom-in":
+      opacity = p;
+      transformParts.push(`scale(${(0.7 + p * 0.3).toFixed(3)})`);
+      break;
+    case "slide-up":
+    case "slide-up-in":
+      opacity = p;
+      transformParts.push(`translateY(${((1 - p) * 70).toFixed(1)}px)`);
+      break;
+    case "slide-up-out":
+      opacity = 1 - p;
+      transformParts.push(`translateY(${(-p * 70).toFixed(1)}px)`);
+      break;
+    case "slide-up-zoom":
+    case "slide-up-zoom-out":
+      opacity = p;
+      transformParts.push(`translateY(${((1 - p) * 70).toFixed(1)}px)`);
+      transformParts.push(`scale(${(1.18 - p * 0.18).toFixed(3)})`);
+      break;
+    case "rotate-left":
+    case "rotate-slow-left":
+      opacity = p;
+      transformParts.push(`rotate(${(-(1 - p) * (animation === "rotate-slow-left" ? 8 : 18)).toFixed(1)}deg)`);
+      break;
+    case "rotate-right":
+    case "rotate-slow-right":
+      opacity = p;
+      transformParts.push(`rotate(${((1 - p) * (animation === "rotate-slow-right" ? 8 : 18)).toFixed(1)}deg)`);
+      break;
+    case "scale-rotate-right":
+      opacity = p;
+      transformParts.push(`rotate(${((1 - p) * 20).toFixed(1)}deg)`);
+      transformParts.push(`scale(${(0.75 + p * 0.25).toFixed(3)})`);
+      break;
+    case "rotate-wiggle":
+    case "rotate-wiggle-small":
+    case "rotate-wiggle-mini":
+    case "rotate-wiggle-scale": {
+      opacity = p;
+      const amount = animation === "rotate-wiggle" ? 9 : animation === "rotate-wiggle-small" ? 5 : 3;
+      transformParts.push(`rotate(${(Math.sin(frame / 2.5) * amount * (1 - p * 0.4)).toFixed(1)}deg)`);
+      if (animation === "rotate-wiggle-scale") transformParts.push(`scale(${(1 + Math.sin(frame / 3) * 0.04).toFixed(3)})`);
+      break;
+    }
+    case "pop-in-zoom":
+      opacity = p;
+      transformParts.push(`scale(${(0.6 + Math.sin(p * Math.PI) * 0.18 + p * 0.4).toFixed(3)})`);
+      break;
+    case "scale-slow-in":
+      opacity = p;
+      transformParts.push(`scale(${(0.88 + p * 0.12).toFixed(3)})`);
+      break;
+    case "typewriter":
+    case "typewriter-simple":
+    case "slide-left-in-typewriter":
+      opacity = 1;
+      if (animation === "slide-left-in-typewriter") {
+        transformParts.push(`translateX(${((1 - p) * -40).toFixed(1)}px)`);
+      }
+      innerStyle.clipPath = `inset(0 ${(1 - p) * 100}% 0 0)`;
+      break;
+    case "letter-fade-in":
+      opacity = p;
+      break;
+    case "letter-spacing-in":
+    case "letter-spacing-bounce-in":
+    case "letter-spacing-large-in": {
+      opacity = p;
+      const start = animation === "letter-spacing-large-in" ? 0.35 : 0.18;
+      const bounce = animation === "letter-spacing-bounce-in" ? Math.sin(p * Math.PI) * 0.05 : 0;
+      innerStyle.letterSpacing = `${(start * (1 - p) + bounce).toFixed(3)}em`;
+      break;
+    }
+    case "screw-in":
+      opacity = p;
+      transformParts.push(`rotate(${((1 - p) * -60).toFixed(1)}deg)`);
+      transformParts.push(`scale(${(0.55 + p * 0.45).toFixed(3)})`);
+      break;
+    case "slide-right-bounce":
+      opacity = p;
+      transformParts.push(`translateX(${((1 - p) * -90 + Math.sin(p * Math.PI) * 10).toFixed(1)}px)`);
+      break;
+    case "slide-right-dust":
+      opacity = p;
+      transformParts.push(`translateX(${((1 - p) * -90).toFixed(1)}px)`);
+      innerStyle.filter = `blur(${((1 - p) * 3).toFixed(1)}px)`;
+      break;
+    case "slide-up-wiggle":
+      opacity = p;
+      transformParts.push(`translateY(${((1 - p) * 70).toFixed(1)}px)`);
+      transformParts.push(`rotate(${(Math.sin(frame / 2) * 5 * (1 - p)).toFixed(1)}deg)`);
+      break;
+    case "blink-fade":
+      opacity = p * (frame % 6 < 3 ? 1 : 0.45);
+      break;
+    case "border-reveal":
+      opacity = p;
+      innerStyle.clipPath = `inset(0 ${(1 - p) * 100}% 0 0)`;
+      innerStyle.borderBottom = `${Math.max(2, style.fontSize * 0.04)}px solid ${style.highlightColor}`;
+      break;
+  }
+
+  return { opacity, transformParts, innerStyle };
+}
+
+function wordMotionStyle(
+  animation: NonNullable<SubtitleStyle["wordAnimation"]>,
+  frame: number,
+  fps: number,
+  wordStartFrame: number,
+  isActive: boolean,
+  isPast: boolean
+): React.CSSProperties {
+  if (animation === "none") return { display: "contents" };
+
+  const fast = animation.includes("fast");
+  const dur = Math.max(1, Math.round((fast ? 0.12 : 0.22) * fps));
+  const p = easeProgress(frame - wordStartFrame, dur);
+  const visible = isPast || isActive || p > 0;
+  const style: React.CSSProperties = {
+    display: "inline-block",
+    opacity: visible ? 1 : 0,
+  };
+
+  switch (animation) {
+    case "fade-in":
+    case "fade-in-fast":
+      style.opacity = p;
+      break;
+    case "show-in":
+    case "show-in-fast":
+      style.opacity = frame >= wordStartFrame ? 1 : 0;
+      break;
+    case "zoom-in":
+      style.opacity = p;
+      style.transform = `scale(${(0.72 + p * 0.28).toFixed(3)})`;
+      break;
+    case "opacity-30":
+      style.opacity = isPast || isActive ? 1 : 0.3;
+      break;
+    case "slide-up":
+    case "slide-up-fast":
+      style.opacity = p;
+      style.transform = `translateY(${((1 - p) * 24).toFixed(1)}px)`;
+      break;
+    case "white-flash-reveal":
+      style.opacity = p;
+      style.textShadow = p < 0.5 ? "0 0 18px #fff, 0 0 32px #fff" : undefined;
+      style.filter = p < 0.5 ? `brightness(${(1.8 - p).toFixed(2)})` : undefined;
+      break;
+    case "slide-right-dust":
+      style.opacity = p;
+      style.transform = `translateX(${((1 - p) * -28).toFixed(1)}px)`;
+      style.filter = `blur(${((1 - p) * 2.5).toFixed(1)}px)`;
+      break;
+  }
+
+  return style;
 }
 
 /** How long a block lingers after its last word, clamped to the next block. */
@@ -273,48 +516,35 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   // Above/below emojis render once per line (centered over the block), not per
   // word. Inline emojis stay baked into the word text below. "none" → no emojis.
   const emojiPlacement = style.emojiPlacement ?? "above-word";
-  const emojiAnimation = style.emojiAnimation ?? "pop";
+  const emojiAnimation = style.emojiAnimation ?? "pop-in";
+  const wordAnimation = style.wordAnimation ?? "none";
   const lineEmojis =
     emojiPlacement === "above-word" || emojiPlacement === "below-word"
       ? block.words.filter((w) => w.emoji).map((w) => w.emoji as string)
       : [];
 
   // Block entrance animation (layers over the per-word template animation).
-  // The composed transform also carries the free-drag centering when placed.
-  const entrance = style.captionAnimation ?? "fade";
-  const introDur = Math.min(durationFrames, Math.max(1, Math.round(0.4 * fps)));
-  const introP = interpolate(frame, [0, introDur], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: Easing.out(Easing.cubic),
-  });
-  const slide =
-    entrance === "slide-up" || entrance === "slide-up-zoom"
-      ? `translateY(${((1 - introP) * 70).toFixed(1)}px)`
-      : "";
-  const zoom =
-    entrance === "zoom-in" || entrance === "slide-up-zoom"
-      ? `scale(${(0.7 + 0.3 * introP).toFixed(3)})`
-      : "";
+  // Existing templates already have their own word personality, so default to
+  // no block fade. User-selected caption animations opt into motion.
+  const entrance = style.captionAnimation ?? "none";
+  const motion = captionMotion(entrance, style, frame, fps, durationFrames);
   const transform =
-    [freePlaced ? "translate(-50%, -50%)" : "", slide, zoom]
+    [freePlaced ? "translate(-50%, -50%)" : "", ...motion.transformParts]
       .filter(Boolean)
       .join(" ") || undefined;
 
-  // Block-level fade so captions enter/leave smoothly instead of popping.
-  // Short blocks need a smaller fade, otherwise the in/out points collide and
-  // produce a non-increasing input range (interpolate throws on that).
-  // "none" entrance opts out of the fade entirely (hard cut).
+  // Only the explicit fade preset fades out at the tail. Other Submagic-style
+  // choices keep their settled pose until the next caption block replaces them.
   const fade = Math.min(FADE_FRAMES, Math.floor((durationFrames - 1) / 2));
   const opacity =
-    entrance === "none" || fade < 1
-      ? 1
-      : interpolate(
+    entrance === "fade" && fade >= 1
+      ? interpolate(
           frame,
           [0, fade, durationFrames - fade, durationFrames],
           [0, 1, 1, 0],
           { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-        );
+        )
+      : motion.opacity;
 
   return (
     <div
@@ -344,6 +574,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           ...(style.letterSpacing != null
             ? { letterSpacing: `${style.letterSpacing}em` }
             : {}),
+          ...motion.innerStyle,
           ...containerStyle,
         }}
       >
@@ -395,8 +626,17 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           // within the block is controlled by the container's flex `direction`
           // (set from dominantDir), correct for the real traffic (pure-RTL,
           // pure-LTR, Arabic-dominant mixed blocks).
+          const wrapperStyle = wordMotionStyle(
+            wordAnimation,
+            frame,
+            fps,
+            wordStartFrame,
+            isActive,
+            isPast
+          );
+
           return (
-            <span key={i} dir="auto" style={{ display: "contents" }}>
+            <span key={i} dir="auto" style={wrapperStyle}>
               {renderedWord}
             </span>
           );

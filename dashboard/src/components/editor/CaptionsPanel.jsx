@@ -28,10 +28,56 @@ const SHADOW_OPTIONS = [
 ];
 const CAPTION_ANIM_OPTIONS = [
     { v: 'none', l: 'None' },
-    { v: 'fade', l: 'Fade' },
-    { v: 'slide-up', l: 'Slide up' },
+    { v: 'show-in', l: 'Show in' },
+    { v: 'pop-in', l: 'Pop in' },
+    { v: 'pop-out', l: 'Pop out' },
+    { v: 'bounce-in', l: 'Bounce in' },
+    { v: 'zoom-out', l: 'Zoom out' },
     { v: 'zoom-in', l: 'Zoom in' },
-    { v: 'slide-up-zoom', l: 'Slide + Zoom' },
+    { v: 'rotate-wiggle', l: 'Rotate wiggle' },
+    { v: 'rotate-wiggle-small', l: 'Rotate wiggle small' },
+    { v: 'rotate-wiggle-mini', l: 'Rotate wiggle mini' },
+    { v: 'rotate-wiggle-scale', l: 'Rotate wiggle scale' },
+    { v: 'pop-in-zoom', l: 'Pop in zoom' },
+    { v: 'fade-in', l: 'Fade in' },
+    { v: 'fade-out', l: 'Fade out' },
+    { v: 'scale-bounce', l: 'Scale bounce' },
+    { v: 'rotate-left', l: 'Rotate left' },
+    { v: 'rotate-right', l: 'Rotate right' },
+    { v: 'rotate-slow-right', l: 'Rotate slow right' },
+    { v: 'rotate-slow-left', l: 'Rotate slow left' },
+    { v: 'scale-slow-in', l: 'Scale slow in' },
+    { v: 'slide-up', l: 'Slide up' },
+    { v: 'slide-up-zoom-out', l: 'Slide up zoom out' },
+    { v: 'slide-up-out', l: 'Slide up out' },
+    { v: 'scale-rotate-right', l: 'Scale rotate right' },
+    { v: 'typewriter', l: 'Typewriter' },
+    { v: 'typewriter-simple', l: 'Typewriter simple' },
+    { v: 'letter-fade-in', l: 'Letter fade in' },
+    { v: 'screw-in', l: 'Screw in' },
+    { v: 'letter-spacing-in', l: 'Letter spacing in' },
+    { v: 'letter-spacing-bounce-in', l: 'Letter spacing bounce in' },
+    { v: 'letter-spacing-large-in', l: 'Letter spacing large in' },
+    { v: 'slide-right-bounce', l: 'Slide right bounce' },
+    { v: 'slide-right-dust', l: 'Slide right dust' },
+    { v: 'slide-up-wiggle', l: 'Slide up wiggle' },
+    { v: 'slide-up-in', l: 'Slide up in' },
+    { v: 'slide-left-in-typewriter', l: 'Slide left in typewriter' },
+    { v: 'blink-fade', l: 'Blink fade' },
+    { v: 'border-reveal', l: 'Border reveal' },
+];
+const WORD_ANIM_OPTIONS = [
+    { v: 'none', l: 'None' },
+    { v: 'fade-in', l: 'Fade in' },
+    { v: 'show-in', l: 'Show in' },
+    { v: 'show-in-fast', l: 'Show in fast' },
+    { v: 'zoom-in', l: 'Zoom in' },
+    { v: 'opacity-30', l: 'Opacity 30' },
+    { v: 'slide-up', l: 'Slide up' },
+    { v: 'slide-up-fast', l: 'Slide up fast' },
+    { v: 'fade-in-fast', l: 'Fade in fast' },
+    { v: 'white-flash-reveal', l: 'White flash reveal' },
+    { v: 'slide-right-dust', l: 'Slide right dust' },
 ];
 const EMOJI_PLACEMENTS = [
     { value: 'above-word', label: 'Above' },
@@ -40,10 +86,25 @@ const EMOJI_PLACEMENTS = [
     { value: 'none', label: 'Off' },
 ];
 const EMOJI_ANIM_OPTIONS = [
-    { v: 'pop', l: 'Pop' },
-    { v: 'bounce', l: 'Bounce' },
-    { v: 'float', l: 'Float' },
     { v: 'none', l: 'None' },
+    { v: 'scale', l: 'Scale' },
+    { v: 'slide-up', l: 'Slide up' },
+    { v: 'slide-up-down', l: 'Slide up down' },
+    { v: 'slide-down', l: 'Slide down' },
+    { v: 'slide-right', l: 'Slide right' },
+    { v: 'slide-left', l: 'Slide left' },
+    { v: 'slide-bottom-right', l: 'Slide bottom right' },
+    { v: 'slide-top-right', l: 'Slide top right' },
+    { v: 'pop-in', l: 'Pop in' },
+    { v: 'bounce-in', l: 'Bounce in' },
+    { v: 'rotate', l: 'Rotate' },
+    { v: 'fade-in', l: 'Fade in' },
+    { v: 'slide-diagonal-bottom-left', l: 'Slide diagonal bottom left' },
+    { v: 'slide-diagonal-bottom-right', l: 'Slide diagonal bottom right' },
+    { v: 'slide-diagonal-top-left', l: 'Slide diagonal top left' },
+    { v: 'slide-diagonal-top-right', l: 'Slide diagonal top right' },
+    { v: 'bounce-in-wiggle', l: 'Bounce in wiggle' },
+    { v: 'float', l: 'Float' },
 ];
 
 const EFFECT_TEMPLATES = CAPTION_TEMPLATES.filter((t) => t.category === 'effects');
@@ -478,17 +539,31 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions }) {
                     </div>
 
                     {/* Animation */}
-                    <div>
-                        <span className="block text-[11px] text-muted mb-1.5">Caption animation</span>
-                        <select
-                            value={st.captionAnimation ?? 'fade'}
-                            onChange={(e) => setStyle({ captionAnimation: e.target.value })}
-                            className="w-full bg-surface2 border border-edge rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-white/30 [color-scheme:dark]"
-                        >
-                            {CAPTION_ANIM_OPTIONS.map((o) => (
-                                <option key={o.v} value={o.v}>{o.l}</option>
-                            ))}
-                        </select>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <span className="block text-[11px] text-muted mb-1.5">Caption animation</span>
+                            <select
+                                value={st.captionAnimation ?? 'none'}
+                                onChange={(e) => setStyle({ captionAnimation: e.target.value })}
+                                className="w-full bg-surface2 border border-edge rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-white/30 [color-scheme:dark]"
+                            >
+                                {CAPTION_ANIM_OPTIONS.map((o) => (
+                                    <option key={o.v} value={o.v}>{o.l}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <span className="block text-[11px] text-muted mb-1.5">Word animation</span>
+                            <select
+                                value={st.wordAnimation ?? 'none'}
+                                onChange={(e) => setStyle({ wordAnimation: e.target.value })}
+                                className="w-full bg-surface2 border border-edge rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-white/30 [color-scheme:dark]"
+                            >
+                                {WORD_ANIM_OPTIONS.map((o) => (
+                                    <option key={o.v} value={o.v}>{o.l}</option>
+                                ))}
+                            </select>
+                        </div>
                     </div>
 
                     {/* Emoji overlays */}
@@ -505,7 +580,7 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions }) {
                             <div>
                                 <span className="block text-[11px] text-muted mb-1.5">Emoji motion</span>
                                 <select
-                                    value={st.emojiAnimation ?? 'pop'}
+                                    value={st.emojiAnimation ?? 'pop-in'}
                                     onChange={(e) => setStyle({ emojiAnimation: e.target.value })}
                                     className="w-full bg-surface2 border border-edge rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-white/30 [color-scheme:dark]"
                                 >
