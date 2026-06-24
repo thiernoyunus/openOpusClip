@@ -318,7 +318,10 @@ function captionMotion(
       break;
     case "border-reveal":
       opacity = p;
-      innerStyle.clipPath = `inset(0 ${(1 - p) * 100}% 0 0)`;
+      // reveal from the reading-start edge (left for LTR, right for RTL)
+      innerStyle.clipPath = rtl
+        ? `inset(0 0 0 ${(1 - p) * 100}%)`
+        : `inset(0 ${(1 - p) * 100}% 0 0)`;
       innerStyle.borderBottom = `${Math.max(2, style.fontSize * 0.04)}px solid ${style.highlightColor}`;
       break;
   }
@@ -409,41 +412,39 @@ function typewriterGate(
 }
 
 /**
- * Apply per-word motion onto the template's OWN element via cloneElement, so the
- * element stays the flex item — preserving template layout (Podcast
- * flexBasis:100%) and #39 RTL. A selected wordAnimation REPLACES the template's
- * entrance transform/opacity for the fields it sets (so it isn't doubled on
- * templates that already animate, and so opacity-30 can ghost a word the
- * template would otherwise hide). `gateOpacity` (typewriter) multiplies the
- * final opacity. dir="auto" gives per-word script direction.
+ * Wrap each word in a real DOM <span> that carries dir="auto" (per-word script
+ * direction for RTL) and the per-word motion. Templates render CUSTOM components
+ * (e.g. HormoziWord) that ignore a `dir` prop and don't read style.opacity, so
+ * the motion/dir MUST live on a wrapping DOM node — not be cloned onto them.
+ *
+ * - No motion and no gate: `display: contents` so the wrapper generates no box
+ *   and the template's own element stays the flex item (preserves template
+ *   layout, e.g. Podcast flexBasis:100%).
+ * - With motion/gate: the wrapper becomes the flex item (inline-block). For a
+ *   self-stacking template's emphasis word we forward flexBasis:100% so Podcast
+ *   keeps giving that word its own row even while it animates.
+ * `gateOpacity` (typewriter) multiplies the wrapper opacity (CSS opacity nests).
  */
 function applyWordMotion(
   rendered: React.ReactNode,
   motion: React.CSSProperties | null,
   gateOpacity: number | null,
+  stackEmphasis: boolean,
   key: number
 ): React.ReactNode {
-  if (!React.isValidElement(rendered)) {
-    const st: React.CSSProperties = { display: motion || gateOpacity != null ? "inline-block" : "contents" };
-    if (motion) Object.assign(st, motion);
-    if (gateOpacity != null) st.opacity = (typeof st.opacity === "number" ? st.opacity : 1) * gateOpacity;
-    return <span key={key} dir="auto" style={st}>{rendered}</span>;
+  if (motion == null && gateOpacity == null) {
+    return <span key={key} dir="auto" style={{ display: "contents" }}>{rendered}</span>;
   }
-  const base: React.CSSProperties = (rendered.props as { style?: React.CSSProperties }).style ?? {};
-  const merged: React.CSSProperties = { ...base };
-  if (motion) {
-    // Replace per field (transform/opacity/filter/textShadow) — the chosen word
-    // animation owns the word's motion; flexBasis/color/etc. from the template
-    // are untouched because we only overwrite the fields the motion sets.
-    if (motion.transform != null) merged.transform = motion.transform;
-    if (motion.opacity != null) merged.opacity = Number(motion.opacity);
-    if (motion.filter != null) merged.filter = motion.filter;
-    if (motion.textShadow != null) merged.textShadow = motion.textShadow;
-  }
+  const style: React.CSSProperties = { display: "inline-block" };
+  if (motion) Object.assign(style, motion);
   if (gateOpacity != null) {
-    merged.opacity = (typeof merged.opacity === "number" ? merged.opacity : 1) * gateOpacity;
+    style.opacity = (typeof style.opacity === "number" ? style.opacity : 1) * gateOpacity;
   }
-  return React.cloneElement(rendered as React.ReactElement, { key, dir: "auto", style: merged });
+  if (stackEmphasis) {
+    style.flexBasis = "100%";
+    style.textAlign = "center";
+  }
+  return <span key={key} dir="auto" style={style}>{rendered}</span>;
 }
 
 /** How long a block lingers after its last word, clamped to the next block. */
@@ -714,8 +715,14 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           // Typewriter caption animations type the line out word-by-word in sync
           // with speech (gates each word's opacity by its timestamp).
           const gate = typewriterGate(entrance, frame, wordStartFrame, fps);
+          // When the wrapper becomes the flex item (motion/gate present), forward
+          // Podcast's emphasis-word flexBasis so its vertical stack survives.
+          const stackEmphasis =
+            template.selfStacks === true &&
+            i === emphasisIndex &&
+            style.verticalStack !== false;
 
-          return applyWordMotion(renderedWord, motion, gate, i);
+          return applyWordMotion(renderedWord, motion, gate, stackEmphasis, i);
         })}
         {lineEmojis.length > 0 && (
           <div style={emojiRowStyle(style, emojiPlacement as "above-word" | "below-word")}>
