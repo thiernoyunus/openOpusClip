@@ -27,15 +27,84 @@ export interface CaptionWord {
 export type SubtitleAnimation = "none" | "word-highlight" | "pop" | "karaoke";
 export type SubtitlePosition = "top" | "middle" | "bottom";
 export type SubtitleEmojiPlacement = "none" | "above-word" | "below-word" | "inline";
-export type SubtitleEmojiAnimation = "none" | "pop" | "bounce" | "float";
+export type SubtitleEmojiAnimation =
+  | "none"
+  | "scale"
+  | "slide-up"
+  | "slide-up-down"
+  | "slide-down"
+  | "slide-right"
+  | "slide-left"
+  | "slide-bottom-right"
+  | "slide-top-right"
+  | "pop-in"
+  | "bounce-in"
+  | "rotate"
+  | "fade-in"
+  | "slide-diagonal-bottom-left"
+  | "slide-diagonal-bottom-right"
+  | "slide-diagonal-top-left"
+  | "slide-diagonal-top-right"
+  | "bounce-in-wiggle"
+  | "pop"
+  | "bounce"
+  | "float";
 
 export type SubtitleShadow = "none" | "small" | "medium" | "large";
 export type SubtitleEntrance =
   | "none"
+  | "show-in"
+  | "pop-in"
+  | "pop-out"
+  | "bounce-in"
+  | "zoom-out"
   | "fade"
+  | "fade-in"
+  | "fade-out"
+  | "rotate-wiggle"
+  | "rotate-wiggle-small"
+  | "rotate-wiggle-mini"
+  | "rotate-wiggle-scale"
+  | "pop-in-zoom"
+  | "scale-bounce"
+  | "rotate-left"
+  | "rotate-right"
+  | "rotate-slow-right"
+  | "rotate-slow-left"
+  | "scale-slow-in"
   | "slide-up"
+  | "slide-up-zoom-out"
+  | "slide-up-out"
+  | "scale-rotate-right"
+  | "typewriter"
+  | "typewriter-simple"
+  | "letter-fade-in"
+  | "screw-in"
+  | "letter-spacing-in"
+  | "letter-spacing-bounce-in"
+  | "letter-spacing-large-in"
+  | "slide-right-bounce"
+  | "slide-right-dust"
+  | "slide-up-wiggle"
+  | "slide-up-in"
+  | "slide-left-in-typewriter"
+  | "blink-fade"
+  | "border-reveal"
   | "zoom-in"
   | "slide-up-zoom";
+
+export type SubtitleWordAnimation =
+  | "none"
+  | "fade-in"
+  | "show-in"
+  | "show-in-fast"
+  | "zoom-in"
+  | "opacity-30"
+  | "slide-up"
+  | "slide-up-fast"
+  | "fade-in-fast"
+  | "white-flash-reveal"
+  | "slide-right-dust";
 
 export interface SubtitleStyle {
   fontFamily: string;
@@ -69,6 +138,8 @@ export interface SubtitleStyle {
   wordSpacing?: number;
   /** Block entrance animation, layered over the per-word template animation. */
   captionAnimation?: SubtitleEntrance;
+  /** Per-word entrance/accent animation, separate from template highlighting. */
+  wordAnimation?: SubtitleWordAnimation;
   /** When false, trailing punctuation is stripped from displayed words. */
   punctuation?: boolean;
   /** Per-template tunables (e.g. typewriter/matrix speed), keyed by control. */
@@ -87,7 +158,7 @@ export interface SubtitleStyle {
   glowIntensity?: number;
   /** Where word-attached emojis render. Defaults to above-word. */
   emojiPlacement?: SubtitleEmojiPlacement;
-  /** Native emoji motion preset. Defaults to pop. */
+  /** Native emoji motion preset. Defaults to pop-in. */
   emojiAnimation?: SubtitleEmojiAnimation;
   /** Emoji size multiplier relative to caption text. Defaults to 1. */
   emojiSize?: number;
@@ -334,7 +405,63 @@ export const subtitleStyleSchema = z.object({
   letterSpacing: z.number().optional(),
   wordSpacing: z.number().optional(),
   captionAnimation: z
-    .enum(["none", "fade", "slide-up", "zoom-in", "slide-up-zoom"])
+    .enum([
+      "none",
+      "show-in",
+      "pop-in",
+      "pop-out",
+      "bounce-in",
+      "zoom-out",
+      "fade",
+      "fade-in",
+      "fade-out",
+      "rotate-wiggle",
+      "rotate-wiggle-small",
+      "rotate-wiggle-mini",
+      "rotate-wiggle-scale",
+      "pop-in-zoom",
+      "scale-bounce",
+      "rotate-left",
+      "rotate-right",
+      "rotate-slow-right",
+      "rotate-slow-left",
+      "scale-slow-in",
+      "slide-up",
+      "slide-up-zoom-out",
+      "slide-up-out",
+      "scale-rotate-right",
+      "typewriter",
+      "typewriter-simple",
+      "letter-fade-in",
+      "screw-in",
+      "letter-spacing-in",
+      "letter-spacing-bounce-in",
+      "letter-spacing-large-in",
+      "slide-right-bounce",
+      "slide-right-dust",
+      "slide-up-wiggle",
+      "slide-up-in",
+      "slide-left-in-typewriter",
+      "blink-fade",
+      "border-reveal",
+      "zoom-in",
+      "slide-up-zoom",
+    ])
+    .optional(),
+  wordAnimation: z
+    .enum([
+      "none",
+      "fade-in",
+      "show-in",
+      "show-in-fast",
+      "zoom-in",
+      "opacity-30",
+      "slide-up",
+      "slide-up-fast",
+      "fade-in-fast",
+      "white-flash-reveal",
+      "slide-right-dust",
+    ])
     .optional(),
   punctuation: z.boolean().optional(),
   effectParams: z.record(z.string(), z.number()).optional(),
@@ -343,7 +470,31 @@ export const subtitleStyleSchema = z.object({
   glowColor: z.string().optional(),
   glowIntensity: z.number().min(0).max(100).optional(),
   emojiPlacement: z.enum(["none", "above-word", "below-word", "inline"]).optional(),
-  emojiAnimation: z.enum(["none", "pop", "bounce", "float"]).optional(),
+  emojiAnimation: z
+    .enum([
+      "none",
+      "scale",
+      "slide-up",
+      "slide-up-down",
+      "slide-down",
+      "slide-right",
+      "slide-left",
+      "slide-bottom-right",
+      "slide-top-right",
+      "pop-in",
+      "bounce-in",
+      "rotate",
+      "fade-in",
+      "slide-diagonal-bottom-left",
+      "slide-diagonal-bottom-right",
+      "slide-diagonal-top-left",
+      "slide-diagonal-top-right",
+      "bounce-in-wiggle",
+      "pop",
+      "bounce",
+      "float",
+    ])
+    .optional(),
   emojiSize: z.number().min(0.5).max(4).optional(),
   emojiGap: z.number().min(0).max(1).optional(),
 });

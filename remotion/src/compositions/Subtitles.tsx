@@ -105,24 +105,346 @@ function emojiItemStyle(
     easing: Easing.out(Easing.cubic),
   });
   const isAbove = placement === "above-word";
-  const popScale = animation === "pop" ? 0.45 + p * 0.65 : 1;
+  const normalized = animation === "pop" ? "pop-in" : animation === "bounce" ? "bounce-in" : animation;
+  const popScale =
+    normalized === "pop-in" || normalized === "scale" || normalized === "bounce-in" || normalized === "bounce-in-wiggle"
+      ? 0.45 + p * 0.65
+      : 1;
   // Bounce/float away from the caption line: up when above, down when below.
   const dir = isAbove ? -1 : 1;
-  const bounceY = animation === "bounce" ? dir * Math.sin(p * Math.PI) * style.fontSize * 0.18 : 0;
-  const floatY = animation === "float" ? dir * Math.sin(frame / 6) * style.fontSize * 0.06 : 0;
+  const bounceY =
+    normalized === "bounce-in" || normalized === "bounce-in-wiggle"
+      ? dir * Math.sin(p * Math.PI) * style.fontSize * 0.18
+      : 0;
+  const floatY = normalized === "float" ? dir * Math.sin(frame / 6) * style.fontSize * 0.06 : 0;
+  const slideDistance = style.fontSize * 0.65 * (1 - p);
+  const slideX =
+    normalized === "slide-right"
+      ? -slideDistance
+      : normalized === "slide-left"
+        ? slideDistance
+        : normalized === "slide-bottom-right" || normalized === "slide-diagonal-bottom-right"
+          ? -slideDistance
+          : normalized === "slide-top-right" || normalized === "slide-diagonal-top-right"
+            ? -slideDistance
+            : normalized === "slide-diagonal-bottom-left" || normalized === "slide-diagonal-top-left"
+              ? slideDistance
+              : 0;
+  const slideY =
+    normalized === "slide-up"
+      ? style.fontSize * 0.65 * (1 - p)
+      : normalized === "slide-up-down"
+        ? // rises from below, overshoots past the rest point, then settles
+          style.fontSize * (0.65 * (1 - p) - Math.sin(p * Math.PI) * 0.25)
+      : normalized === "slide-down"
+        ? -style.fontSize * 0.65 * (1 - p)
+        : normalized === "slide-bottom-right" || normalized === "slide-diagonal-bottom-right" || normalized === "slide-diagonal-bottom-left"
+          ? -slideDistance
+          : normalized === "slide-top-right" || normalized === "slide-diagonal-top-right" || normalized === "slide-diagonal-top-left"
+            ? slideDistance
+            : 0;
+  const wiggle = normalized === "bounce-in-wiggle" ? Math.sin(p * Math.PI * 4) * 10 * (1 - p) : 0;
+  const rotate = normalized === "rotate" ? 360 * p : wiggle;
 
   return {
     display: "inline-block",
     fontSize: Math.round(style.fontSize * 0.82 * size),
     lineHeight: 1,
-    opacity: p,
-    transform: `translateY(${(bounceY + floatY).toFixed(1)}px) scale(${popScale.toFixed(3)})`,
+    opacity: normalized === "none" ? 1 : p,
+    transform: `translate(${slideX.toFixed(1)}px, ${(slideY + bounceY + floatY).toFixed(1)}px) rotate(${rotate.toFixed(1)}deg) scale(${popScale.toFixed(3)})`,
     // Scale grows away from the caption line (bottom edge when above, top when below).
     transformOrigin: isAbove ? "center bottom" : "center top",
     WebkitTextStroke: "none",
     textShadow: "none",
     filter: "drop-shadow(0 3px 8px rgba(0,0,0,0.5))",
   };
+}
+
+function easeProgress(frame: number, frames: number): number {
+  return interpolate(frame, [0, Math.max(1, frames)], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.out(Easing.cubic),
+  });
+}
+
+function captionMotion(
+  animation: NonNullable<SubtitleStyle["captionAnimation"]>,
+  style: SubtitleStyle,
+  frame: number,
+  fps: number,
+  durationFrames: number,
+  rtl: boolean
+): { opacity?: number; transformParts: string[]; innerStyle?: React.CSSProperties } {
+  const intro = Math.min(durationFrames, Math.max(1, Math.round(0.42 * fps)));
+  const p = easeProgress(frame, intro);
+  // "-out" presets are EXITS: stay fully visible until the block's tail, then
+  // animate out. ep is 0 for most of the block and ramps 0->1 over the last
+  // ~0.42s. (Treating them as entrances previously left the caption invisible.)
+  const exitFrames = Math.min(durationFrames, Math.max(1, Math.round(0.42 * fps)));
+  const ep = easeProgress(frame - (durationFrames - exitFrames), exitFrames);
+  const dir = rtl ? -1 : 1; // flip horizontal slides for RTL
+  const transformParts: string[] = [];
+  let opacity: number | undefined = 1;
+  const innerStyle: React.CSSProperties = {};
+
+  switch (animation) {
+    case "none":
+      return { opacity: 1, transformParts };
+    case "show-in":
+      opacity = frame <= 1 ? 0 : 1;
+      break;
+    case "fade":
+    case "fade-in":
+      opacity = p;
+      break;
+    case "fade-out":
+      opacity = 1 - ep;
+      break;
+    case "pop-in":
+      opacity = p;
+      transformParts.push(`scale(${(0.72 + p * 0.28).toFixed(3)})`);
+      break;
+    case "pop-out":
+      opacity = 1 - ep;
+      transformParts.push(`scale(${(1 + ep * 0.22).toFixed(3)})`);
+      break;
+    case "bounce-in":
+    case "scale-bounce":
+      opacity = p;
+      transformParts.push(`scale(${(1 + Math.sin(p * Math.PI) * 0.18).toFixed(3)})`);
+      break;
+    case "zoom-out":
+      opacity = 1 - ep;
+      transformParts.push(`scale(${(1 - ep * 0.3).toFixed(3)})`);
+      break;
+    case "zoom-in":
+      opacity = p;
+      transformParts.push(`scale(${(0.7 + p * 0.3).toFixed(3)})`);
+      break;
+    case "slide-up":
+    case "slide-up-in":
+      opacity = p;
+      transformParts.push(`translateY(${((1 - p) * 70).toFixed(1)}px)`);
+      break;
+    case "slide-up-out":
+      opacity = 1 - ep;
+      transformParts.push(`translateY(${(-ep * 70).toFixed(1)}px)`);
+      break;
+    case "slide-up-zoom":
+      opacity = p;
+      transformParts.push(`translateY(${((1 - p) * 70).toFixed(1)}px)`);
+      transformParts.push(`scale(${(1.18 - p * 0.18).toFixed(3)})`);
+      break;
+    case "slide-up-zoom-out":
+      opacity = 1 - ep;
+      transformParts.push(`translateY(${(-ep * 70).toFixed(1)}px)`);
+      transformParts.push(`scale(${(1 - ep * 0.18).toFixed(3)})`);
+      break;
+    case "rotate-left":
+    case "rotate-slow-left":
+      opacity = p;
+      transformParts.push(`rotate(${(-(1 - p) * (animation === "rotate-slow-left" ? 8 : 18)).toFixed(1)}deg)`);
+      break;
+    case "rotate-right":
+    case "rotate-slow-right":
+      opacity = p;
+      transformParts.push(`rotate(${((1 - p) * (animation === "rotate-slow-right" ? 8 : 18)).toFixed(1)}deg)`);
+      break;
+    case "scale-rotate-right":
+      opacity = p;
+      transformParts.push(`rotate(${((1 - p) * 20).toFixed(1)}deg)`);
+      transformParts.push(`scale(${(0.75 + p * 0.25).toFixed(3)})`);
+      break;
+    case "rotate-wiggle":
+    case "rotate-wiggle-small":
+    case "rotate-wiggle-mini":
+    case "rotate-wiggle-scale": {
+      opacity = p;
+      const amount = animation === "rotate-wiggle" ? 9 : animation === "rotate-wiggle-small" ? 5 : 3;
+      transformParts.push(`rotate(${(Math.sin(frame / 2.5) * amount * (1 - p * 0.4)).toFixed(1)}deg)`);
+      if (animation === "rotate-wiggle-scale") transformParts.push(`scale(${(1 + Math.sin(frame / 3) * 0.04).toFixed(3)})`);
+      break;
+    }
+    case "pop-in-zoom":
+      opacity = p;
+      transformParts.push(`scale(${(0.6 + Math.sin(p * Math.PI) * 0.18 + p * 0.4).toFixed(3)})`);
+      break;
+    case "scale-slow-in":
+      opacity = p;
+      transformParts.push(`scale(${(0.88 + p * 0.12).toFixed(3)})`);
+      break;
+    case "typewriter":
+    case "typewriter-simple":
+    case "slide-left-in-typewriter":
+      // Block-level no-op: typewriter "types out" the line WORD BY WORD synced to
+      // speech (each word appears at its own timestamp) — handled per-word in the
+      // render loop (typewriterWordMotion), not by a block-wide clipPath wipe.
+      opacity = 1;
+      break;
+    case "letter-fade-in":
+      opacity = p;
+      break;
+    case "letter-spacing-in":
+    case "letter-spacing-bounce-in":
+    case "letter-spacing-large-in": {
+      opacity = p;
+      const start = animation === "letter-spacing-large-in" ? 0.35 : 0.18;
+      const bounce = animation === "letter-spacing-bounce-in" ? Math.sin(p * Math.PI) * 0.05 : 0;
+      innerStyle.letterSpacing = `${(start * (1 - p) + bounce).toFixed(3)}em`;
+      break;
+    }
+    case "screw-in":
+      opacity = p;
+      transformParts.push(`rotate(${((1 - p) * -60).toFixed(1)}deg)`);
+      transformParts.push(`scale(${(0.55 + p * 0.45).toFixed(3)})`);
+      break;
+    case "slide-right-bounce":
+      opacity = p;
+      transformParts.push(`translateX(${(((1 - p) * -90 + Math.sin(p * Math.PI) * 10) * dir).toFixed(1)}px)`);
+      break;
+    case "slide-right-dust":
+      opacity = p;
+      transformParts.push(`translateX(${((1 - p) * -90 * dir).toFixed(1)}px)`);
+      innerStyle.filter = `blur(${((1 - p) * 3).toFixed(1)}px)`;
+      break;
+    case "slide-up-wiggle":
+      opacity = p;
+      transformParts.push(`translateY(${((1 - p) * 70).toFixed(1)}px)`);
+      transformParts.push(`rotate(${(Math.sin(frame / 2) * 5 * (1 - p)).toFixed(1)}deg)`);
+      break;
+    case "blink-fade":
+      opacity = p * (frame % 6 < 3 ? 1 : 0.45);
+      break;
+    case "border-reveal":
+      opacity = p;
+      // reveal from the reading-start edge (left for LTR, right for RTL)
+      innerStyle.clipPath = rtl
+        ? `inset(0 0 0 ${(1 - p) * 100}%)`
+        : `inset(0 ${(1 - p) * 100}% 0 0)`;
+      innerStyle.borderBottom = `${Math.max(2, style.fontSize * 0.04)}px solid ${style.highlightColor}`;
+      break;
+  }
+
+  return { opacity, transformParts, innerStyle };
+}
+
+// Returns the per-word motion as composable CSS (NO `display`) so it can be
+// merged onto the template's OWN element via cloneElement — keeping that element
+// the flex item, which preserves template layout (e.g. Podcast flexBasis:100%)
+// and the #39 RTL design. Returns null for "none" (no motion to apply).
+function wordMotionStyle(
+  animation: NonNullable<SubtitleStyle["wordAnimation"]>,
+  frame: number,
+  fps: number,
+  wordStartFrame: number,
+  isActive: boolean,
+  isPast: boolean,
+  rtl: boolean
+): React.CSSProperties | null {
+  if (animation === "none") return null;
+
+  const fast = animation.includes("fast");
+  const dur = Math.max(1, Math.round((fast ? 0.12 : 0.22) * fps));
+  const p = easeProgress(frame - wordStartFrame, dur);
+  const visible = isPast || isActive || p > 0;
+  const dir = rtl ? -1 : 1; // flip horizontal slides so RTL slides in from the right
+  const style: React.CSSProperties = { opacity: visible ? 1 : 0 };
+
+  switch (animation) {
+    case "fade-in":
+    case "fade-in-fast":
+      style.opacity = p;
+      break;
+    case "show-in":
+    case "show-in-fast":
+      style.opacity = frame >= wordStartFrame ? 1 : 0;
+      break;
+    case "zoom-in":
+      style.opacity = p;
+      style.transform = `scale(${(0.72 + p * 0.28).toFixed(3)})`;
+      break;
+    case "opacity-30":
+      style.opacity = isPast || isActive ? 1 : 0.3;
+      break;
+    case "slide-up":
+    case "slide-up-fast":
+      style.opacity = p;
+      style.transform = `translateY(${((1 - p) * 24).toFixed(1)}px)`;
+      break;
+    case "white-flash-reveal":
+      style.opacity = p;
+      if (p < 0.5) {
+        style.textShadow = "0 0 18px #fff, 0 0 32px #fff";
+        style.filter = `brightness(${(1.8 - p).toFixed(2)})`;
+      }
+      break;
+    case "slide-right-dust":
+      style.opacity = p;
+      style.transform = `translateX(${((1 - p) * -28 * dir).toFixed(1)}px)`;
+      style.filter = `blur(${((1 - p) * 2.5).toFixed(1)}px)`;
+      break;
+  }
+
+  return style;
+}
+
+/**
+ * "Typewriter" caption family: the line types out WORD BY WORD in sync with the
+ * audio — each word stays hidden until its own timestamp, then reveals. Returns
+ * an opacity GATE (multiplied onto the word) or null for non-typewriter entrances.
+ */
+function typewriterGate(
+  entrance: NonNullable<SubtitleStyle["captionAnimation"]>,
+  frame: number,
+  wordStartFrame: number,
+  fps: number
+): number | null {
+  if (
+    entrance !== "typewriter" &&
+    entrance !== "typewriter-simple" &&
+    entrance !== "slide-left-in-typewriter"
+  ) {
+    return null;
+  }
+  if (entrance === "typewriter-simple") return frame >= wordStartFrame ? 1 : 0; // hard cut
+  return easeProgress(frame - wordStartFrame, Math.max(1, Math.round(0.08 * fps))); // quick fade in
+}
+
+/**
+ * Wrap each word in a real DOM <span> that carries dir="auto" (per-word script
+ * direction for RTL) and the per-word motion. Templates render CUSTOM components
+ * (e.g. HormoziWord) that ignore a `dir` prop and don't read style.opacity, so
+ * the motion/dir MUST live on a wrapping DOM node — not be cloned onto them.
+ *
+ * - No motion and no gate: `display: contents` so the wrapper generates no box
+ *   and the template's own element stays the flex item (preserves template
+ *   layout, e.g. Podcast flexBasis:100%).
+ * - With motion/gate: the wrapper becomes the flex item (inline-block). For a
+ *   self-stacking template's emphasis word we forward flexBasis:100% so Podcast
+ *   keeps giving that word its own row even while it animates.
+ * `gateOpacity` (typewriter) multiplies the wrapper opacity (CSS opacity nests).
+ */
+function applyWordMotion(
+  rendered: React.ReactNode,
+  motion: React.CSSProperties | null,
+  gateOpacity: number | null,
+  stackEmphasis: boolean,
+  key: number
+): React.ReactNode {
+  if (motion == null && gateOpacity == null) {
+    return <span key={key} dir="auto" style={{ display: "contents" }}>{rendered}</span>;
+  }
+  const style: React.CSSProperties = { display: "inline-block" };
+  if (motion) Object.assign(style, motion);
+  if (gateOpacity != null) {
+    style.opacity = (typeof style.opacity === "number" ? style.opacity : 1) * gateOpacity;
+  }
+  if (stackEmphasis) {
+    style.flexBasis = "100%";
+    style.textAlign = "center";
+  }
+  return <span key={key} dir="auto" style={style}>{rendered}</span>;
 }
 
 /** How long a block lingers after its last word, clamped to the next block. */
@@ -273,48 +595,35 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   // Above/below emojis render once per line (centered over the block), not per
   // word. Inline emojis stay baked into the word text below. "none" → no emojis.
   const emojiPlacement = style.emojiPlacement ?? "above-word";
-  const emojiAnimation = style.emojiAnimation ?? "pop";
+  const emojiAnimation = style.emojiAnimation ?? "pop-in";
+  const wordAnimation = style.wordAnimation ?? "none";
   const lineEmojis =
     emojiPlacement === "above-word" || emojiPlacement === "below-word"
       ? block.words.filter((w) => w.emoji).map((w) => w.emoji as string)
       : [];
 
   // Block entrance animation (layers over the per-word template animation).
-  // The composed transform also carries the free-drag centering when placed.
-  const entrance = style.captionAnimation ?? "fade";
-  const introDur = Math.min(durationFrames, Math.max(1, Math.round(0.4 * fps)));
-  const introP = interpolate(frame, [0, introDur], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: Easing.out(Easing.cubic),
-  });
-  const slide =
-    entrance === "slide-up" || entrance === "slide-up-zoom"
-      ? `translateY(${((1 - introP) * 70).toFixed(1)}px)`
-      : "";
-  const zoom =
-    entrance === "zoom-in" || entrance === "slide-up-zoom"
-      ? `scale(${(0.7 + 0.3 * introP).toFixed(3)})`
-      : "";
+  // Existing templates already have their own word personality, so default to
+  // no block fade. User-selected caption animations opt into motion.
+  const entrance = style.captionAnimation ?? "none";
+  const motion = captionMotion(entrance, style, frame, fps, durationFrames, blockDir === "rtl");
   const transform =
-    [freePlaced ? "translate(-50%, -50%)" : "", slide, zoom]
+    [freePlaced ? "translate(-50%, -50%)" : "", ...motion.transformParts]
       .filter(Boolean)
       .join(" ") || undefined;
 
-  // Block-level fade so captions enter/leave smoothly instead of popping.
-  // Short blocks need a smaller fade, otherwise the in/out points collide and
-  // produce a non-increasing input range (interpolate throws on that).
-  // "none" entrance opts out of the fade entirely (hard cut).
+  // Only the explicit fade preset fades out at the tail. Other Submagic-style
+  // choices keep their settled pose until the next caption block replaces them.
   const fade = Math.min(FADE_FRAMES, Math.floor((durationFrames - 1) / 2));
   const opacity =
-    entrance === "none" || fade < 1
-      ? 1
-      : interpolate(
+    entrance === "fade" && fade >= 1
+      ? interpolate(
           frame,
           [0, fade, durationFrames - fade, durationFrames],
           [0, 1, 1, 0],
           { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-        );
+        )
+      : motion.opacity;
 
   return (
     <div
@@ -344,6 +653,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           ...(style.letterSpacing != null
             ? { letterSpacing: `${style.letterSpacing}em` }
             : {}),
+          ...motion.innerStyle,
           ...containerStyle,
         }}
       >
@@ -388,18 +698,31 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
             isEmphasis: i === emphasisIndex,
           });
 
-          // dir="auto" gives each word its own script direction. display:contents
-          // means this wrapper generates NO box, so the template's own element
-          // stays the flex item — template layout styles (e.g. Podcast's
-          // flexBasis:100%) keep working, and preview matches export. Word ORDER
-          // within the block is controlled by the container's flex `direction`
-          // (set from dominantDir), correct for the real traffic (pure-RTL,
-          // pure-LTR, Arabic-dominant mixed blocks).
-          return (
-            <span key={i} dir="auto" style={{ display: "contents" }}>
-              {renderedWord}
-            </span>
+          // Compose the per-word animation onto the template's OWN element (no
+          // wrapper box) so it stays the flex item — preserving template layout
+          // (Podcast flexBasis:100%) and the #39 RTL design. dir="auto" handles
+          // per-word script direction; container `direction` (dominantDir) sets
+          // word order for RTL blocks.
+          const motion = wordMotionStyle(
+            wordAnimation,
+            frame,
+            fps,
+            wordStartFrame,
+            isActive,
+            isPast,
+            blockDir === "rtl"
           );
+          // Typewriter caption animations type the line out word-by-word in sync
+          // with speech (gates each word's opacity by its timestamp).
+          const gate = typewriterGate(entrance, frame, wordStartFrame, fps);
+          // When the wrapper becomes the flex item (motion/gate present), forward
+          // Podcast's emphasis-word flexBasis so its vertical stack survives.
+          const stackEmphasis =
+            template.selfStacks === true &&
+            i === emphasisIndex &&
+            style.verticalStack !== false;
+
+          return applyWordMotion(renderedWord, motion, gate, stackEmphasis, i);
         })}
         {lineEmojis.length > 0 && (
           <div style={emojiRowStyle(style, emojiPlacement as "above-word" | "below-word")}>

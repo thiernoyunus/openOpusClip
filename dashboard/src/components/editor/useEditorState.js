@@ -439,6 +439,9 @@ const BUILTIN_CAPTION_STYLE = {
         bgColor: '#000000',
         bgOpacity: 0,
         animation: 'pop',
+        captionAnimation: 'none',
+        wordAnimation: 'none',
+        emojiAnimation: 'pop-in',
     },
 };
 
