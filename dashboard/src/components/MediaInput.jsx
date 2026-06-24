@@ -63,6 +63,7 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
     const [url, setUrl] = useState('');
     const [files, setFiles] = useState([]);
     const [acknowledged, setAcknowledged] = useState(false);
+    const [submitting, setSubmitting] = useState(false);
     const [whisperModel, setWhisperModel] = useState('base');
     // 'whisper' = built-in (free, on-server) | 'soniox' = cloud API (multilingual)
     const [transcriptionEngine, setTranscriptionEngine] = useState('whisper');
@@ -160,15 +161,21 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!acknowledged || sonioxBlocked) return;
+        if (!acknowledged || sonioxBlocked || submitting) return;
         const clip = buildClipSettings();
         if (mode === 'url' && url) {
             onProcess({ type: 'url', payload: url, acknowledged: true, whisperModel, transcriptionEngine, ...clip });
         } else if (mode === 'file' && files.length > 0) {
-            // Clear the selected files only after the job is accepted, so a
-            // failed submit doesn't lose the user's selection.
-            const ok = await onProcess({ type: 'files', payload: files, acknowledged: true, whisperModel, transcriptionEngine, ...clip });
-            if (ok !== false) setFiles([]);
+            // Hold a submitting guard while we await: files stay in state until
+            // the job is accepted (so a failed submit keeps the selection), but
+            // the button is disabled so a double-click can't re-upload them.
+            setSubmitting(true);
+            try {
+                const ok = await onProcess({ type: 'files', payload: files, acknowledged: true, whisperModel, transcriptionEngine, ...clip });
+                if (ok !== false) setFiles([]);
+            } finally {
+                setSubmitting(false);
+            }
         }
     };
 
@@ -443,7 +450,7 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
 
                 <button
                     type="submit"
-                    disabled={!acknowledged || sonioxBlocked || (mode === 'url' && !url) || (mode === 'file' && files.length === 0)}
+                    disabled={!acknowledged || sonioxBlocked || submitting || (mode === 'url' && !url) || (mode === 'file' && files.length === 0)}
                     className="w-full mt-4 py-3 rounded-lg bg-fg text-[#18181b] font-medium text-sm hover:bg-white active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                     {isProcessing ? (
