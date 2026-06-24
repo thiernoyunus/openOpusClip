@@ -10,6 +10,7 @@ import asyncio
 import sys
 from dotenv import load_dotenv
 from typing import Dict, Optional, List
+from urllib.parse import quote, unquote
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -97,6 +98,35 @@ def _relocate_root_job_artifacts(job_id: str, job_output_dir: str) -> bool:
     except Exception:
         return False
 
+def _video_url(job_id: str, filename: str) -> str:
+    """Build a /videos/ URL, percent-encoding the filename so a title with
+    '?', '&', '#' or spaces (e.g. 'Why ... Hate Each Other?') doesn't truncate
+    the path into a 404. job_id is a UUID and needs no encoding."""
+    return f"/videos/{job_id}/{quote(filename)}"
+
+
+def _reencode_url(url):
+    """Re-encode the filename segment of a /videos/ URL. Idempotent
+    (quote(unquote(...))): fixes legacy raw URLs persisted in result.json and
+    leaves already-encoded ones unchanged."""
+    if not isinstance(url, str) or not url.startswith("/videos/"):
+        return url
+    head, _, fname = url.rpartition("/")
+    return f"{head}/{quote(unquote(fname))}"
+
+
+def _normalize_clip_urls(result):
+    """Ensure every clip URL is percent-encoded before it goes to the frontend,
+    so old jobs whose result.json holds raw '?'/'&' filenames stop 404-ing."""
+    if isinstance(result, dict):
+        for clip in result.get("clips") or []:
+            if isinstance(clip, dict):
+                for key in ("video_url", "source_url", "framing_url"):
+                    if key in clip:
+                        clip[key] = _reencode_url(clip[key])
+    return result
+
+
 def _attach_editor_urls(clip: dict, job_id: str, output_dir: str, base_name: str, clip_number: int) -> None:
     """
     Attach source_url + framing_url to a clip dict when the non-destructive
@@ -106,9 +136,9 @@ def _attach_editor_urls(clip: dict, job_id: str, output_dir: str, base_name: str
     source_filename = f"{base_name}_clip_{clip_number}_source.mp4"
     framing_filename = f"{base_name}_clip_{clip_number}.framing.json"
     if os.path.exists(os.path.join(output_dir, source_filename)):
-        clip['source_url'] = f"/videos/{job_id}/{source_filename}"
+        clip['source_url'] = _video_url(job_id, source_filename)
     if os.path.exists(os.path.join(output_dir, framing_filename)):
-        clip['framing_url'] = f"/videos/{job_id}/{framing_filename}"
+        clip['framing_url'] = _video_url(job_id, framing_filename)
 
 def _safe_job_id(job_id: str) -> bool:
     """A job id must be a single, non-reserved path segment (rmtree/IO safety)."""
@@ -341,7 +371,7 @@ async def run_job(job_id, job_data):
                              if os.path.exists(clip_path) and os.path.getsize(clip_path) > 0:
                                  # Checking if file is growing? For now assume if it exists and main.py moves it there, it's done.
                                  # main.py writes to temp_... then moves to final name. So presence means ready!
-                                 clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
+                                 clip['video_url'] = _video_url(job_id, clip_filename)
                                  _attach_editor_urls(clip, job_id, output_dir, base_name, i + 1)
                                  ready_clips.append(clip)
                         
@@ -381,7 +411,7 @@ async def run_job(job_id, job_data):
 
                 for i, clip in enumerate(clips):
                      clip_filename = f"{base_name}_clip_{i+1}.mp4"
-                     clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
+                     clip['video_url'] = _video_url(job_id, clip_filename)
                      _attach_editor_urls(clip, job_id, output_dir, base_name, i + 1)
 
                 jobs[job_id]['result'] = {'clips': clips, 'cost_analysis': cost_analysis}
@@ -587,7 +617,7 @@ async def get_status(job_id: str):
     return {
         "status": job['status'],
         "logs": job['logs'],
-        "result": job.get('result'),
+        "result": _normalize_clip_urls(job.get('result')),
         "created_at": job.get('created_at'),
         "started_at": started_at,
         "completed_at": completed_at,
@@ -653,13 +683,16 @@ async def edit_clip(
         # Resolve Input Path: Prefer explict input_filename from frontend (chaining edits)
         if req.input_filename:
             # Security: Ensure just a filename, no paths
-            safe_name = os.path.basename(req.input_filename)
+            safe_name = os.path.basename(unquote(req.input_filename))
             input_path = os.path.join(OUTPUT_DIR, req.job_id, safe_name)
             filename = safe_name
         else:
             # Fallback to original clip
             clip = job['result']['clips'][req.clip_index]
-            filename = clip['video_url'].split('/')[-1]
+            video_url = clip.get('video_url')
+            if not video_url:
+                raise HTTPException(status_code=400, detail="Clip video URL not found")
+            filename = unquote(video_url.split('/')[-1])
             input_path = os.path.join(OUTPUT_DIR, req.job_id, filename)
         
         if not os.path.exists(input_path):
@@ -738,7 +771,7 @@ async def edit_clip(
         # Or return new URL and let frontend handle it?
         # Updating job result allows persistence if page refreshes.
         
-        new_video_url = f"/videos/{req.job_id}/{edited_filename}"
+        new_video_url = _video_url(req.job_id, edited_filename)
         
         # Start a new "edited" clip entry or just update the current one?
         # Let's update the current one's video_url but keep backup?
@@ -872,11 +905,14 @@ async def generate_effects_config(
     try:
         # Resolve input path
         if req.input_filename:
-            safe_name = os.path.basename(req.input_filename)
+            safe_name = os.path.basename(unquote(req.input_filename))
             input_path = os.path.join(OUTPUT_DIR, req.job_id, safe_name)
         else:
             clip = job['result']['clips'][req.clip_index]
-            filename = clip['video_url'].split('/')[-1]
+            video_url = clip.get('video_url')
+            if not video_url:
+                raise HTTPException(status_code=400, detail="Clip video URL not found")
+            filename = unquote(video_url.split('/')[-1])
             input_path = os.path.join(OUTPUT_DIR, req.job_id, filename)
 
         if not os.path.exists(input_path):
@@ -1062,10 +1098,10 @@ async def add_subtitles(req: SubtitleRequest):
     # Video Path
     if req.input_filename:
         # Use chained file
-        filename = os.path.basename(req.input_filename)
+        filename = os.path.basename(unquote(req.input_filename))
     else:
         # Fallback to standard naming
-        filename = clip_data.get('video_url', '').split('/')[-1]
+        filename = unquote(clip_data.get('video_url', '').split('/')[-1])
         if not filename:
              base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
              filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
@@ -1122,13 +1158,13 @@ async def add_subtitles(req: SubtitleRequest):
     # 3. Update Result and Metadata
     # Update InMemory Jobs
     if req.clip_index < len(job['result']['clips']):
-         job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
+         job['result']['clips'][req.clip_index]['video_url'] = _video_url(req.job_id, output_filename)
          _persist_result(req.job_id)  # keep the on-disk snapshot in sync with edits
 
     # Update Metadata on Disk (Persistence)
     try:
         if req.clip_index < len(clips):
-            clips[req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
+            clips[req.clip_index]['video_url'] = _video_url(req.job_id, output_filename)
             # Update the main data structure
             data['shorts'] = clips
             
@@ -1142,7 +1178,7 @@ async def add_subtitles(req: SubtitleRequest):
 
     return {
         "success": True,
-        "new_video_url": f"/videos/{req.job_id}/{output_filename}"
+        "new_video_url": _video_url(req.job_id, output_filename)
     }
 
 # --- Clip framing (non-destructive editor, docs/video-editor-plan.md §2) ---
@@ -1336,7 +1372,7 @@ async def apply_render(req: ApplyRenderRequest):
     if not os.path.exists(rendered_path) or os.path.getsize(rendered_path) == 0:
         raise HTTPException(status_code=404, detail=f"Rendered file not found: {filename}")
 
-    new_video_url = f"/videos/{req.job_id}/{filename}"
+    new_video_url = _video_url(req.job_id, filename)
 
     json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
     if json_files:
@@ -1374,7 +1410,7 @@ async def upload_clip_audio(job_id: str, clip_index: int, file: UploadFile = Fil
     dest = os.path.join(output_dir, filename)
     with open(dest, "wb") as out:
         out.write(await file.read())
-    return {"url": f"/videos/{job_id}/{filename}"}
+    return {"url": _video_url(job_id, filename)}
 
 class HookRequest(BaseModel):
     job_id: str
@@ -1407,9 +1443,9 @@ async def add_hook(req: HookRequest):
     
     # Video Path
     if req.input_filename:
-        filename = os.path.basename(req.input_filename)
+        filename = os.path.basename(unquote(req.input_filename))
     else:
-        filename = clip_data.get('video_url', '').split('/')[-1]
+        filename = unquote(clip_data.get('video_url', '').split('/')[-1])
         if not filename:
              base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
              filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
@@ -1441,13 +1477,13 @@ async def add_hook(req: HookRequest):
     # Update Persistence (Same logic as subtitles)
     # Update InMemory Jobs
     if req.clip_index < len(job['result']['clips']):
-         job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
+         job['result']['clips'][req.clip_index]['video_url'] = _video_url(req.job_id, output_filename)
          _persist_result(req.job_id)  # keep the on-disk snapshot in sync with edits
 
     # Update Metadata on Disk
     try:
         if req.clip_index < len(clips):
-            clips[req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
+            clips[req.clip_index]['video_url'] = _video_url(req.job_id, output_filename)
             data['shorts'] = clips
             with open(json_files[0], 'w') as f:
                 json.dump(data, f, indent=4)
@@ -1457,7 +1493,7 @@ async def add_hook(req: HookRequest):
 
     return {
         "success": True,
-        "new_video_url": f"/videos/{req.job_id}/{output_filename}"
+        "new_video_url": _video_url(req.job_id, output_filename)
     }
 
 class TranslateRequest(BaseModel):
@@ -1503,9 +1539,9 @@ async def translate_clip(
 
     # Video Path
     if req.input_filename:
-        filename = os.path.basename(req.input_filename)
+        filename = os.path.basename(unquote(req.input_filename))
     else:
-        filename = clip_data.get('video_url', '').split('/')[-1]
+        filename = unquote(clip_data.get('video_url', '').split('/')[-1])
         if not filename:
              base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
              filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
@@ -1541,12 +1577,12 @@ async def translate_clip(
 
     # Update InMemory Jobs
     if req.clip_index < len(job['result']['clips']):
-         job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
+         job['result']['clips'][req.clip_index]['video_url'] = _video_url(req.job_id, output_filename)
 
     # Update Metadata on Disk
     try:
         if req.clip_index < len(clips):
-            clips[req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
+            clips[req.clip_index]['video_url'] = _video_url(req.job_id, output_filename)
             data['shorts'] = clips
             with open(json_files[0], 'w') as f:
                 json.dump(data, f, indent=4)
@@ -1556,7 +1592,7 @@ async def translate_clip(
 
     return {
         "success": True,
-        "new_video_url": f"/videos/{req.job_id}/{output_filename}"
+        "new_video_url": _video_url(req.job_id, output_filename)
     }
 
 class SocialPostRequest(BaseModel):
@@ -1589,7 +1625,7 @@ async def post_to_socials(req: SocialPostRequest):
         # We constructed it as: f"/videos/{job_id}/{clip_filename}"
         # And file is at f"{OUTPUT_DIR}/{job_id}/{clip_filename}"
         
-        filename = clip['video_url'].split('/')[-1]
+        filename = unquote(clip['video_url'].split('/')[-1])
         file_path = os.path.join(OUTPUT_DIR, req.job_id, filename)
         
         if not os.path.exists(file_path):
