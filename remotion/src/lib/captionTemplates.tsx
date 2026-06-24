@@ -174,6 +174,12 @@ function classicTemplate(
     defaultStyle: {
       template: id,
       animation,
+      // Configured animation defaults (visible/editable in Customize). Word stays
+      // "none" so the classic word behavior (driven by `animation`) is preserved;
+      // "clean" (no word motion) gets a gentle word fade so it isn't lifeless.
+      captionAnimation: "fade-in",
+      wordAnimation: animation === "none" ? "fade-in" : "none",
+      emojiAnimation: "pop-in",
       fontFamily: "Inter",
       fontSize: 56,
       fontColor: "#FFFFFF",
@@ -792,7 +798,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Montserrat",
     uppercase: true,
     grouping: { maxWords: 4, maxChars: 22 },
-    defaultStyle: { template: "hormozi", animation: "none", fontFamily: "Montserrat", fontSize: 74, fontColor: "#FFFFFF", highlightColor: "#FFE000", borderColor: "#000000", borderWidth: 7, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "hormozi", animation: "none", captionAnimation: "pop-in", wordAnimation: "none", emojiAnimation: "bounce-in", fontFamily: "Montserrat", fontSize: 74, fontColor: "#FFFFFF", highlightColor: "#FFE000", borderColor: "#000000", borderWidth: 7, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <HormoziWord {...args} />,
   },
   {
@@ -801,7 +807,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     category: "effects",
     font: "Inter",
     grouping: { maxWords: 4, maxChars: 24 },
-    defaultStyle: { template: "tiktok-bounce", animation: "none", fontFamily: "Inter", fontSize: 64, fontColor: "#FFFFFF", highlightColor: "#3DD68C", borderColor: "#000000", borderWidth: 4, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "tiktok-bounce", animation: "none", captionAnimation: "scale-bounce", wordAnimation: "none", emojiAnimation: "bounce-in-wiggle", fontFamily: "Inter", fontSize: 64, fontColor: "#FFFFFF", highlightColor: "#3DD68C", borderColor: "#000000", borderWidth: 4, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <TikTokBounceWord {...args} />,
   },
   {
@@ -810,7 +816,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     category: "effects",
     font: "Inter",
     grouping: { maxWords: 5, maxChars: 28 },
-    defaultStyle: { template: "typewriter", animation: "none", fontFamily: "Inter", fontSize: 58, fontColor: "#FFFFFF", highlightColor: "#FFE000", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "typewriter", animation: "none", captionAnimation: "typewriter", wordAnimation: "none", emojiAnimation: "pop-in", fontFamily: "Inter", fontSize: 58, fontColor: "#FFFFFF", highlightColor: "#FFE000", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     extras: [{ key: "typeSpeed", label: "Type speed", min: 0.5, max: 3, step: 0.1, default: 1 }],
     renderWord: (args) => <TypewriterWord {...args} />,
   },
@@ -821,7 +827,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Gabarito",
     uppercase: true,
     grouping: { maxWords: 3, maxChars: 20 },
-    defaultStyle: { template: "mrbeast", animation: "none", fontFamily: "Gabarito", fontSize: 74, fontColor: "#FFFFFF", highlightColor: "#FFE000", borderColor: "#000000", borderWidth: 7, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "mrbeast", animation: "none", captionAnimation: "scale-bounce", wordAnimation: "none", emojiAnimation: "bounce-in", fontFamily: "Gabarito", fontSize: 74, fontColor: "#FFFFFF", highlightColor: "#FFE000", borderColor: "#000000", borderWidth: 7, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <MrBeastWord {...args} />,
   },
   {
@@ -830,7 +836,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     category: "effects",
     font: "Inter",
     grouping: { maxWords: 5, maxChars: 30 },
-    defaultStyle: { template: "dynamic-minimal", animation: "none", fontFamily: "Inter", fontSize: 60, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "dynamic-minimal", animation: "none", captionAnimation: "fade-in", wordAnimation: "none", emojiAnimation: "scale", fontFamily: "Inter", fontSize: 60, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <MinimalWord {...args} />,
   },
   {
@@ -839,7 +845,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     category: "effects",
     font: "Inter",
     grouping: { maxWords: 5, maxChars: 28 },
-    defaultStyle: { template: "podcast", animation: "none", fontFamily: "Inter", fontSize: 96, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "podcast", animation: "none", captionAnimation: "slide-up", wordAnimation: "none", emojiAnimation: "pop-in", fontFamily: "Inter", fontSize: 96, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     selfStacks: true,
     renderWord: (args) => <PodcastWord {...args} />,
   },
@@ -850,7 +856,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Montserrat",
     uppercase: true,
     grouping: { maxWords: 3, maxChars: 20 },
-    defaultStyle: { template: "glossy-gradient", animation: "none", fontFamily: "Montserrat", fontSize: 78, fontColor: "#FFFFFF", highlightColor: "#EAF2FF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "glossy-gradient", animation: "none", captionAnimation: "fade-in", wordAnimation: "none", emojiAnimation: "scale", fontFamily: "Montserrat", fontSize: 78, fontColor: "#FFFFFF", highlightColor: "#EAF2FF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <GlossyGradientWord {...args} />,
   },
   {
@@ -860,7 +866,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Anton",
     uppercase: true,
     grouping: { maxWords: 3, maxChars: 18 },
-    defaultStyle: { template: "extrude-3d", animation: "none", fontFamily: "Anton", fontSize: 84, fontColor: "#FFFFFF", highlightColor: "#FFE45C", borderColor: "#141414", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "extrude-3d", animation: "none", captionAnimation: "pop-in", wordAnimation: "none", emojiAnimation: "pop-in", fontFamily: "Anton", fontSize: 84, fontColor: "#FFFFFF", highlightColor: "#FFE45C", borderColor: "#141414", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <Extrude3DWord {...args} />,
   },
   {
@@ -870,7 +876,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Montserrat",
     uppercase: true,
     grouping: { maxWords: 3, maxChars: 20 },
-    defaultStyle: { template: "flip-3d", animation: "none", fontFamily: "Montserrat", fontSize: 70, fontColor: "#F2F2F2", highlightColor: "#3DDC97", borderColor: "#0E0E0E", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "flip-3d", animation: "none", captionAnimation: "rotate-wiggle-small", wordAnimation: "none", emojiAnimation: "rotate", fontFamily: "Montserrat", fontSize: 70, fontColor: "#F2F2F2", highlightColor: "#3DDC97", borderColor: "#0E0E0E", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <Flip3DWord {...args} />,
   },
   {
@@ -879,7 +885,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     category: "effects",
     font: "Outfit",
     grouping: { maxWords: 4, maxChars: 22 },
-    defaultStyle: { template: "whip-blur", animation: "none", fontFamily: "Outfit", fontSize: 66, fontColor: "#FFFFFF", highlightColor: "#FF4D6D", borderColor: "#111111", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "whip-blur", animation: "none", captionAnimation: "slide-up", wordAnimation: "none", emojiAnimation: "slide-up", fontFamily: "Outfit", fontSize: 66, fontColor: "#FFFFFF", highlightColor: "#FF4D6D", borderColor: "#111111", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <WhipBlurWord {...args} />,
   },
   {
@@ -889,7 +895,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Anton",
     uppercase: true,
     grouping: { maxWords: 3, maxChars: 18 },
-    defaultStyle: { template: "zoom-rush", animation: "none", fontFamily: "Anton", fontSize: 84, fontColor: "#FFFFFF", highlightColor: "#00E0FF", borderColor: "#0A0A0A", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "zoom-rush", animation: "none", captionAnimation: "zoom-in", wordAnimation: "none", emojiAnimation: "pop-in", fontFamily: "Anton", fontSize: 84, fontColor: "#FFFFFF", highlightColor: "#00E0FF", borderColor: "#0A0A0A", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <ZoomRushWord {...args} />,
   },
   {
@@ -898,7 +904,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     category: "effects",
     font: "Gabarito",
     grouping: { maxWords: 3, maxChars: 20 },
-    defaultStyle: { template: "squash-pop", animation: "none", fontFamily: "Gabarito", fontSize: 70, fontColor: "#FFFFFF", highlightColor: "#FFD23F", borderColor: "#1B1B1B", borderWidth: 3, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "squash-pop", animation: "none", captionAnimation: "scale-bounce", wordAnimation: "none", emojiAnimation: "bounce-in", fontFamily: "Gabarito", fontSize: 70, fontColor: "#FFFFFF", highlightColor: "#FFD23F", borderColor: "#1B1B1B", borderWidth: 3, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <SquashPopWord {...args} />,
   },
   {
@@ -908,7 +914,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Anton",
     uppercase: true,
     grouping: { maxWords: 3, maxChars: 18 },
-    defaultStyle: { template: "chrome-shine", animation: "none", fontFamily: "Anton", fontSize: 84, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#111111", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "chrome-shine", animation: "none", captionAnimation: "fade-in", wordAnimation: "none", emojiAnimation: "scale", fontFamily: "Anton", fontSize: 84, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#111111", borderWidth: 2, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <ChromeShineWord {...args} />,
   },
   {
@@ -917,7 +923,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     category: "effects",
     font: "Inter",
     grouping: { maxWords: 4, maxChars: 26 },
-    defaultStyle: { template: "apple", animation: "none", fontFamily: "Inter", fontSize: 62, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "apple", animation: "none", captionAnimation: "slide-up", wordAnimation: "none", emojiAnimation: "fade-in", fontFamily: "Inter", fontSize: 62, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <AppleWord {...args} />,
   },
   {
@@ -929,7 +935,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     grouping: { maxWords: 3, maxChars: 22 },
     defaultStyle: {
       template: "glitch-rgb",
-      animation: "none",
+      animation: "none", captionAnimation: "blink-fade", wordAnimation: "none", emojiAnimation: "pop-in",
       fontFamily: "Space Grotesk",
       fontSize: 70,
       fontColor: "#FFFFFF",
@@ -949,7 +955,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     grouping: { maxWords: 3, maxChars: 20 },
     defaultStyle: {
       template: "matrix-decode",
-      animation: "none",
+      animation: "none", captionAnimation: "fade-in", wordAnimation: "none", emojiAnimation: "scale",
       fontFamily: "Space Grotesk",
       fontSize: 66,
       fontColor: "#00FF41",
@@ -971,7 +977,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     grouping: { maxWords: 3, maxChars: 20 },
     defaultStyle: {
       template: "particle-burst",
-      animation: "none",
+      animation: "none", captionAnimation: "pop-in", wordAnimation: "none", emojiAnimation: "bounce-in",
       fontFamily: "Outfit",
       fontSize: 70,
       fontColor: "#FFFFFF",
@@ -990,7 +996,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Montserrat",
     uppercase: true,
     grouping: { maxWords: 4, maxChars: 22 },
-    defaultStyle: { template: "highlight", animation: "none", fontFamily: "Montserrat", fontSize: 62, fontColor: "#FFFFFF", highlightColor: "#FFE94E", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "highlight", animation: "none", captionAnimation: "fade-in", wordAnimation: "none", emojiAnimation: "pop-in", fontFamily: "Montserrat", fontSize: 62, fontColor: "#FFFFFF", highlightColor: "#FFE94E", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <HighlightWord {...args} />,
   },
   {
@@ -999,7 +1005,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     category: "effects",
     font: "Montserrat",
     grouping: { maxWords: 3, maxChars: 20 },
-    defaultStyle: { template: "gradient-fill", animation: "none", fontFamily: "Montserrat", fontSize: 72, fontColor: "#FFFFFF", highlightColor: "#FF2063", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "gradient-fill", animation: "none", captionAnimation: "fade-in", wordAnimation: "none", emojiAnimation: "scale", fontFamily: "Montserrat", fontSize: 72, fontColor: "#FFFFFF", highlightColor: "#FF2063", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <GradientFillWord {...args} />,
   },
   {
@@ -1009,7 +1015,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Outfit",
     uppercase: true,
     grouping: { maxWords: 3, maxChars: 20 },
-    defaultStyle: { template: "neon-glow", animation: "none", fontFamily: "Outfit", fontSize: 66, fontColor: "#00FFF0", highlightColor: "#00FFF0", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "neon-glow", animation: "none", captionAnimation: "blink-fade", wordAnimation: "none", emojiAnimation: "pop-in", fontFamily: "Outfit", fontSize: 66, fontColor: "#00FFF0", highlightColor: "#00FFF0", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <NeonGlowWord {...args} />,
   },
   {
@@ -1019,7 +1025,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Montserrat",
     uppercase: true,
     grouping: { maxWords: 4, maxChars: 22 },
-    defaultStyle: { template: "neon-accent", animation: "none", fontFamily: "Montserrat", fontSize: 64, fontColor: "#FFFFFF", highlightColor: "#53FF01", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "neon-accent", animation: "none", captionAnimation: "fade-in", wordAnimation: "none", emojiAnimation: "pop-in", fontFamily: "Montserrat", fontSize: 64, fontColor: "#FFFFFF", highlightColor: "#53FF01", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <NeonAccentWord {...args} />,
   },
   {
@@ -1028,7 +1034,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     category: "effects",
     font: "Montserrat",
     grouping: { maxWords: 4, maxChars: 24 },
-    defaultStyle: { template: "weight-shift", animation: "none", fontFamily: "Montserrat", fontSize: 64, fontColor: "#FFFFFF", highlightColor: "#FFDD00", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "weight-shift", animation: "none", captionAnimation: "fade-in", wordAnimation: "none", emojiAnimation: "scale", fontFamily: "Montserrat", fontSize: 64, fontColor: "#FFFFFF", highlightColor: "#FFDD00", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <WeightShiftWord {...args} />,
   },
   {
@@ -1037,7 +1043,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     category: "effects",
     font: "Inter",
     grouping: { maxWords: 4, maxChars: 26 },
-    defaultStyle: { template: "editorial-emphasis", animation: "none", fontFamily: "Inter", fontSize: 64, fontColor: "#F5F0D0", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "editorial-emphasis", animation: "none", captionAnimation: "fade-in", wordAnimation: "none", emojiAnimation: "fade-in", fontFamily: "Inter", fontSize: 64, fontColor: "#F5F0D0", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <EditorialWord {...args} />,
   },
   {
@@ -1047,7 +1053,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Gabarito",
     uppercase: true,
     grouping: { maxWords: 3, maxChars: 20 },
-    defaultStyle: { template: "emoji-pop", animation: "none", fontFamily: "Gabarito", fontSize: 64, fontColor: "#FFFFFF", highlightColor: "#FF76FF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "emoji-pop", animation: "none", captionAnimation: "pop-in", wordAnimation: "none", emojiAnimation: "bounce-in-wiggle", fontFamily: "Gabarito", fontSize: 64, fontColor: "#FFFFFF", highlightColor: "#FF76FF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <EmojiPopWord {...args} />,
   },
   {
@@ -1057,7 +1063,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Anton",
     uppercase: true,
     grouping: { maxWords: 3, maxChars: 18 },
-    defaultStyle: { template: "kinetic-slam", animation: "none", fontFamily: "Anton", fontSize: 80, fontColor: "#FFFFFF", highlightColor: "#FFD700", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "kinetic-slam", animation: "none", captionAnimation: "slide-up-in", wordAnimation: "none", emojiAnimation: "bounce-in", fontFamily: "Anton", fontSize: 80, fontColor: "#FFFFFF", highlightColor: "#FFD700", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <KineticSlamWord {...args} />,
   },
   {
@@ -1067,7 +1073,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Poppins",
     uppercase: true,
     grouping: { maxWords: 3, maxChars: 20 },
-    defaultStyle: { template: "clip-wipe", animation: "none", fontFamily: "Poppins", fontSize: 66, fontColor: "#FFFFFF", highlightColor: "#FFD700", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "clip-wipe", animation: "none", captionAnimation: "border-reveal", wordAnimation: "none", emojiAnimation: "pop-in", fontFamily: "Poppins", fontSize: 66, fontColor: "#FFFFFF", highlightColor: "#FFD700", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <ClipWipeWord {...args} />,
   },
   {
@@ -1077,7 +1083,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Montserrat",
     uppercase: true,
     grouping: { maxWords: 3, maxChars: 20 },
-    defaultStyle: { template: "blend-difference", animation: "none", fontFamily: "Montserrat", fontSize: 72, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "blend-difference", animation: "none", captionAnimation: "fade-in", wordAnimation: "none", emojiAnimation: "scale", fontFamily: "Montserrat", fontSize: 72, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <BlendDifferenceWord {...args} />,
   },
   {
@@ -1086,7 +1092,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     category: "effects",
     font: "Instrument Serif",
     grouping: { maxWords: 2, maxChars: 16 },
-    defaultStyle: { template: "parallax-layers", animation: "none", fontFamily: "Instrument Serif", fontSize: 108, fontColor: "#E50914", highlightColor: "#E50914", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "parallax-layers", animation: "none", captionAnimation: "slide-up", wordAnimation: "none", emojiAnimation: "fade-in", fontFamily: "Instrument Serif", fontSize: 108, fontColor: "#E50914", highlightColor: "#E50914", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <ParallaxLayersWord {...args} />,
   },
   {
@@ -1096,7 +1102,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Anton",
     uppercase: true,
     grouping: { maxWords: 3, maxChars: 18 },
-    defaultStyle: { template: "texture", animation: "none", fontFamily: "Anton", fontSize: 78, fontColor: "#FFD0A0", highlightColor: "#FFAA44", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "texture", animation: "none", captionAnimation: "fade-in", wordAnimation: "none", emojiAnimation: "scale", fontFamily: "Anton", fontSize: 78, fontColor: "#FFD0A0", highlightColor: "#FFAA44", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     renderWord: (args) => <TextureWord {...args} />,
   },
   {
@@ -1105,7 +1111,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     category: "effects",
     font: "Poppins",
     grouping: { maxWords: 4, maxChars: 24 },
-    defaultStyle: { template: "pill-karaoke", animation: "none", fontFamily: "Poppins", fontSize: 58, fontColor: "#A6A6A6", highlightColor: "#1C1E1D", borderColor: "#000000", borderWidth: 0, bgColor: "#E7E5E7", bgOpacity: 0 },
+    defaultStyle: { template: "pill-karaoke", animation: "none", captionAnimation: "fade-in", wordAnimation: "none", emojiAnimation: "pop-in", fontFamily: "Poppins", fontSize: 58, fontColor: "#A6A6A6", highlightColor: "#1C1E1D", borderColor: "#000000", borderWidth: 0, bgColor: "#E7E5E7", bgOpacity: 0 },
     containerStyle: () => ({ backgroundColor: "#E7E5E7", borderRadius: 22, padding: "10px 32px", boxShadow: "0 2px 8px rgba(0,0,0,0.12)" }),
     renderWord: (args) => <PillKaraokeWord {...args} />,
   },

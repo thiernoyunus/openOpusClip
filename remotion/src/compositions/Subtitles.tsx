@@ -277,11 +277,10 @@ function captionMotion(
     case "typewriter":
     case "typewriter-simple":
     case "slide-left-in-typewriter":
+      // Block-level no-op: typewriter "types out" the line WORD BY WORD synced to
+      // speech (each word appears at its own timestamp) — handled per-word in the
+      // render loop (typewriterWordMotion), not by a block-wide clipPath wipe.
       opacity = 1;
-      if (animation === "slide-left-in-typewriter") {
-        transformParts.push(`translateX(${((1 - p) * -40).toFixed(1)}px)`);
-      }
-      innerStyle.clipPath = `inset(0 ${(1 - p) * 100}% 0 0)`;
       break;
     case "letter-fade-in":
       opacity = p;
@@ -388,31 +387,61 @@ function wordMotionStyle(
 }
 
 /**
- * Merge per-word motion onto the template's rendered element so the element
- * itself (not a wrapper box) stays the flex item — preserving template layout
- * (Podcast flexBasis:100%) and #39 RTL. dir="auto" is added for per-word script
- * direction. Transforms/filters COMPOSE with the template's own; opacity
- * multiplies. Falls back to a wrapper for the rare non-element render.
+ * "Typewriter" caption family: the line types out WORD BY WORD in sync with the
+ * audio — each word stays hidden until its own timestamp, then reveals. Returns
+ * an opacity GATE (multiplied onto the word) or null for non-typewriter entrances.
+ */
+function typewriterGate(
+  entrance: NonNullable<SubtitleStyle["captionAnimation"]>,
+  frame: number,
+  wordStartFrame: number,
+  fps: number
+): number | null {
+  if (
+    entrance !== "typewriter" &&
+    entrance !== "typewriter-simple" &&
+    entrance !== "slide-left-in-typewriter"
+  ) {
+    return null;
+  }
+  if (entrance === "typewriter-simple") return frame >= wordStartFrame ? 1 : 0; // hard cut
+  return easeProgress(frame - wordStartFrame, Math.max(1, Math.round(0.08 * fps))); // quick fade in
+}
+
+/**
+ * Apply per-word motion onto the template's OWN element via cloneElement, so the
+ * element stays the flex item — preserving template layout (Podcast
+ * flexBasis:100%) and #39 RTL. A selected wordAnimation REPLACES the template's
+ * entrance transform/opacity for the fields it sets (so it isn't doubled on
+ * templates that already animate, and so opacity-30 can ghost a word the
+ * template would otherwise hide). `gateOpacity` (typewriter) multiplies the
+ * final opacity. dir="auto" gives per-word script direction.
  */
 function applyWordMotion(
   rendered: React.ReactNode,
   motion: React.CSSProperties | null,
+  gateOpacity: number | null,
   key: number
 ): React.ReactNode {
   if (!React.isValidElement(rendered)) {
-    return (
-      <span key={key} dir="auto" style={motion ? { display: "inline-block", ...motion } : { display: "contents" }}>
-        {rendered}
-      </span>
-    );
+    const st: React.CSSProperties = { display: motion || gateOpacity != null ? "inline-block" : "contents" };
+    if (motion) Object.assign(st, motion);
+    if (gateOpacity != null) st.opacity = (typeof st.opacity === "number" ? st.opacity : 1) * gateOpacity;
+    return <span key={key} dir="auto" style={st}>{rendered}</span>;
   }
   const base: React.CSSProperties = (rendered.props as { style?: React.CSSProperties }).style ?? {};
   const merged: React.CSSProperties = { ...base };
   if (motion) {
-    if (motion.opacity != null) merged.opacity = (typeof base.opacity === "number" ? base.opacity : 1) * Number(motion.opacity);
-    if (motion.transform) merged.transform = [base.transform, motion.transform].filter(Boolean).join(" ");
-    if (motion.filter) merged.filter = [base.filter, motion.filter].filter(Boolean).join(" ");
-    if (motion.textShadow) merged.textShadow = motion.textShadow;
+    // Replace per field (transform/opacity/filter/textShadow) — the chosen word
+    // animation owns the word's motion; flexBasis/color/etc. from the template
+    // are untouched because we only overwrite the fields the motion sets.
+    if (motion.transform != null) merged.transform = motion.transform;
+    if (motion.opacity != null) merged.opacity = Number(motion.opacity);
+    if (motion.filter != null) merged.filter = motion.filter;
+    if (motion.textShadow != null) merged.textShadow = motion.textShadow;
+  }
+  if (gateOpacity != null) {
+    merged.opacity = (typeof merged.opacity === "number" ? merged.opacity : 1) * gateOpacity;
   }
   return React.cloneElement(rendered as React.ReactElement, { key, dir: "auto", style: merged });
 }
@@ -682,8 +711,11 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
             isPast,
             blockDir === "rtl"
           );
+          // Typewriter caption animations type the line out word-by-word in sync
+          // with speech (gates each word's opacity by its timestamp).
+          const gate = typewriterGate(entrance, frame, wordStartFrame, fps);
 
-          return applyWordMotion(renderedWord, motion, i);
+          return applyWordMotion(renderedWord, motion, gate, i);
         })}
         {lineEmojis.length > 0 && (
           <div style={emojiRowStyle(style, emojiPlacement as "above-word" | "below-word")}>
