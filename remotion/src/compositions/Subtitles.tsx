@@ -131,8 +131,11 @@ function emojiItemStyle(
               ? slideDistance
               : 0;
   const slideY =
-    normalized === "slide-up" || normalized === "slide-up-down"
+    normalized === "slide-up"
       ? style.fontSize * 0.65 * (1 - p)
+      : normalized === "slide-up-down"
+        ? // rises from below, overshoots past the rest point, then settles
+          style.fontSize * (0.65 * (1 - p) - Math.sin(p * Math.PI) * 0.25)
       : normalized === "slide-down"
         ? -style.fontSize * 0.65 * (1 - p)
         : normalized === "slide-bottom-right" || normalized === "slide-diagonal-bottom-right" || normalized === "slide-diagonal-bottom-left"
@@ -170,10 +173,17 @@ function captionMotion(
   style: SubtitleStyle,
   frame: number,
   fps: number,
-  durationFrames: number
+  durationFrames: number,
+  rtl: boolean
 ): { opacity?: number; transformParts: string[]; innerStyle?: React.CSSProperties } {
   const intro = Math.min(durationFrames, Math.max(1, Math.round(0.42 * fps)));
   const p = easeProgress(frame, intro);
+  // "-out" presets are EXITS: stay fully visible until the block's tail, then
+  // animate out. ep is 0 for most of the block and ramps 0->1 over the last
+  // ~0.42s. (Treating them as entrances previously left the caption invisible.)
+  const exitFrames = Math.min(durationFrames, Math.max(1, Math.round(0.42 * fps)));
+  const ep = easeProgress(frame - (durationFrames - exitFrames), exitFrames);
+  const dir = rtl ? -1 : 1; // flip horizontal slides for RTL
   const transformParts: string[] = [];
   let opacity: number | undefined = 1;
   const innerStyle: React.CSSProperties = {};
@@ -189,15 +199,15 @@ function captionMotion(
       opacity = p;
       break;
     case "fade-out":
-      opacity = 1 - p;
+      opacity = 1 - ep;
       break;
     case "pop-in":
       opacity = p;
       transformParts.push(`scale(${(0.72 + p * 0.28).toFixed(3)})`);
       break;
     case "pop-out":
-      opacity = p;
-      transformParts.push(`scale(${(1.22 - p * 0.22).toFixed(3)})`);
+      opacity = 1 - ep;
+      transformParts.push(`scale(${(1 + ep * 0.22).toFixed(3)})`);
       break;
     case "bounce-in":
     case "scale-bounce":
@@ -205,8 +215,8 @@ function captionMotion(
       transformParts.push(`scale(${(1 + Math.sin(p * Math.PI) * 0.18).toFixed(3)})`);
       break;
     case "zoom-out":
-      opacity = p;
-      transformParts.push(`scale(${(1.35 - p * 0.35).toFixed(3)})`);
+      opacity = 1 - ep;
+      transformParts.push(`scale(${(1 - ep * 0.3).toFixed(3)})`);
       break;
     case "zoom-in":
       opacity = p;
@@ -218,14 +228,18 @@ function captionMotion(
       transformParts.push(`translateY(${((1 - p) * 70).toFixed(1)}px)`);
       break;
     case "slide-up-out":
-      opacity = 1 - p;
-      transformParts.push(`translateY(${(-p * 70).toFixed(1)}px)`);
+      opacity = 1 - ep;
+      transformParts.push(`translateY(${(-ep * 70).toFixed(1)}px)`);
       break;
     case "slide-up-zoom":
-    case "slide-up-zoom-out":
       opacity = p;
       transformParts.push(`translateY(${((1 - p) * 70).toFixed(1)}px)`);
       transformParts.push(`scale(${(1.18 - p * 0.18).toFixed(3)})`);
+      break;
+    case "slide-up-zoom-out":
+      opacity = 1 - ep;
+      transformParts.push(`translateY(${(-ep * 70).toFixed(1)}px)`);
+      transformParts.push(`scale(${(1 - ep * 0.18).toFixed(3)})`);
       break;
     case "rotate-left":
     case "rotate-slow-left":
@@ -288,11 +302,11 @@ function captionMotion(
       break;
     case "slide-right-bounce":
       opacity = p;
-      transformParts.push(`translateX(${((1 - p) * -90 + Math.sin(p * Math.PI) * 10).toFixed(1)}px)`);
+      transformParts.push(`translateX(${(((1 - p) * -90 + Math.sin(p * Math.PI) * 10) * dir).toFixed(1)}px)`);
       break;
     case "slide-right-dust":
       opacity = p;
-      transformParts.push(`translateX(${((1 - p) * -90).toFixed(1)}px)`);
+      transformParts.push(`translateX(${((1 - p) * -90 * dir).toFixed(1)}px)`);
       innerStyle.filter = `blur(${((1 - p) * 3).toFixed(1)}px)`;
       break;
     case "slide-up-wiggle":
@@ -313,24 +327,27 @@ function captionMotion(
   return { opacity, transformParts, innerStyle };
 }
 
+// Returns the per-word motion as composable CSS (NO `display`) so it can be
+// merged onto the template's OWN element via cloneElement — keeping that element
+// the flex item, which preserves template layout (e.g. Podcast flexBasis:100%)
+// and the #39 RTL design. Returns null for "none" (no motion to apply).
 function wordMotionStyle(
   animation: NonNullable<SubtitleStyle["wordAnimation"]>,
   frame: number,
   fps: number,
   wordStartFrame: number,
   isActive: boolean,
-  isPast: boolean
-): React.CSSProperties {
-  if (animation === "none") return { display: "contents" };
+  isPast: boolean,
+  rtl: boolean
+): React.CSSProperties | null {
+  if (animation === "none") return null;
 
   const fast = animation.includes("fast");
   const dur = Math.max(1, Math.round((fast ? 0.12 : 0.22) * fps));
   const p = easeProgress(frame - wordStartFrame, dur);
   const visible = isPast || isActive || p > 0;
-  const style: React.CSSProperties = {
-    display: "inline-block",
-    opacity: visible ? 1 : 0,
-  };
+  const dir = rtl ? -1 : 1; // flip horizontal slides so RTL slides in from the right
+  const style: React.CSSProperties = { opacity: visible ? 1 : 0 };
 
   switch (animation) {
     case "fade-in":
@@ -355,17 +372,49 @@ function wordMotionStyle(
       break;
     case "white-flash-reveal":
       style.opacity = p;
-      style.textShadow = p < 0.5 ? "0 0 18px #fff, 0 0 32px #fff" : undefined;
-      style.filter = p < 0.5 ? `brightness(${(1.8 - p).toFixed(2)})` : undefined;
+      if (p < 0.5) {
+        style.textShadow = "0 0 18px #fff, 0 0 32px #fff";
+        style.filter = `brightness(${(1.8 - p).toFixed(2)})`;
+      }
       break;
     case "slide-right-dust":
       style.opacity = p;
-      style.transform = `translateX(${((1 - p) * -28).toFixed(1)}px)`;
+      style.transform = `translateX(${((1 - p) * -28 * dir).toFixed(1)}px)`;
       style.filter = `blur(${((1 - p) * 2.5).toFixed(1)}px)`;
       break;
   }
 
   return style;
+}
+
+/**
+ * Merge per-word motion onto the template's rendered element so the element
+ * itself (not a wrapper box) stays the flex item — preserving template layout
+ * (Podcast flexBasis:100%) and #39 RTL. dir="auto" is added for per-word script
+ * direction. Transforms/filters COMPOSE with the template's own; opacity
+ * multiplies. Falls back to a wrapper for the rare non-element render.
+ */
+function applyWordMotion(
+  rendered: React.ReactNode,
+  motion: React.CSSProperties | null,
+  key: number
+): React.ReactNode {
+  if (!React.isValidElement(rendered)) {
+    return (
+      <span key={key} dir="auto" style={motion ? { display: "inline-block", ...motion } : { display: "contents" }}>
+        {rendered}
+      </span>
+    );
+  }
+  const base: React.CSSProperties = (rendered.props as { style?: React.CSSProperties }).style ?? {};
+  const merged: React.CSSProperties = { ...base };
+  if (motion) {
+    if (motion.opacity != null) merged.opacity = (typeof base.opacity === "number" ? base.opacity : 1) * Number(motion.opacity);
+    if (motion.transform) merged.transform = [base.transform, motion.transform].filter(Boolean).join(" ");
+    if (motion.filter) merged.filter = [base.filter, motion.filter].filter(Boolean).join(" ");
+    if (motion.textShadow) merged.textShadow = motion.textShadow;
+  }
+  return React.cloneElement(rendered as React.ReactElement, { key, dir: "auto", style: merged });
 }
 
 /** How long a block lingers after its last word, clamped to the next block. */
@@ -527,7 +576,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   // Existing templates already have their own word personality, so default to
   // no block fade. User-selected caption animations opt into motion.
   const entrance = style.captionAnimation ?? "none";
-  const motion = captionMotion(entrance, style, frame, fps, durationFrames);
+  const motion = captionMotion(entrance, style, frame, fps, durationFrames, blockDir === "rtl");
   const transform =
     [freePlaced ? "translate(-50%, -50%)" : "", ...motion.transformParts]
       .filter(Boolean)
@@ -619,27 +668,22 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
             isEmphasis: i === emphasisIndex,
           });
 
-          // dir="auto" gives each word its own script direction. display:contents
-          // means this wrapper generates NO box, so the template's own element
-          // stays the flex item — template layout styles (e.g. Podcast's
-          // flexBasis:100%) keep working, and preview matches export. Word ORDER
-          // within the block is controlled by the container's flex `direction`
-          // (set from dominantDir), correct for the real traffic (pure-RTL,
-          // pure-LTR, Arabic-dominant mixed blocks).
-          const wrapperStyle = wordMotionStyle(
+          // Compose the per-word animation onto the template's OWN element (no
+          // wrapper box) so it stays the flex item — preserving template layout
+          // (Podcast flexBasis:100%) and the #39 RTL design. dir="auto" handles
+          // per-word script direction; container `direction` (dominantDir) sets
+          // word order for RTL blocks.
+          const motion = wordMotionStyle(
             wordAnimation,
             frame,
             fps,
             wordStartFrame,
             isActive,
-            isPast
+            isPast,
+            blockDir === "rtl"
           );
 
-          return (
-            <span key={i} dir="auto" style={wrapperStyle}>
-              {renderedWord}
-            </span>
-          );
+          return applyWordMotion(renderedWord, motion, i);
         })}
         {lineEmojis.length > 0 && (
           <div style={emojiRowStyle(style, emojiPlacement as "above-word" | "below-word")}>

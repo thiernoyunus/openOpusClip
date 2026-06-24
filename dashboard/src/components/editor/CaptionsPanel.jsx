@@ -39,6 +39,7 @@ const CAPTION_ANIM_OPTIONS = [
     { v: 'rotate-wiggle-mini', l: 'Rotate wiggle mini' },
     { v: 'rotate-wiggle-scale', l: 'Rotate wiggle scale' },
     { v: 'pop-in-zoom', l: 'Pop in zoom' },
+    { v: 'fade', l: 'Fade (in & out)' },
     { v: 'fade-in', l: 'Fade in' },
     { v: 'fade-out', l: 'Fade out' },
     { v: 'scale-bounce', l: 'Scale bounce' },
