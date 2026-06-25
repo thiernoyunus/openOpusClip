@@ -27,6 +27,7 @@ export interface WordRenderArgs {
   uppercase: boolean;
   seed: number; // stable per-word seed for deterministic randomness
   isEmphasis?: boolean; // the one "key" word in the block (drives size-contrast styles)
+  accentColor?: string; // per-word color override (e.g. DOAC emotion accent)
 }
 
 /** A per-template tunable surfaced as a slider in the customize panel. */
@@ -772,6 +773,44 @@ const PodcastWord: React.FC<WordRenderArgs> = ({ word, isEmphasis, frame, fps, w
   );
 };
 
+// doac — Diary-of-a-CEO podcast-trailer style: white all-caps base, the
+// emphasis word slightly bigger; the per-phrase accent word lights up in its
+// emotion color and STAYS lit from its own timestamp onward (a persistent
+// highlight, not gated on isActive). Each word springs in with a subtle scale
+// pop + quick opacity fade over a duplicated drop shadow.
+const DoACWord: React.FC<WordRenderArgs> = ({ word, isEmphasis, frame, fps, wordStartFrame, style, fontStack, uppercase, accentColor }) => {
+  const t = frame - wordStartFrame;
+  const shown = t >= 0;
+  // subtle entrance: a short spring scale 0.82->1 (~0.14s) + opacity 0->1 (~0.05s)
+  const p = shown
+    ? spring({ frame: t, fps, config: { mass: 0.5, stiffness: 220, damping: 12 }, durationInFrames: Math.max(1, Math.round(0.14 * fps)) })
+    : 0;
+  const scale = shown ? interpolate(p, [0, 1], [0.82, 1]) : 0.82;
+  const opacity = shown ? interpolate(t, [0, Math.max(1, Math.round(0.05 * fps))], [0, 1], { extrapolateRight: "clamp" }) : 0;
+  const size = isEmphasis ? style.fontSize : style.fontSize * 0.85;
+  // Persistent accent: once the word has appeared, it wears its emotion color
+  // for the rest of the phrase (not just while it's the active word).
+  const color = shown && accentColor ? accentColor : style.fontColor;
+  return (
+    <span
+      style={{
+        fontFamily: fontStack,
+        fontSize: size,
+        fontWeight: style.fontWeight ?? 900,
+        textTransform: uppercase ? "uppercase" : "none",
+        lineHeight: 1,
+        display: "inline-block",
+        opacity,
+        transform: `scale(${scale.toFixed(3)})`,
+        color,
+        textShadow: "0 3px 10px rgba(0,0,0,0.6), 0 1px 2px rgba(0,0,0,0.9)",
+      }}
+    >
+      {word}
+    </span>
+  );
+};
+
 // --- registry ---------------------------------------------------------------
 
 export const CAPTION_TEMPLATES: CaptionTemplate[] = [
@@ -842,6 +881,16 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     defaultStyle: { template: "podcast", animation: "none", fontFamily: "Inter", fontSize: 96, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0 },
     selfStacks: true,
     renderWord: (args) => <PodcastWord {...args} />,
+  },
+  {
+    id: "doac",
+    label: "Podcast (DOAC)",
+    category: "effects",
+    font: "Inter",
+    uppercase: true,
+    grouping: { maxWords: 5, maxChars: 30 },
+    defaultStyle: { template: "doac", animation: "none", fontFamily: "Inter", fontSize: 88, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0, fontWeight: 900 },
+    renderWord: (args) => <DoACWord {...args} />,
   },
   {
     id: "glossy-gradient",

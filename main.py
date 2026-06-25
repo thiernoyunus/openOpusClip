@@ -76,6 +76,66 @@ OUTPUT — RETURN ONLY VALID JSON (no markdown, no comments). Order clips by pre
 }}
 """
 
+# --- Podcast Trailer mode ---
+# Prompt for the AI trailer editor. Only .format placeholders are {transcript}
+# and {duration}; the JSON shape is described in words (no literal braces) so
+# .format() can never raise KeyError on stray { }.
+TRAILER_PROMPT_TEMPLATE = """You are an expert podcast trailer editor in the style of 'The Diary of a CEO'. From ONE podcast transcript you will select {min_moments} to {max_moments} SHORT moments and ORDER them into a single gripping cold-open trailer of about {target_seconds} seconds total. The order is a deliberate narrative, NOT chronological.
+
+THIS IS A RAPID MONTAGE, NOT A HIGHLIGHT REEL. The energy comes from MANY quick cuts, not a few long clips. The total length must come from the NUMBER of cuts, never from holding clips longer.
+- Each moment is SHORT: about 2 to 4 seconds. Cut fast — roughly every 2.5 to 4 seconds. Only hold a shot longer (up to ~6s) when a single line is so emotionally heavy it truly needs room to land. Most moments should be 2-4s.
+- Moments are punchy FRAGMENTS, not complete thoughts. You MAY end a moment mid-sentence (on a word boundary) to create an open loop — making the viewer think "wait, what were they about to say?". Do NOT require self-contained sentences; the cut-off IS the hook.
+- No filler, crosstalk, throat-clearing, or trailing ums. Every single cut must hit hard.
+
+OPEN STRONG (setup then context): the FIRST moment must be the single most controversial, surprising, or arresting line the guest says — the thing that makes someone stop scrolling. Immediately after it, use a moment that establishes WHO is speaking or WHY it matters (stakes / credibility), so the viewer instantly knows why to keep watching.
+
+Follow the 5 Ps as the emotional arc across your ordered moments:
+1. PROVE - prove the episode's core promise/hook is real (the arresting opener).
+2. PROPOSE - why this matters right now (stakes, consequence).
+3. PROVIDE - credibility / social proof (a number, a named result, an authority claim, a hard-won lesson).
+4. PROMISE - tease specific hidden value still to come.
+5. POSE - END ON A CLIFFHANGER: an open loop or a line cut off mid-thought that forces the viewer into the full episode. The LAST moment MUST leave a question hanging — do not resolve it.
+Use SEVERAL short moments per P as needed to reach the target length. The trailer MUST move PROVE -> PROPOSE -> PROVIDE -> PROMISE -> POSE in feeling, and it MUST end on the cliffhanger.
+
+For EACH moment choose ONE accent word - the single most emotionally loaded word in that moment's spoken text - and label its emotion: danger (conflict/threat/failure/stakes/fear), payoff (a win/result/money/breakthrough), power (authority/scale/expertise/dominance/certainty), curiosity (mystery/question/open loop), neutral (none). The accent_word MUST literally appear in that moment's transcript text.
+TRANSCRIPT (word timings in seconds): {transcript}
+Video duration: {duration} seconds.
+Return ONLY valid JSON, no prose, no markdown fences, with this shape: an object with key moments_ordered (array of objects each having start (sec number), end (sec number), p (int 1-5), accent_word (string), emotion (one of danger|payoff|power|curiosity|neutral), reason (string)) and key phrases (array of objects each having moment_index (0-based int) and text (the spoken text of that moment))."""
+
+# Trailer pace presets: (min_moments, max_moments, target_seconds). ALL keep the
+# rapid ~3s-cut DOAC montage feel — the preset only scales how MANY cuts (= total
+# length), never the per-cut length. Surfaced to the user on the trailer page.
+TRAILER_PACE_PRESETS = {
+    'punchy':   (9, 14, 35),
+    'standard': (15, 22, 60),
+    'extended': (24, 32, 90),
+}
+
+# Single source of truth for accent colors. None == neutral (no accent applied).
+EMOTION_HEX = {
+    'danger': '#FF4444',
+    'payoff': '#3DD68C',
+    'power': '#FFD23F',
+    'curiosity': '#4EA8FF',
+    'neutral': None,
+}
+
+# Backend writes this verbatim into framing.subtitles.style. The remotion 'doac'
+# template defaultStyle MUST match this exactly.
+DOAC_STYLE = {
+    'template': 'doac',
+    'animation': 'none',
+    'fontFamily': 'Inter',
+    'fontSize': 88,
+    'fontColor': '#FFFFFF',
+    'highlightColor': '#FFFFFF',
+    'borderColor': '#000000',
+    'borderWidth': 0,
+    'bgColor': '#000000',
+    'bgOpacity': 0,
+    'fontWeight': 900,
+}
+
 ENABLE_YOLO_FALLBACK = os.environ.get("ENABLE_YOLO_FALLBACK", "false").lower() in ("1", "true", "yes")
 # Stable two-person scenes default to the stacked SPLIT layout (Opus-style)
 AUTO_SPLIT_LAYOUT = os.environ.get("AUTO_SPLIT_LAYOUT", "true").lower() in ("1", "true", "yes")
@@ -1355,6 +1415,390 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
         f"Last error: {last_error}"
     )
 
+def get_trailer_moments(transcript_result, video_duration, pace='standard', max_retries=3):
+    """Ask Gemini to select+ORDER short moments into a rapid cold-open montage.
+
+    `pace` picks a TRAILER_PACE_PRESETS entry (min/max moment count + target
+    seconds). Mirrors get_viral_clips for client/model/retry/cost-tracking/
+    JSON-cleanup, but uses TRAILER_PROMPT_TEMPLATE and parses {moments_ordered,
+    phrases}. moments_ordered is PLAYBACK order (may be non-chronological).
+    Validates the count against the preset window and each 0<=start<end<=duration;
+    raises ClipAnalysisError on any structural/bounds failure (no silent fallback).
+    """
+    min_moments, max_moments, target_seconds = TRAILER_PACE_PRESETS.get(
+        pace, TRAILER_PACE_PRESETS['standard'])
+    print(f"🎬  Analyzing trailer moments with Gemini (pace={pace}, "
+          f"~{target_seconds}s, {min_moments}-{max_moments} cuts)...")
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        print("❌ Error: GEMINI_API_KEY not found in environment variables.")
+        raise ClipAnalysisError("GEMINI_API_KEY is missing.")
+
+    client = genai.Client(api_key=api_key)
+
+    # We use gemini-2.5-flash as requested.
+    model_name = 'gemini-2.5-flash'
+
+    print(f"🤖  Initializing Gemini with model: {model_name}")
+
+    # Extract words (compact {w,s,e} form, same as viral mode)
+    words = []
+    for segment in transcript_result['segments']:
+        for word in segment.get('words', []):
+            words.append({
+                'w': word['word'],
+                's': word['start'],
+                'e': word['end'],
+            })
+
+    prompt = TRAILER_PROMPT_TEMPLATE.format(
+        transcript=json.dumps(words),
+        duration=video_duration,
+        min_moments=min_moments,
+        max_moments=max_moments,
+        target_seconds=target_seconds,
+    )
+
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt
+            )
+
+            # --- Cost Calculation ---
+            cost_analysis = None
+            try:
+                usage = response.usage_metadata
+                if usage:
+                    # Gemini 2.5 Flash Pricing (Dec 2025)
+                    # Input: $0.10 per 1M tokens
+                    # Output: $0.40 per 1M tokens
+                    input_price_per_million = 0.10
+                    output_price_per_million = 0.40
+
+                    prompt_tokens = usage.prompt_token_count
+                    output_tokens = usage.candidates_token_count
+
+                    input_cost = (prompt_tokens / 1_000_000) * input_price_per_million
+                    output_cost = (output_tokens / 1_000_000) * output_price_per_million
+                    total_cost = input_cost + output_cost
+
+                    cost_analysis = {
+                        "input_tokens": prompt_tokens,
+                        "output_tokens": output_tokens,
+                        "input_cost": input_cost,
+                        "output_cost": output_cost,
+                        "total_cost": total_cost,
+                        "model": model_name
+                    }
+
+                    print(f"💰 Token Usage ({model_name}):")
+                    print(f"   - Input Tokens: {prompt_tokens} (${input_cost:.6f})")
+                    print(f"   - Output Tokens: {output_tokens} (${output_cost:.6f})")
+                    print(f"   - Total Estimated Cost: ${total_cost:.6f}")
+
+            except Exception as e:
+                print(f"⚠️ Could not calculate cost: {e}")
+                cost_analysis = None
+            # ------------------------
+
+            # Clean response if it contains markdown code blocks
+            text = response.text.strip()
+            if text.startswith("```json"):
+                text = text[7:]
+            elif text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+
+            result_json = json.loads(text)
+
+            # --- Structural / bounds validation (no silent fallback) ---
+            moments = result_json.get('moments_ordered')
+            if not isinstance(moments, list):
+                raise ClipAnalysisError("Trailer response missing 'moments_ordered' array.")
+            # Count window with slack — the model rarely hits the exact range; we
+            # only guard against a degenerate response, not enforce the preset.
+            lo = max(4, min_moments - 3)
+            hi = max_moments + 8
+            if not (lo <= len(moments) <= hi):
+                raise ClipAnalysisError(
+                    f"Trailer needs {lo}-{hi} moments (pace={pace}), got {len(moments)}."
+                )
+            for idx, m in enumerate(moments):
+                if not isinstance(m, dict):
+                    raise ClipAnalysisError(f"Moment {idx} is not an object.")
+                try:
+                    s = float(m['start'])
+                    e = float(m['end'])
+                except (KeyError, TypeError, ValueError):
+                    raise ClipAnalysisError(f"Moment {idx} has invalid start/end.")
+                if not (0 <= s < e <= video_duration):
+                    raise ClipAnalysisError(
+                        f"Moment {idx} bounds out of range: start={s}, end={e}, duration={video_duration}."
+                    )
+
+            phrases = result_json.get('phrases')
+            if not isinstance(phrases, list):
+                phrases = []
+
+            out = {'moments_ordered': moments, 'phrases': phrases}
+            if cost_analysis:
+                out['cost_analysis'] = cost_analysis
+            return out
+        except ClipAnalysisError:
+            # Structural/bounds failures are terminal — don't retry or fall back.
+            raise
+        except Exception as e:
+            last_error = e
+            print(f"❌ Gemini trailer attempt {attempt}/{max_retries} failed: {e}")
+            if not is_retryable_gemini_error(e):
+                break
+            if attempt < max_retries:
+                fallback_wait = min(60, 5 * (2 ** (attempt - 1)))
+                wait_seconds = get_gemini_retry_delay(e, fallback_wait)
+                print(f"⏳ Gemini retry {attempt + 1}/{max_retries} in {wait_seconds}s...")
+                time.sleep(wait_seconds)
+
+    raise ClipAnalysisError(
+        "Gemini could not identify trailer moments after retrying. "
+        f"Last error: {last_error}"
+    )
+
+def _accent_normalize(token):
+    """Case- and punctuation-insensitive normalization for accent matching."""
+    return re.sub(r'[^\w]', '', str(token).lower(), flags=re.UNICODE)
+
+def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_frames, fps):
+    """Map original transcript words into trailer (concat-frame) time.
+
+    Pure, import-safe function. For each moment k in PLAYBACK order, collect the
+    transcript words whose t_start falls in [s_k, e_k) (half-open). A word that
+    matches no moment is DROPPED. Coordinates are frames first, then ms.
+
+      trailer_start_frame = O_k + round((t_start - s_k) * fps)
+      trailer_end_frame   = O_k + round((t_end   - s_k) * fps), clamped <= O_k + F_k
+      startMs = trailer_start_frame / fps * 1000
+      endMs   = max(trailer_end_frame / fps * 1000, startMs + 60)
+
+    For each moment's accent_word (case+punctuation-insensitive, FIRST occurrence
+    within that moment) set accentColor=EMOTION_HEX[emotion], unless the emotion
+    is neutral/None or no token matches. All other words get no accentColor.
+
+    Returns a list of CaptionWord dicts {text, startMs, endMs[, accentColor]} in
+    trailer time order (monotonic by construction).
+    """
+    # Flatten transcript words once.
+    all_words = []
+    for segment in transcript_result['segments']:
+        for word in segment.get('words', []):
+            all_words.append(word)
+
+    captions = []
+    for k, moment in enumerate(moments_ordered):
+        s_k = float(moment['start'])
+        e_k = float(moment['end'])
+        O_k = offsets_frames[k]
+        F_k = seg_frames[k]
+
+        emotion = moment.get('emotion')
+        accent_color = EMOTION_HEX.get(emotion) if emotion else None
+        accent_target = _accent_normalize(moment.get('accent_word', '')) if accent_color else ''
+        accent_assigned = False
+
+        for word in all_words:
+            t_start = float(word['start'])
+            # Half-open membership: t_start in [s_k, e_k)
+            if not (s_k <= t_start < e_k):
+                continue
+            t_end = float(word['end'])
+
+            trailer_start_frame = O_k + round((t_start - s_k) * fps)
+            trailer_end_frame = O_k + round((t_end - s_k) * fps)
+            # Clamp the tail inside this segment's frames.
+            if trailer_end_frame > O_k + F_k:
+                trailer_end_frame = O_k + F_k
+
+            start_ms = trailer_start_frame / fps * 1000
+            end_ms = max(trailer_end_frame / fps * 1000, start_ms + 60)
+
+            cap = {
+                'text': word['word'],
+                'startMs': start_ms,
+                'endMs': end_ms,
+            }
+
+            # First occurrence of the accent word within this moment.
+            if (accent_color and not accent_assigned and accent_target
+                    and _accent_normalize(word['word']) == accent_target):
+                cap['accentColor'] = accent_color
+                accent_assigned = True
+
+            captions.append(cap)
+
+    return captions
+
+def assemble_trailer(input_video, output_dir, video_title, transcript, duration, fps, aspect_ratio, pace='standard'):
+    """Build a Diary-of-a-CEO-style cold-open trailer (Option B: concat-then-frame-once).
+
+    Steps (LOCKED spec):
+      2. get_trailer_moments -> ordered moments (+ phrases)
+      3. cut each moment k (playback order) as a re-encoded seg_k.mp4
+      4. concat (-c copy; re-encode fallback) -> trailer source
+      5. frame offsets O_k from measured F_k
+      6. process_video_to_vertical ONCE (offset=0, native concat coords)
+      7. retime_captions into trailer time
+      8. read back framing.json, inject subtitles {captions, position, style}
+      9. write single-element {video_title}_metadata.json
+
+    File naming uses the existing {video_title}_clip_1 convention so app.py's
+    _attach_editor_urls resolves source_url/framing_url/video_url unchanged.
+    """
+    base = video_title
+
+    # 2. Select + order moments (raises ClipAnalysisError -> caller sys.exit(2))
+    trailer = get_trailer_moments(transcript, duration, pace=pace)
+    moments_ordered = trailer['moments_ordered']
+    print(f"🎞️  Trailer: {len(moments_ordered)} ordered moments.")
+
+    # 3. Cut each moment (playback order) as a re-encoded segment.
+    seg_paths = []
+    seg_frames = []
+    for k, moment in enumerate(moments_ordered):
+        start = float(moment['start'])
+        end = float(moment['end'])
+        seg_path = os.path.join(output_dir, f"trailer_seg_{k}.mp4")
+        cut_command = [
+            'ffmpeg', '-y',
+            '-ss', str(start),
+            '-to', str(end),
+            '-i', input_video,
+            '-c:v', 'libx264', '-crf', '12', '-preset', 'ultrafast',
+            '-g', '15', '-keyint_min', '15', '-sc_threshold', '0',
+            '-c:a', 'aac',
+            seg_path,
+        ]
+        run_logged_command(cut_command, f"Cutting trailer segment {k}", seg_path)
+
+        # Record EXACT frame count via cv2 — do NOT compute (end-start)*fps
+        # because ffmpeg -ss/-to are not frame-exact.
+        seg_cap = cv2.VideoCapture(seg_path)
+        f_k = int(seg_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        seg_cap.release()
+        print(f"   📐 Segment {k}: {f_k} frames ({start:.3f}s-{end:.3f}s)")
+        seg_paths.append(seg_path)
+        seg_frames.append(f_k)
+
+    # 4. Concat (lossless stream copy; re-encode fallback). The trailer source
+    #    is the editor source AND the bake input — name it with the _clip_1
+    #    convention so app.py resolves its URL.
+    trailer_source = os.path.join(output_dir, f"{base}_clip_1_source.mp4")
+    concat_txt = os.path.join(output_dir, "trailer_concat.txt")
+    with open(concat_txt, 'w') as f:
+        for seg_path in seg_paths:
+            f.write(f"file '{os.path.abspath(seg_path)}'\n")
+
+    concat_command = [
+        'ffmpeg', '-y',
+        '-f', 'concat', '-safe', '0',
+        '-i', concat_txt,
+        '-c', 'copy',
+        trailer_source,
+    ]
+    concat_result = run_logged_command(concat_command, "Concatenating trailer segments", trailer_source)
+    if (concat_result.returncode != 0 or not os.path.exists(trailer_source)
+            or os.path.getsize(trailer_source) == 0):
+        print("   ⚠️  Concat -c copy failed; re-encoding with libx264.")
+        concat_reencode = [
+            'ffmpeg', '-y',
+            '-f', 'concat', '-safe', '0',
+            '-i', concat_txt,
+            '-c:v', 'libx264', '-crf', '12', '-preset', 'ultrafast',
+            '-g', '15', '-keyint_min', '15', '-sc_threshold', '0',
+            '-c:a', 'aac',
+            trailer_source,
+        ]
+        run_logged_command(concat_reencode, "Re-encoding trailer concat", trailer_source)
+
+    # 5. Concat offsets in FRAMES (authoritative coordinate space).
+    offsets_frames = [0] * len(seg_frames)
+    for k in range(1, len(seg_frames)):
+        offsets_frames[k] = offsets_frames[k - 1] + seg_frames[k - 1]
+    total_frames = sum(seg_frames)
+    total_sec = total_frames / fps if fps > 0 else 0.0
+    print(f"   🧮 Offsets(frames)={offsets_frames}, total={total_frames} frames ({total_sec:.2f}s)")
+
+    # 6. Frame the concatenated source ONCE. offset=0 => native concat-frame
+    #    coords; source.file=basename(trailer_source); durationFrames=sum(F_k).
+    final_output = os.path.join(output_dir, f"{base}_clip_1.mp4")
+    framing_path = os.path.join(output_dir, f"{base}_clip_1.framing.json")
+    process_video_to_vertical(
+        trailer_source, final_output,
+        framing_output_path=framing_path,
+        framing_source_override=None,
+        aspect_ratio=aspect_ratio,
+    )
+
+    # 7-8. Read back the framing.json process_video_to_vertical wrote, retime
+    #    captions using the EXACT source fps it recorded (the value the editor's
+    #    remapCaptions uses for ms->frame), then inject the DOAC subtitles. Using
+    #    framing.source.fps — not the original-video fps — keeps caption frame
+    #    math from drifting if the concat re-encode changed the effective fps.
+    with open(framing_path) as f:
+        framing_data = json.load(f)
+    caption_fps = (framing_data.get('source') or {}).get('fps') or fps
+    captions = retime_captions(transcript, moments_ordered, offsets_frames, seg_frames, caption_fps)
+    print(f"   📝 Retimed {len(captions)} caption words into trailer time (fps={caption_fps}).")
+    framing_data['subtitles'] = {
+        'captions': captions,
+        'position': 'bottom',
+        'style': DOAC_STYLE,
+    }
+    # Transitions: HARD cuts between montage moments (the rapid DOAC feel; the
+    # animated captions mask them), and a single fade-to-black at the very end —
+    # the "cut to black" that signals the intro is over (DOAC outro convention).
+    # No fade-in: open immediately on the most arresting line.
+    framing_data['transitions'] = {
+        'fadeIn': False,
+        'fadeOut': True,
+        'cutCrossfade': False,
+    }
+    with open(framing_path, 'w') as f:
+        json.dump(framing_data, f)
+    print(f"   🎯 Injected DOAC subtitles + transitions into {framing_path}")
+
+    # 9. Write the single-element metadata file. app.py's run_job turns shorts[0]
+    #    into result.clips[0] via _attach_editor_urls — no result-assembly change.
+    metadata = {
+        'shorts': [{
+            'start': 0,
+            'end': total_sec,
+            'video_title_for_youtube_short': video_title,
+            'viral_hook_text': '',
+            'video_description_for_tiktok': '',
+            'video_description_for_instagram': '',
+        }],
+        'transcript': transcript,
+    }
+    metadata_file = os.path.join(output_dir, f"{base}_metadata.json")
+    with open(metadata_file, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    print(f"   💾 Saved trailer metadata to {metadata_file}")
+
+    # Cleanup intermediate segments + concat list (source/final/framing remain).
+    for seg_path in seg_paths:
+        if os.path.exists(seg_path):
+            os.remove(seg_path)
+    if os.path.exists(concat_txt):
+        os.remove(concat_txt)
+
+    print(f"   ✅ Trailer ready: {final_output}")
+    return metadata
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="AutoCrop-Vertical with Viral Clip Detection.")
     
@@ -1372,7 +1816,9 @@ if __name__ == '__main__':
     parser.add_argument('--trim-start', type=float, default=None, help="Don't-clip mode: start of the range to process (seconds).")
     parser.add_argument('--trim-end', type=float, default=None, help="Don't-clip mode: end of the range to process (seconds).")
     parser.add_argument('--aspect-ratio', choices=sorted(ASPECT_PRESETS), default='9:16', help="Output aspect ratio.")
-    
+    parser.add_argument('--mode', choices=['normal', 'trailer'], default='normal', help="Processing mode: 'normal' viral clips, or 'trailer' (Diary-of-a-CEO cold-open).")
+    parser.add_argument('--trailer-pace', choices=sorted(TRAILER_PACE_PRESETS), default='standard', help="Trailer length/cut-density preset (trailer mode): punchy ~35s, standard ~60s, extended ~90s.")
+
     args = parser.parse_args()
 
     script_start_time = time.time()
@@ -1401,7 +1847,12 @@ if __name__ == '__main__':
         input_video, video_title = download_youtube_video(args.url, output_dir)
     else:
         input_video = args.input
-        video_title = os.path.splitext(os.path.basename(input_video))[0]
+        # Sanitize the basename: an uploaded file (or its YouTube-derived name)
+        # may contain URL/filesystem-hostile chars like '?' '&' spaces. All clip
+        # artifacts are named from video_title and served over /videos/..., so an
+        # unsanitized '?' would truncate the path and 404. The YouTube branch
+        # already sanitizes (download_youtube_video); mirror it here.
+        video_title = sanitize_filename(os.path.splitext(os.path.basename(input_video))[0])
         
         if args.output and not args.skip_analysis:
             # For multi-clip runs, treat --output as an OUTPUT DIRECTORY (create it if needed).
@@ -1428,6 +1879,30 @@ if __name__ == '__main__':
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = frame_count / fps if fps > 0 else 0.0
     cap.release()
+
+    # Trailer mode: concat-then-frame-once cold-open. Skips the normal
+    # viral-clip detection + per-clip loop entirely (no silent fallback).
+    if args.mode == 'trailer':
+        try:
+            assemble_trailer(
+                input_video, output_dir, video_title,
+                transcript, duration, fps,
+                aspect_ratio=args.aspect_ratio,
+                pace=args.trailer_pace,
+            )
+        except ClipAnalysisError as e:
+            print(f"❌ Trailer assembly failed: {e}")
+            print("🛑 Stopping job. Not converting the whole video as a fallback.")
+            sys.exit(2)
+
+        # Clean up downloaded original if requested.
+        if args.url and not args.keep_original and os.path.exists(input_video):
+            os.remove(input_video)
+            print("🗑️  Cleaned up downloaded video.")
+
+        total_time = time.time() - script_start_time
+        print(f"\n⏱️  Total execution time: {total_time:.2f}s")
+        sys.exit(0)
 
     # 3. Pick moments: AI viral detection, or one synthetic moment ("Don't clip")
     if args.skip_analysis:

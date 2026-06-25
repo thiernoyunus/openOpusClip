@@ -386,6 +386,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
             uppercase,
             seed: Math.round(word.startMs),
             isEmphasis: i === emphasisIndex,
+            accentColor: word.accentColor,
           });
 
           // dir="auto" gives each word its own script direction. display:contents

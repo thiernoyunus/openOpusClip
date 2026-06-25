@@ -32,7 +32,7 @@ function save(list) {
   return list.slice(0, MAX);
 }
 
-export function addProject({ id, title, type, model, thumb, src, startedAt }) {
+export function addProject({ id, title, type, model, thumb, src, startedAt, kind }) {
   const list = getProjects().filter((p) => p.id !== id);
   const entry = {
     id,
@@ -45,8 +45,16 @@ export function addProject({ id, title, type, model, thumb, src, startedAt }) {
     createdAt: startedAt || Date.now(),
     cost: null,
     clipCount: 0,
+    // 'trailer' for Podcast Trailer jobs, else undefined (normal clip jobs).
+    kind: kind || undefined,
   };
   return save([entry, ...list]);
+}
+
+// A project belongs to the Podcast Trailer page when tagged kind:'trailer'.
+// The title-prefix fallback catches trailers created before `kind` existed.
+export function isTrailerProject(p) {
+  return p?.kind === 'trailer' || (p?.title || '').startsWith('Trailer ·');
 }
 
 export function updateProject(id, patch) {

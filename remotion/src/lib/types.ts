@@ -16,6 +16,8 @@ export interface CaptionWord {
    * Optional → existing caption data is unaffected (back-compat).
    */
   highlight?: boolean;
+  /** Per-word color override (e.g. DOAC emotion accent). When set, persists from the word's start. */
+  accentColor?: string;
   /**
    * BCP-47/ISO language code for this word (Soniox per-token language). Optional
    * and informational — RTL detection is text-based, so nothing depends on it.
@@ -312,6 +314,7 @@ export const captionWordSchema = z.object({
   endMs: z.number(),
   emoji: z.string().optional(),
   highlight: z.boolean().optional(),
+  accentColor: z.string().optional(),
   language: z.string().optional(),
 });
 
