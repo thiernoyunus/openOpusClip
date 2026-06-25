@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, FileVideo, Sparkles, Scissors, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Trash2 } from 'lucide-react';
+import { Upload, FileVideo, Sparkles, Scissors, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Trash2, Film } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
@@ -7,7 +7,7 @@ import ThumbnailStudio from './components/ThumbnailStudio';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
 import ProcessingModal from './components/ProcessingModal';
 import EditorView from './components/editor/EditorView';
-import { getProjects, addProject, updateProject, removeProject, phaseFromLogs, titleFromPayload, thumbFromPayload, coverFromString, fetchVideoTitle, captureVideoFrame } from './lib/projectHistory';
+import { getProjects, addProject, updateProject, removeProject, phaseFromLogs, titleFromPayload, thumbFromPayload, coverFromString, fetchVideoTitle, captureVideoFrame, isTrailerProject } from './lib/projectHistory';
 import { getApiUrl } from './config';
 
 // Enhanced "Encryption" using XOR + Base64 with a Salt
@@ -680,6 +680,7 @@ function App() {
 
       <nav className="flex-1 flex flex-col gap-1.5 w-full">
         <RailItem icon={Scissors} label="Clip Generator" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
+        <RailItem icon={Film} label="Podcast Trailer" active={false} onClick={() => { window.location.hash = '#trailer'; }} />
         <RailItem icon={Bot} label="AI Agent" active={activeTab === 'ai-agent'} onClick={() => setActiveTab('ai-agent')} />
         <RailItem icon={Youtube} label="YouTube Studio" active={activeTab === 'thumbnails'} onClick={() => setActiveTab('thumbnails')} />
       </nav>
@@ -1179,22 +1180,27 @@ function App() {
                 </div>
               </div>
 
-              {/* Recent projects */}
+              {/* Recent projects (clip jobs only — trailers live on the #trailer page) */}
+              {(() => {
+                const clipProjects = projects.filter((p) => !isTrailerProject(p));
+                return (
               <div className="max-w-5xl mx-auto px-6 pb-14">
                 <div className="flex items-center gap-4 mb-3">
-                  <span className="text-sm text-fg">Recent projects {projects.length > 0 && <span className="text-muted">({projects.length})</span>}</span>
+                  <span className="text-sm text-fg">Recent projects {clipProjects.length > 0 && <span className="text-muted">({clipProjects.length})</span>}</span>
                 </div>
-                {projects.length === 0 ? (
+                {clipProjects.length === 0 ? (
                   <div className="border border-edge rounded-lg py-12 text-center">
                     <p className="text-sm text-muted">Your generated clips will appear here.</p>
                     <p className="text-xs text-muted/60 mt-1">Drop a YouTube link or upload a video to get started.</p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                    {projects.map((p) => <ProjectCard key={p.id} p={p} />)}
+                    {clipProjects.map((p) => <ProjectCard key={p.id} p={p} />)}
                   </div>
                 )}
               </div>
+                );
+              })()}
             </div>
           )}
 

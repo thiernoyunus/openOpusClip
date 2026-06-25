@@ -452,6 +452,8 @@ async def process_endpoint(
     trim_start: Optional[float] = Form(None),
     trim_end: Optional[float] = Form(None),
     aspect_ratio: Optional[str] = Form("9:16"),
+    mode: Optional[str] = Form("normal"),
+    trailer_pace: Optional[str] = Form("standard"),
 ):
     api_key = request.headers.get("X-Gemini-Key")
     if not api_key:
@@ -474,6 +476,8 @@ async def process_endpoint(
         trim_start = body.get("trim_start", trim_start)
         trim_end = body.get("trim_end", trim_end)
         aspect_ratio = body.get("aspect_ratio", aspect_ratio)
+        mode = body.get("mode", mode)
+        trailer_pace = body.get("trailer_pace", trailer_pace)
 
     skip_flag = str(skip_analysis).lower() in ("1", "true", "yes")
     # Keep in sync with main.ASPECT_PRESETS. Intentionally NOT importing main here:
@@ -481,6 +485,16 @@ async def process_endpoint(
     allowed_aspect_ratios = {"9:16", "1:1", "4:5", "16:9"}
     if aspect_ratio not in allowed_aspect_ratios:
         aspect_ratio = "9:16"
+
+    # Keep in sync with main.py's --mode choices.
+    mode = str(mode or "normal").strip().lower()
+    if mode not in {"normal", "trailer"}:
+        mode = "normal"
+
+    # Keep in sync with main.TRAILER_PACE_PRESETS keys.
+    trailer_pace = str(trailer_pace or "standard").strip().lower()
+    if trailer_pace not in {"punchy", "standard", "extended"}:
+        trailer_pace = "standard"
 
     # Cast first: a JSON body may send a non-string (int/bool) for the engine.
     transcription_engine = str(transcription_engine or "whisper").strip().lower()
@@ -578,6 +592,8 @@ async def process_endpoint(
     _num_arg("--trim-start", trim_start, float, 0.0)
     _num_arg("--trim-end", trim_end, float, 0.0)
     cmd.extend(["--aspect-ratio", aspect_ratio])
+    cmd.extend(["--mode", mode])
+    cmd.extend(["--trailer-pace", trailer_pace])
     cmd.extend(["-o", job_output_dir])
 
     print(f"[attestation] job={job_id} ip={attestation['ip']} source={attestation['source']} ack=true")
@@ -826,6 +842,28 @@ async def get_clip_transcript(job_id: str, clip_index: int):
     clip_data = clips[clip_index]
     clip_start = clip_data.get('start', 0)
     clip_end = clip_data.get('end', 0)
+
+    # If this clip's framing.json already carries injected captions (Podcast
+    # Trailer mode pre-writes retimed DOAC captions whose order/length differ
+    # from the original transcript), return THOSE verbatim. The editor edits
+    # captions by index into framing.subtitles.captions, so the transcript panel
+    # must show the same list — re-deriving from the original transcript would
+    # misalign indices and corrupt the captions on edit. Normal clips have no
+    # injected subtitles, so they fall through to transcript-derived words.
+    framing_files = glob.glob(os.path.join(output_dir, f"*_clip_{clip_index + 1}.framing.json"))
+    if framing_files:
+        try:
+            with open(framing_files[0], 'r') as f:
+                framing = json.load(f)
+            injected = (framing.get('subtitles') or {}).get('captions')
+            if injected:
+                return {
+                    "captions": injected,
+                    "durationSec": clip_end - clip_start,
+                    "language": transcript.get('language', 'en'),
+                }
+        except (OSError, json.JSONDecodeError):
+            pass  # fall through to transcript-derived captions
 
     # Extract words within clip range and convert to CaptionWord format
     captions = []

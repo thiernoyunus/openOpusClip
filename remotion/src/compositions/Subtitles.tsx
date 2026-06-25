@@ -696,6 +696,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
             uppercase,
             seed: Math.round(word.startMs),
             isEmphasis: i === emphasisIndex,
+            accentColor: word.accentColor,
           });
 
           // Compose the per-word animation onto the template's OWN element (no
