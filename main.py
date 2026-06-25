@@ -1521,10 +1521,12 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
             moments = result_json.get('moments_ordered')
             if not isinstance(moments, list):
                 raise ClipAnalysisError("Trailer response missing 'moments_ordered' array.")
-            # Count window with slack — the model rarely hits the exact range; we
-            # only guard against a degenerate response, not enforce the preset.
-            lo = max(4, min_moments - 3)
-            hi = max_moments + 8
+            # Validation guards against a DEGENERATE response, not the exact pace
+            # window — the prompt drives the target. LLMs miss count constraints,
+            # so a slightly-short response must not fail a job that already paid
+            # for download + transcription. Only reject clearly broken output.
+            lo = 3
+            hi = max_moments + 12
             if not (lo <= len(moments) <= hi):
                 raise ClipAnalysisError(
                     f"Trailer needs {lo}-{hi} moments (pace={pace}), got {len(moments)}."
@@ -1577,8 +1579,9 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
     """Map original transcript words into trailer (concat-frame) time.
 
     Pure, import-safe function. For each moment k in PLAYBACK order, collect the
-    transcript words whose t_start falls in [s_k, e_k) (half-open). A word that
-    matches no moment is DROPPED. Coordinates are frames first, then ms.
+    transcript words that OVERLAP [s_k, e_k) (a word straddling the cut start is
+    kept, its timing clamped to the segment). A word overlapping no moment is
+    DROPPED. Coordinates are frames first, then ms.
 
       trailer_start_frame = O_k + round((t_start - s_k) * fps)
       trailer_end_frame   = O_k + round((t_end   - s_k) * fps), clamped <= O_k + F_k
@@ -1612,13 +1615,16 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
 
         for word in all_words:
             t_start = float(word['start'])
-            # Half-open membership: t_start in [s_k, e_k)
-            if not (s_k <= t_start < e_k):
-                continue
             t_end = float(word['end'])
+            # Overlap membership: keep any word that OVERLAPS [s_k, e_k) — not only
+            # words STARTING inside it — so a word straddling the cut's start isn't
+            # dropped (missing first subtitle). Its timing is clamped to the
+            # segment bounds, so trailer_start_frame stays >= O_k.
+            if not (t_end > s_k and t_start < e_k):
+                continue
 
-            trailer_start_frame = O_k + round((t_start - s_k) * fps)
-            trailer_end_frame = O_k + round((t_end - s_k) * fps)
+            trailer_start_frame = O_k + round((max(t_start, s_k) - s_k) * fps)
+            trailer_end_frame = O_k + round((min(t_end, e_k) - s_k) * fps)
             # Clamp the tail inside this segment's frames.
             if trailer_end_frame > O_k + F_k:
                 trailer_end_frame = O_k + F_k
@@ -1685,10 +1691,17 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
         run_logged_command(cut_command, f"Cutting trailer segment {k}", seg_path)
 
         # Record EXACT frame count via cv2 — do NOT compute (end-start)*fps
-        # because ffmpeg -ss/-to are not frame-exact.
+        # because ffmpeg -ss/-to are not frame-exact. If cv2 can't open the seg
+        # (codec/corrupt cut), fall back to the duration*fps estimate so a 0/neg
+        # count can't corrupt the offset math; fail loudly if even that is empty.
         seg_cap = cv2.VideoCapture(seg_path)
-        f_k = int(seg_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        f_k = int(seg_cap.get(cv2.CAP_PROP_FRAME_COUNT)) if seg_cap.isOpened() else 0
         seg_cap.release()
+        if f_k <= 0:
+            f_k = int(round((end - start) * fps))
+            print(f"   ⚠️  Segment {k}: cv2 frame count unavailable; estimated {f_k} from duration.")
+        if f_k <= 0:
+            raise ClipAnalysisError(f"Trailer segment {k} produced no frames ({start:.3f}s-{end:.3f}s).")
         print(f"   📐 Segment {k}: {f_k} frames ({start:.3f}s-{end:.3f}s)")
         seg_paths.append(seg_path)
         seg_frames.append(f_k)

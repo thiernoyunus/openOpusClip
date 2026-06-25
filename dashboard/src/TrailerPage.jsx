@@ -137,6 +137,44 @@ export default function TrailerPage() {
     };
   }, [status, jobId]);
 
+  // Resume polling for trailer jobs left 'processing' (e.g. the user reloaded or
+  // came back to #trailer while one was still running). Without this their
+  // "Recent trailers" card stays stuck on "Processing…" and never becomes
+  // clickable. Excludes the active submission (the effect above owns that one).
+  // Keyed on the processing-id SET so it re-arms only when that set changes.
+  const resumeIds = projects
+    .filter((p) => p.status === 'processing' && p.id !== jobId)
+    .map((p) => p.id)
+    .join(',');
+  useEffect(() => {
+    if (!resumeIds) return;
+    const ids = resumeIds.split(',');
+    let cancelled = false;
+    const tick = async () => {
+      for (const id of ids) {
+        try {
+          const res = await fetch(getApiUrl(`/api/status/${id}`));
+          if (res.status === 404 || res.status === 410) {
+            updateProject(id, { status: 'expired' });
+            continue;
+          }
+          if (!res.ok) continue;
+          const data = await res.json();
+          if (cancelled) return;
+          if (data.status === 'completed') updateProject(id, { status: 'completed', clipCount: 1 });
+          else if (data.status === 'failed') updateProject(id, { status: 'error' });
+        } catch { /* transient — try again next tick */ }
+      }
+      if (!cancelled) setProjects(getProjects().filter(isTrailerProject));
+    };
+    tick();
+    const iv = setInterval(tick, 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [resumeIds, jobId]);
+
   // Mirror App.jsx startProcessJob exactly, but add mode:'trailer' and omit the
   // clip-length / skip_analysis / moment_prompt controls (trailer mode owns the
   // moment selection on the backend).
@@ -523,8 +561,16 @@ export default function TrailerPage() {
                     <button
                       type="button"
                       aria-label="Remove trailer"
-                      onClick={(e) => {
+                      onClick={async (e) => {
                         e.stopPropagation();
+                        if (!window.confirm('Delete this trailer? This permanently deletes the project and its files.')) return;
+                        let res;
+                        try { res = await fetch(getApiUrl(`/api/jobs/${p.id}`), { method: 'DELETE' }); }
+                        catch { /* offline / already gone — drop the local card below */ }
+                        if (res && res.status === 409) {
+                          window.alert('This trailer is still processing — you can delete it once it finishes.');
+                          return;
+                        }
                         removeProject(p.id);
                         setProjects(getProjects().filter(isTrailerProject));
                       }}
