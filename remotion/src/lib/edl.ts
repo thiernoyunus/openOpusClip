@@ -75,6 +75,7 @@ export const framingToClips = (framing: FramingConfig): TimelineClip[] => {
         trackedFaceIds: [...s.trackedFaceIds],
         cameraKeyframes: s.cameraKeyframes,
         manualCrop: s.manualCrop,
+        captionPlacement: s.captionPlacement,
       });
     }
   }
@@ -90,6 +91,7 @@ export const framingToClips = (framing: FramingConfig): TimelineClip[] => {
       trackedFaceIds: s ? [...s.trackedFaceIds] : [],
       cameraKeyframes: s?.cameraKeyframes ?? [],
       manualCrop: s?.manualCrop ?? null,
+      captionPlacement: s?.captionPlacement,
     });
   }
   return clips;
@@ -327,6 +329,9 @@ export const remapCaptions = (
         ...ws.w,
         startMs: (startOut / fps) * 1000,
         endMs: Math.max((endOut / fps) * 1000, (startOut / fps) * 1000 + 60),
+        // Carry the owning clip's caption placement (transient) so the renderer
+        // positions this word's block per-clip; undefined → global position.
+        placement: p.clip.captionPlacement,
       });
     }
   }
