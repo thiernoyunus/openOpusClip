@@ -474,10 +474,11 @@ export default function TrailerPage() {
                 className="mt-0.5 accent-primary cursor-pointer"
               />
               <span>
-                <span className="block text-xs font-medium text-zinc-300">Smart caption placement</span>
+                <span className="block text-xs font-medium text-zinc-300">Cinematic captions</span>
                 <span className="block text-[11px] text-zinc-500 mt-0.5">
-                  Position captions to dodge the speaker (side or bottom, per shot). Best for wide /
-                  square formats — 9:16 stays at the bottom.
+                  Vary caption placement per shot — beside the speaker or at the bottom — for a
+                  composed, produced feel. Works on wide / square formats (16:9, 1:1); 9:16 stays at
+                  the bottom.
                 </span>
               </span>
             </label>
