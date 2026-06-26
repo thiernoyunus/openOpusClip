@@ -67,6 +67,7 @@ export default function TrailerPage() {
   const [file, setFile] = useState(null);
   const [aspectRatio, setAspectRatio] = useState('9:16');
   const [pace, setPace] = useState('standard');
+  const [smartPlacement, setSmartPlacement] = useState(false);
   const [whisperModel, setWhisperModel] = useState('base');
   const [transcriptionEngine, setTranscriptionEngine] = useState('whisper');
   const [acknowledged, setAcknowledged] = useState(false);
@@ -207,6 +208,7 @@ export default function TrailerPage() {
           url,
           mode: 'trailer',
           trailer_pace: pace,
+          smart_placement: smartPlacement,
           acknowledged: true,
           whisper_model: whisperModel,
           transcription_engine: transcriptionEngine,
@@ -217,6 +219,7 @@ export default function TrailerPage() {
         formData.append('file', file);
         formData.append('mode', 'trailer');
         formData.append('trailer_pace', pace);
+        formData.append('smart_placement', smartPlacement ? 'true' : 'false');
         formData.append('acknowledged', 'true');
         formData.append('whisper_model', whisperModel);
         formData.append('transcription_engine', transcriptionEngine || 'whisper');
@@ -460,6 +463,22 @@ export default function TrailerPage() {
               </select>
               <span className="block text-[11px] text-zinc-500 mt-2">
                 All keep DOAC-style rapid cuts — longer just means more cuts, not slower ones.
+              </span>
+            </label>
+
+            <label className="flex items-start gap-2.5 mt-5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={smartPlacement}
+                onChange={(e) => setSmartPlacement(e.target.checked)}
+                className="mt-0.5 accent-primary cursor-pointer"
+              />
+              <span>
+                <span className="block text-xs font-medium text-zinc-300">Smart caption placement</span>
+                <span className="block text-[11px] text-zinc-500 mt-0.5">
+                  Position captions to dodge the speaker (side or bottom, per shot). Best for wide /
+                  square formats — 9:16 stays at the bottom.
+                </span>
               </span>
             </label>
 

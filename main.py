@@ -1648,7 +1648,67 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
 
     return captions
 
-def assemble_trailer(input_video, output_dir, video_title, transcript, duration, fps, aspect_ratio, pace='standard'):
+def _avg_face_center(samples, start_f, end_f):
+    """Average (cx, cy) of a face track's samples inside [start_f, end_f), and the
+    sample count. Coords are SOURCE-normalized 0..1. Returns (None, 0) if absent."""
+    pts = [(s['x'] + s['w'] / 2.0, s['y'] + s['h'] / 2.0)
+           for s in samples if start_f <= s['frame'] < end_f]
+    if not pts:
+        return None, 0
+    n = len(pts)
+    return (sum(p[0] for p in pts) / n, sum(p[1] for p in pts) / n), n
+
+
+def compute_smart_placements(framing_data):
+    """DOAC 'smart placement': per segment, position captions to avoid the
+    speaker's face. Governing rule — never sit over a face. Mutates segments
+    (adds captionPlacement) in place and returns framing_data.
+
+    Heuristic (MVP):
+      - Portrait output (aspect < 1.0, e.g. 9:16 / 4:5): speaker is centered/large
+        → leave default (bottom). Side placement needs horizontal room.
+      - Landscape/square output, ONE dominant face: map its source center through
+        the segment crop into output space; if it sits left → caption RIGHT, if
+        right → caption LEFT (narrowed to the open side); if centered → bottom.
+      - Two+ faces in frame → bottom (between-them is deferred).
+    """
+    out_w = framing_data.get('outputWidth') or 1080
+    out_h = framing_data.get('outputHeight') or 1920
+    aspect = out_w / out_h if out_h else 0.5625
+    segments = framing_data.get('segments', [])
+    face_tracks = framing_data.get('faceTracks', [])
+
+    for seg in segments:
+        sf, ef = seg['startFrame'], seg['endFrame']
+        present = []  # (sample_count, (cx, cy)) for faces in this segment
+        for ft in face_tracks:
+            c, n = _avg_face_center(ft.get('samples', []), sf, ef)
+            if c and n >= 2:
+                present.append((n, c))
+        if not present or aspect < 1.0 or len(present) >= 2:
+            continue  # no face / portrait / multi-person → default bottom
+
+        present.sort(reverse=True)  # dominant = most-present face
+        scx, _scy = present[0][1]
+
+        # Map source x → output x through the segment's crop (fill/track/split
+        # carry cameraKeyframes; fit/general has none → full frame, x preserved).
+        crop = seg.get('manualCrop')
+        if not crop and seg.get('cameraKeyframes'):
+            ks = [k for k in seg['cameraKeyframes'] if sf <= k['frame'] < ef] or seg['cameraKeyframes']
+            crop = {k: sum(kf[k] for kf in ks) / len(ks) for k in ('x', 'y', 'w', 'h')}
+        ocx = (scx - crop['x']) / crop['w'] if crop and crop.get('w') else scx
+        ocx = min(1.0, max(0.0, ocx))
+
+        if ocx <= 0.40:
+            seg['captionPlacement'] = {'x': 0.70, 'y': 0.55, 'maxWidthPct': 0.5}
+        elif ocx >= 0.60:
+            seg['captionPlacement'] = {'x': 0.30, 'y': 0.55, 'maxWidthPct': 0.5}
+        # else: speaker is centered → leave default (bottom)
+    return framing_data
+
+
+def assemble_trailer(input_video, output_dir, video_title, transcript, duration, fps, aspect_ratio, pace='standard', smart_placement=False):
     """Build a Diary-of-a-CEO-style cold-open trailer (Option B: concat-then-frame-once).
 
     Steps (LOCKED spec):
@@ -1780,6 +1840,12 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
         'fadeOut': True,
         'cutCrossfade': False,
     }
+    # Smart placement (opt-in): position captions per segment to avoid the
+    # speaker's face. No-op on portrait output (speaker is centered → bottom).
+    if smart_placement:
+        compute_smart_placements(framing_data)
+        n_placed = sum(1 for s in framing_data.get('segments', []) if s.get('captionPlacement'))
+        print(f"   🧠 Smart placement: positioned captions on {n_placed} segment(s).")
     with open(framing_path, 'w') as f:
         json.dump(framing_data, f)
     print(f"   🎯 Injected DOAC subtitles + transitions into {framing_path}")
@@ -1831,6 +1897,7 @@ if __name__ == '__main__':
     parser.add_argument('--aspect-ratio', choices=sorted(ASPECT_PRESETS), default='9:16', help="Output aspect ratio.")
     parser.add_argument('--mode', choices=['normal', 'trailer'], default='normal', help="Processing mode: 'normal' viral clips, or 'trailer' (Diary-of-a-CEO cold-open).")
     parser.add_argument('--trailer-pace', choices=sorted(TRAILER_PACE_PRESETS), default='standard', help="Trailer length/cut-density preset (trailer mode): punchy ~35s, standard ~60s, extended ~90s.")
+    parser.add_argument('--smart-placement', action='store_true', help="Trailer mode: auto-position captions to avoid the speaker's face (DOAC smart placement; effective on wide/square output).")
 
     args = parser.parse_args()
 
@@ -1902,6 +1969,7 @@ if __name__ == '__main__':
                 transcript, duration, fps,
                 aspect_ratio=args.aspect_ratio,
                 pace=args.trailer_pace,
+                smart_placement=args.smart_placement,
             )
         except ClipAnalysisError as e:
             print(f"❌ Trailer assembly failed: {e}")

@@ -46,6 +46,12 @@ export interface CaptionPlacement {
   position?: SubtitlePosition;
   x?: number;
   y?: number;
+  /**
+   * Max caption block width as a fraction of frame width (0..1). Smart placement
+   * narrows side-placed captions so they sit in the negative space beside the
+   * speaker instead of overrunning the frame. Absent → the default ~0.88.
+   */
+  maxWidthPct?: number;
 }
 export type SubtitleEmojiPlacement = "none" | "above-word" | "below-word" | "inline";
 export type SubtitleEmojiAnimation =
@@ -577,6 +583,7 @@ export const captionPlacementSchema = z.object({
   position: z.enum(["top", "middle", "bottom"]).optional(),
   x: z.number().min(0).max(1).optional(),
   y: z.number().min(0).max(1).optional(),
+  maxWidthPct: z.number().min(0.1).max(1).optional(),
 });
 
 export const framingSegmentSchema = z.object({

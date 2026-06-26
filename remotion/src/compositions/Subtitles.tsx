@@ -577,8 +577,9 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
         top: `${(placeY as number) * 100}%`,
         // A fixed width centered on the drag point so the inner block's
         // percentage maxWidth resolves predictably and long captions wrap
-        // the same way they do in the preset layouts.
-        width: "88%",
+        // the same way they do in the preset layouts. Smart placement narrows
+        // this (maxWidthPct) so a side caption fits the negative space.
+        width: `${Math.round((placement?.maxWidthPct ?? 0.88) * 100)}%`,
         display: "flex",
         justifyContent: "center",
       }
