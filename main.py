@@ -1661,6 +1661,7 @@ def compute_smart_placements(framing_data):
     """
     MARGIN = 0.04   # breathing room added around each face box
     MIN_GAP = 0.30  # a usable gap must be at least this wide (fraction of width)
+    ASYM = 0.12     # widest gap must beat the next by this much (else ~centered → bottom)
     out_w = framing_data.get('outputWidth') or 1080
     out_h = framing_data.get('outputHeight') or 1920
     aspect = out_w / out_h if out_h else 0.5625
@@ -1714,14 +1715,20 @@ def compute_smart_placements(framing_data):
         if not gaps:
             continue  # faces span the width → bottom
 
-        gw, ga, gb = max(gaps)
-        if gw >= MIN_GAP:
+        gaps.sort(reverse=True)  # widest first
+        gw, ga, gb = gaps[0]
+        second = gaps[1][0] if len(gaps) > 1 else 0.0
+        # Side-place only when the widest gap CLEARLY beats the rest — true for an
+        # off-center speaker or a real between-people gap. A single CENTERED face
+        # splits the frame into two ~equal side gaps; that's not a deliberate open
+        # side, so keep the caption at the bottom.
+        if gw >= MIN_GAP and (gw - second) >= ASYM:
             seg['captionPlacement'] = {
                 'x': round((ga + gb) / 2.0, 3),
                 'y': 0.5,
                 'maxWidthPct': round(min(0.6, gw * 0.9), 3),
             }
-        # else: widest gap too narrow → leave default (bottom)
+        # else: no clear open side → leave default (bottom)
     return framing_data
 
 

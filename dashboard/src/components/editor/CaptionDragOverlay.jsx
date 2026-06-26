@@ -134,11 +134,14 @@ export default function CaptionDragOverlay({ subtitles, dispatch, framing, playe
             // All-clips drag: set the global position AND clear per-clip overrides
             // so the move actually applies to every clip — otherwise an overridden
             // (e.g. smart-placed) clip wins at render and wouldn't move. Undo
-            // restores the full pre-drag framing.
+            // restores the full pre-drag framing. Carry the global maxWidthPct
+            // through so a narrowed (promoted) caption keeps its width on a nudge.
+            const mw = subtitlesRef.current?.maxWidthPct;
+            const placement = typeof mw === 'number' ? { x, y, maxWidthPct: mw } : { x, y };
             dispatch(
                 transient
-                    ? { type: 'APPLY_CAPTION_PLACEMENT_TO_ALL', transient: true, placement: { x, y } }
-                    : { type: 'APPLY_CAPTION_PLACEMENT_TO_ALL', original: originalFramingRef.current, placement: { x, y } }
+                    ? { type: 'APPLY_CAPTION_PLACEMENT_TO_ALL', transient: true, placement }
+                    : { type: 'APPLY_CAPTION_PLACEMENT_TO_ALL', original: originalFramingRef.current, placement }
             );
         }
     };
