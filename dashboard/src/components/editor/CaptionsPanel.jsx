@@ -267,7 +267,15 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
     const setPosition = (pos) => {
         if (captionScope === 'clip') {
             const clipId = getCurrentClipId?.();
-            if (clipId) dispatch({ type: 'SET_CLIP_CAPTION_PLACEMENT', clipId, placement: { position: pos } });
+            if (clipId) {
+                const clip = framing.clips.find((c) => c.id === clipId);
+                // Merge so a preset keeps maxWidthPct (smart placement); drop x/y
+                // so the preset wins over any prior free-drag on this clip.
+                const placement = { ...clip?.captionPlacement, position: pos };
+                delete placement.x;
+                delete placement.y;
+                dispatch({ type: 'SET_CLIP_CAPTION_PLACEMENT', clipId, placement });
+            }
             return;
         }
         const next = { ...subs, position: pos };
@@ -291,6 +299,18 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
         dispatch({ type: 'APPLY_CAPTION_PLACEMENT_TO_ALL', placement });
     };
 
+    // Resolve which position preset shows as active. In clip scope, reflect the
+    // clip-at-the-playhead's override (x/y → none lit; else its position, falling
+    // back to the global effective position when the clip has no override).
+    const scopedClip = captionScope === 'clip'
+        ? (() => { const id = getCurrentClipId?.(); return id ? framing.clips.find((c) => c.id === id) : null; })()
+        : null;
+    const scopedPlacement = scopedClip?.captionPlacement;
+    const scopedCustomPlaced = scopedPlacement && typeof scopedPlacement.x === 'number' && typeof scopedPlacement.y === 'number';
+    const activePosition = captionScope === 'clip'
+        ? (scopedCustomPlaced ? null : (scopedPlacement?.position ?? (customPlaced ? null : subs?.position)))
+        : (customPlaced ? null : subs?.position);
+
     // Shared placement UI (scope toggle + position presets + per-clip actions),
     // rendered in both the quick view and the customize view.
     const placementSection = (
@@ -304,7 +324,7 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
             <div className="mt-2">
                 <Seg
                     options={POSITIONS.map((p) => ({ value: p, label: p }))}
-                    value={captionScope === 'clip' ? null : customPlaced ? null : subs?.position}
+                    value={activePosition}
                     onChange={setPosition}
                 />
             </div>

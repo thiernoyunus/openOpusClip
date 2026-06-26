@@ -67,6 +67,10 @@ export default function CaptionDragOverlay({ subtitles, dispatch, framing, playe
     // mid-drag can't retarget it.
     const dragScopeRef = useRef('all');
     const dragClipIdRef = useRef(null);
+    // The target clip's placement BEFORE the drag, so each move merges onto it
+    // (preserving maxWidthPct etc.). Captured at pointerdown — reading live
+    // framing would lose those fields after the first transient overwrite.
+    const dragBasePlacementRef = useRef(null);
     // Did the pointer actually move? A plain click shouldn't create a history entry.
     const movedRef = useRef(false);
     // Pointer offset between cursor and box center at grab time, so the box
@@ -120,10 +124,11 @@ export default function CaptionDragOverlay({ subtitles, dispatch, framing, playe
     // or the global subtitle config — sharing the transient/commit contract.
     const dispatchPos = (x, y, { transient }) => {
         if (dragScopeRef.current === 'clip' && dragClipIdRef.current) {
+            const placement = { ...dragBasePlacementRef.current, x, y };
             dispatch(
                 transient
-                    ? { type: 'SET_CLIP_CAPTION_PLACEMENT', transient: true, clipId: dragClipIdRef.current, placement: { x, y } }
-                    : { type: 'SET_CLIP_CAPTION_PLACEMENT', original: originalFramingRef.current, clipId: dragClipIdRef.current, placement: { x, y } }
+                    ? { type: 'SET_CLIP_CAPTION_PLACEMENT', transient: true, clipId: dragClipIdRef.current, placement }
+                    : { type: 'SET_CLIP_CAPTION_PLACEMENT', original: originalFramingRef.current, clipId: dragClipIdRef.current, placement }
             );
         } else {
             dispatch(
@@ -157,6 +162,7 @@ export default function CaptionDragOverlay({ subtitles, dispatch, framing, playe
         // Freeze the scope + target clip for the whole drag.
         dragScopeRef.current = clipMode ? 'clip' : 'all';
         dragClipIdRef.current = clipMode ? currentClip.id : null;
+        dragBasePlacementRef.current = clipMode ? (currentClip.captionPlacement ?? null) : null;
         movedRef.current = false;
         grabOffset.current = {
             dx: pos.x - (e.clientX - rect.left) / rect.width,
