@@ -102,6 +102,49 @@ export const editorReducer = (state, action) => {
             }
             return withHistory({ ...state.framing, subtitles: action.subtitles, captionsInitialized: true });
         }
+        case 'SET_CLIP_CAPTION_PLACEMENT': {
+            // Per-clip caption position override. placement:null clears it (back to
+            // the global subtitle position). transient/original mirror SET_SUBTITLES
+            // so one drag = one undo step.
+            const { clipId, placement } = action;
+            const clips = state.framing.clips.map((c) =>
+                c.id === clipId ? { ...c, captionPlacement: placement || undefined } : c
+            );
+            const nextFraming = { ...state.framing, clips };
+            if (action.transient) {
+                return { ...state, framing: nextFraming, dirty: true };
+            }
+            if (action.original !== undefined) {
+                return {
+                    ...state,
+                    framing: nextFraming,
+                    dirty: true,
+                    past: [...state.past.slice(-HISTORY_LIMIT + 1), action.original],
+                    future: [],
+                };
+            }
+            return withHistory(nextFraming);
+        }
+        case 'APPLY_CAPTION_PLACEMENT_TO_ALL': {
+            // Promote one placement to the GLOBAL subtitle position and clear every
+            // per-clip override, so the whole video uses one consistent position.
+            const subs = state.framing.subtitles;
+            if (!subs) return state;
+            const p = action.placement || {};
+            const nextSubs = { ...subs };
+            if (typeof p.x === 'number' && typeof p.y === 'number') {
+                nextSubs.x = p.x;
+                nextSubs.y = p.y;
+            } else if (p.position) {
+                nextSubs.position = p.position;
+                delete nextSubs.x;
+                delete nextSubs.y;
+            }
+            const clips = state.framing.clips.map((c) =>
+                c.captionPlacement ? { ...c, captionPlacement: undefined } : c
+            );
+            return withHistory({ ...state.framing, subtitles: nextSubs, clips });
+        }
         case 'EDIT_CAPTION_WORD': {
             const subs = state.framing.subtitles;
             if (!subs) return state;

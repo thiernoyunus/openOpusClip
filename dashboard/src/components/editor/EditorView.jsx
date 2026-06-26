@@ -310,6 +310,9 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     // opens it, clicking the active tool (or the header chevron) collapses it.
     const [panelOpen, setPanelOpen] = useState(false);
     const [trackerOn, setTrackerOn] = useState(false);
+    // Caption placement scope: 'all' = drag/preset edits the global subtitle
+    // position (every clip); 'clip' = edits only the clip at the playhead.
+    const [captionScope, setCaptionScope] = useState('all');
     const playerRef = useRef(null);
 
     const framingUrl = clip.framing_url ? getApiUrl(clip.framing_url) : null;
@@ -561,6 +564,17 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         [framing]
     );
 
+    // The clip currently under the playhead (output frame) — used by the per-clip
+    // caption-placement controls. Falls back to the first clip.
+    const getCurrentClipId = useCallback(() => {
+        if (!framing) return null;
+        const f = playerRef.current?.getCurrentFrame() ?? 0;
+        const hit = placedClips(framing, EDITOR_FPS).find(
+            (p) => f >= p.outStart && f < p.outStart + p.outDuration
+        );
+        return hit?.clip.id ?? framing.clips?.[0]?.id ?? null;
+    }, [framing]);
+
     const title =
         clip.video_title_for_youtube_short || `Clip ${typeof index === 'number' ? index + 1 : ''}`;
 
@@ -631,6 +645,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                             subtitles={framing.subtitles || null}
                                             durationInFrames={durationInFrames}
                                             trackerOn={trackerOn}
+                                            captionScope={captionScope}
                                             dispatch={dispatch}
                                         />
                                     </div>
@@ -654,7 +669,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                     </div>
                                     <div className="flex-1 overflow-y-auto custom-scrollbar">
                                         {activeTab === 'captions' && (
-                                            <CaptionsPanel framing={framing} captions={captions} dispatch={dispatch} onEnhanceCaptions={handleEnhanceCaptions} />
+                                            <CaptionsPanel framing={framing} captions={captions} dispatch={dispatch} onEnhanceCaptions={handleEnhanceCaptions} captionScope={captionScope} setCaptionScope={setCaptionScope} getCurrentClipId={getCurrentClipId} />
                                         )}
                                         {activeTab === 'text' && (
                                             <TextPanel framing={framing} dispatch={dispatch} getCurrentSourceFrame={getCurrentSourceFrame} />

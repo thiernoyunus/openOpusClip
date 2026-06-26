@@ -248,8 +248,9 @@ function RangeRow({ label, value, min, max, step = 1, fmt, onChange }) {
  * Submagic-style. All edits flow through SET_SUBTITLES so the live preview updates
  * instantly and they persist with Save / are baked into the Export.
  */
-function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions }) {
+function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, captionScope = 'all', setCaptionScope, getCurrentClipId }) {
     const subs = framing.subtitles || null;
+    const customPlaced = subs && typeof subs.x === 'number' && typeof subs.y === 'number';
     const [savedDefault, setSavedDefault] = useState(false);
     const [customizing, setCustomizing] = useState(false);
     const [enhancing, setEnhancing] = useState(false);
@@ -261,17 +262,79 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions }) {
             subtitles: { ...subs, style: { ...subs.style, ...patch } },
         });
 
-    // Choosing a preset clears any free-drag x/y so presets and drag stay
-    // mutually exclusive (preset wins when chosen; dragging on the canvas sets
-    // a custom position that overrides the preset).
+    // Choosing a preset clears any free-drag x/y. Scope decides whether it edits
+    // the GLOBAL subtitle position (all clips) or only the clip at the playhead.
     const setPosition = (pos) => {
+        if (captionScope === 'clip') {
+            const clipId = getCurrentClipId?.();
+            if (clipId) dispatch({ type: 'SET_CLIP_CAPTION_PLACEMENT', clipId, placement: { position: pos } });
+            return;
+        }
         const next = { ...subs, position: pos };
         delete next.x;
         delete next.y;
         dispatch({ type: 'SET_SUBTITLES', subtitles: next });
     };
 
-    const customPlaced = subs && typeof subs.x === 'number' && typeof subs.y === 'number';
+    // Clear the current clip's override (back to the global position).
+    const resetCurrentClip = () => {
+        const clipId = getCurrentClipId?.();
+        if (clipId) dispatch({ type: 'SET_CLIP_CAPTION_PLACEMENT', clipId, placement: null });
+    };
+
+    // Promote the current placement to the GLOBAL position + clear all overrides.
+    const applyCurrentToAll = () => {
+        const clipId = getCurrentClipId?.();
+        const clip = clipId ? framing.clips.find((c) => c.id === clipId) : null;
+        const placement = clip?.captionPlacement
+            ?? (customPlaced ? { x: subs.x, y: subs.y } : { position: subs?.position });
+        dispatch({ type: 'APPLY_CAPTION_PLACEMENT_TO_ALL', placement });
+    };
+
+    // Shared placement UI (scope toggle + position presets + per-clip actions),
+    // rendered in both the quick view and the customize view.
+    const placementSection = (
+        <div>
+            <span className="block text-[11px] text-muted mb-1.5">Caption placement</span>
+            <Seg
+                options={[{ value: 'all', label: 'All clips' }, { value: 'clip', label: 'This clip' }]}
+                value={captionScope}
+                onChange={(v) => setCaptionScope?.(v)}
+            />
+            <div className="mt-2">
+                <Seg
+                    options={POSITIONS.map((p) => ({ value: p, label: p }))}
+                    value={captionScope === 'clip' ? null : customPlaced ? null : subs?.position}
+                    onChange={setPosition}
+                />
+            </div>
+            <p className="text-[10px] text-zinc-500 mt-1.5">
+                {captionScope === 'clip'
+                    ? 'Editing the clip at the playhead — drag the caption or pick a position. Other clips keep the global position.'
+                    : customPlaced
+                    ? 'Custom position set — pick a preset to reset.'
+                    : 'Drag the caption on the canvas, or pick a position for every clip.'}
+            </p>
+            {captionScope === 'clip' && (
+                <div className="mt-2 flex gap-2">
+                    <button
+                        type="button"
+                        onClick={resetCurrentClip}
+                        className="text-[11px] px-2 py-1 rounded border border-edge text-muted hover:text-fg hover:bg-white/5 transition-colors"
+                    >
+                        Reset this clip
+                    </button>
+                    <button
+                        type="button"
+                        onClick={applyCurrentToAll}
+                        className="text-[11px] px-2 py-1 rounded border border-edge text-muted hover:text-fg hover:bg-white/5 transition-colors"
+                    >
+                        Apply to all clips
+                    </button>
+                </div>
+            )}
+        </div>
+    );
 
     const applyTemplate = (tpl) =>
         dispatch({
@@ -662,20 +725,8 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions }) {
                         )}
                     </div>
 
-                    {/* Position */}
-                    <div>
-                        <span className="block text-[11px] text-muted mb-1.5">Position</span>
-                        <Seg
-                            options={POSITIONS.map((p) => ({ value: p, label: p }))}
-                            value={customPlaced ? null : subs.position}
-                            onChange={setPosition}
-                        />
-                        <p className="text-[10px] text-zinc-500 mt-1.5">
-                            {customPlaced
-                                ? 'Custom position set — pick a preset to reset.'
-                                : 'Or drag the caption on the canvas to position it.'}
-                        </p>
-                    </div>
+                    {/* Caption placement (scope + position) */}
+                    {placementSection}
 
                     {/* Word stacking — vertical (column) vs horizontal (wrapped row).
                         Default vertical for Podcast (emphasis-aware stack), horizontal otherwise. */}
@@ -797,20 +848,8 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions }) {
                         </p>
                     </div>
 
-                    {/* Quick position */}
-                    <div>
-                        <span className="block text-[11px] text-muted mb-1.5">Position</span>
-                        <Seg
-                            options={POSITIONS.map((p) => ({ value: p, label: p }))}
-                            value={customPlaced ? null : subs.position}
-                            onChange={setPosition}
-                        />
-                        <p className="text-[10px] text-zinc-500 mt-1.5">
-                            {customPlaced
-                                ? 'Custom position set — pick a preset to reset.'
-                                : 'Or drag the caption on the canvas to position it.'}
-                        </p>
-                    </div>
+                    {/* Caption placement (scope + position) */}
+                    {placementSection}
 
                     {/* Quick size */}
                     <div>

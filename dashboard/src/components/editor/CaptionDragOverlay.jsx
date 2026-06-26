@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { placedClips } from '@remotion-src/lib/edl';
 
 /**
  * Opus-style "drag captions to reposition" layer. Sits absolutely over the
@@ -51,16 +52,21 @@ const clampToFrame = ({ x, y }) => ({
     y: clamp(y, BOX_H / 2, 1 - BOX_H / 2),
 });
 
-export default function CaptionDragOverlay({ subtitles, dispatch }) {
+export default function CaptionDragOverlay({ subtitles, dispatch, framing, playerRef, scope = 'all', fps = 30 }) {
     const layerRef = useRef(null);
     const rafRef = useRef(0);
     const latestRef = useRef(null);
     // Latest subtitles, read inside the rAF/commit callbacks so they never act
     // on a stale closure if a re-render lands between scheduling and firing.
     const subtitlesRef = useRef(subtitles);
-    // Pre-drag subtitles, captured on pointerdown so the drag is undoable even
+    // Pre-drag snapshots, captured on pointerdown so the drag is undoable even
     // though the live (transient) updates don't push history themselves.
-    const originalRef = useRef(null);
+    const originalRef = useRef(null); // pre-drag subtitles (global scope undo)
+    const originalFramingRef = useRef(null); // pre-drag framing (clip scope undo)
+    // The drag's scope + target clip, frozen at pointerdown so a frame tick
+    // mid-drag can't retarget it.
+    const dragScopeRef = useRef('all');
+    const dragClipIdRef = useRef(null);
     // Did the pointer actually move? A plain click shouldn't create a history entry.
     const movedRef = useRef(false);
     // Pointer offset between cursor and box center at grab time, so the box
@@ -68,6 +74,25 @@ export default function CaptionDragOverlay({ subtitles, dispatch }) {
     const grabOffset = useRef({ dx: 0, dy: 0 });
     // Live position during a drag (null when idle → use committed x/y / preset).
     const [dragPos, setDragPos] = useState(null);
+
+    // Track the playhead (output frame) so we know which clip is on screen — the
+    // target when scope === 'clip'. Mirrors TrackerOverlay's frame subscription.
+    const [outFrame, setOutFrame] = useState(0);
+    useEffect(() => {
+        const p = playerRef?.current;
+        if (!p) return;
+        setOutFrame(p.getCurrentFrame());
+        const onFrame = (e) => setOutFrame(e.detail.frame);
+        p.addEventListener('frameupdate', onFrame);
+        return () => p.removeEventListener('frameupdate', onFrame);
+    }, [playerRef]);
+
+    const placed = useMemo(() => (framing ? placedClips(framing, fps) : []), [framing, fps]);
+    const currentClip = useMemo(
+        () => placed.find((p) => outFrame >= p.outStart && outFrame < p.outStart + p.outDuration)?.clip ?? null,
+        [placed, outFrame]
+    );
+    const clipMode = scope === 'clip' && !!currentClip;
 
     useEffect(() => {
         subtitlesRef.current = subtitles;
@@ -80,13 +105,34 @@ export default function CaptionDragOverlay({ subtitles, dispatch }) {
 
     if (!subtitles) return null;
 
+    // Seat the box from the placement that this scope edits: the clip's override
+    // (clip scope, when present) else the global subtitle position/x,y.
+    const seat = clipMode ? (currentClip.captionPlacement ?? subtitles) : subtitles;
     const committed =
-        typeof subtitles.x === 'number' && typeof subtitles.y === 'number'
-            ? { x: subtitles.x, y: subtitles.y }
-            : PRESET_CENTER[subtitles.position] ?? PRESET_CENTER.bottom;
+        typeof seat.x === 'number' && typeof seat.y === 'number'
+            ? { x: seat.x, y: seat.y }
+            : PRESET_CENTER[seat.position] ?? PRESET_CENTER.bottom;
 
     const pos = dragPos ?? committed;
     const dragging = dragPos !== null;
+
+    // Dispatch a position update — to the current clip's placement (clip scope)
+    // or the global subtitle config — sharing the transient/commit contract.
+    const dispatchPos = (x, y, { transient }) => {
+        if (dragScopeRef.current === 'clip' && dragClipIdRef.current) {
+            dispatch(
+                transient
+                    ? { type: 'SET_CLIP_CAPTION_PLACEMENT', transient: true, clipId: dragClipIdRef.current, placement: { x, y } }
+                    : { type: 'SET_CLIP_CAPTION_PLACEMENT', original: originalFramingRef.current, clipId: dragClipIdRef.current, placement: { x, y } }
+            );
+        } else {
+            dispatch(
+                transient
+                    ? { type: 'SET_SUBTITLES', transient: true, subtitles: { ...subtitlesRef.current, x, y } }
+                    : { type: 'SET_SUBTITLES', original: originalRef.current, subtitles: { ...subtitlesRef.current, x, y } }
+            );
+        }
+    };
 
     // Live update without a history entry, coalesced to one per animation frame.
     const pushTransient = (pt) => {
@@ -96,11 +142,7 @@ export default function CaptionDragOverlay({ subtitles, dispatch }) {
             rafRef.current = 0;
             const p = latestRef.current;
             if (!p) return;
-            dispatch({
-                type: 'SET_SUBTITLES',
-                transient: true,
-                subtitles: { ...subtitlesRef.current, x: Number(p.x.toFixed(4)), y: Number(p.y.toFixed(4)) },
-            });
+            dispatchPos(Number(p.x.toFixed(4)), Number(p.y.toFixed(4)), { transient: true });
         });
     };
 
@@ -111,6 +153,10 @@ export default function CaptionDragOverlay({ subtitles, dispatch }) {
         if (!rect || rect.width === 0 || rect.height === 0) return;
         e.currentTarget.setPointerCapture?.(e.pointerId);
         originalRef.current = subtitles;
+        originalFramingRef.current = framing;
+        // Freeze the scope + target clip for the whole drag.
+        dragScopeRef.current = clipMode ? 'clip' : 'all';
+        dragClipIdRef.current = clipMode ? currentClip.id : null;
         movedRef.current = false;
         grabOffset.current = {
             dx: pos.x - (e.clientX - rect.left) / rect.width,
@@ -143,13 +189,10 @@ export default function CaptionDragOverlay({ subtitles, dispatch }) {
         setDragPos(null);
         // A click with no movement leaves position untouched — no history entry.
         if (!movedRef.current) return;
-        dispatch({
-            type: 'SET_SUBTITLES',
-            // The transient moves already mutated the live subtitles, so the
-            // pre-drag snapshot is what must go onto the undo stack.
-            original: originalRef.current,
-            subtitles: { ...subtitlesRef.current, x: Number(pt.x.toFixed(4)), y: Number(pt.y.toFixed(4)) },
-        });
+        // The transient moves already mutated the live state, so the pre-drag
+        // snapshot (subtitles or framing, per scope) is what goes onto the undo
+        // stack — dispatchPos handles that via its `original`.
+        dispatchPos(Number(pt.x.toFixed(4)), Number(pt.y.toFixed(4)), { transient: false });
     };
 
     return (
