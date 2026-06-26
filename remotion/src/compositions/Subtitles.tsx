@@ -486,7 +486,28 @@ export const Subtitles: React.FC<SubtitlesProps> = ({ config }) => {
         maxChars: config.style.maxWords * 14,
       }
     : template.grouping;
-  const blocks = groupCaptionsIntoBlocks(config.captions, grouping);
+  // A grouped block can straddle a clip boundary (a manual split or trailer cut
+  // mid-phrase), and its words may then carry DIFFERENT per-clip placements.
+  // Split each block into runs of same-placement words so every run renders in
+  // its own clip's position instead of all using the first word's.
+  type Block = ReturnType<typeof groupCaptionsIntoBlocks>[number];
+  const splitByPlacement = (block: Block): Block[] => {
+    const out: Block[] = [];
+    let run: Block["words"] = [];
+    const flush = () => {
+      if (run.length) out.push({ words: run, startMs: run[0].startMs, endMs: run[run.length - 1].endMs, text: run.map((w) => w.text).join(" ") });
+    };
+    let key: string | null = null;
+    for (const w of block.words) {
+      const k = JSON.stringify(w.placement ?? null);
+      if (run.length && k !== key) { flush(); run = []; }
+      run.push(w);
+      key = k;
+    }
+    flush();
+    return out;
+  };
+  const blocks = groupCaptionsIntoBlocks(config.captions, grouping).flatMap(splitByPlacement);
 
   return (
     <AbsoluteFill>
@@ -562,19 +583,24 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
     return idx;
   })();
 
-  // Free-drag placement wins when both x/y are set; otherwise fall back to the
-  // top/middle/bottom preset (existing behavior, fully back-compat).
-  const freePlaced =
-    typeof config.x === "number" && typeof config.y === "number";
+  // Caption placement: a PER-CLIP override (carried on this block's words by
+  // remapCaptions) wins as a unit; otherwise the global config position/x,y is
+  // used (fully back-compat). With both x/y it's free-dragged; else a preset.
+  const placement = block.words[0]?.placement;
+  const placeX = placement ? placement.x : config.x;
+  const placeY = placement ? placement.y : config.y;
+  const placePosition = placement?.position ?? position;
+  const freePlaced = typeof placeX === "number" && typeof placeY === "number";
   const outerStyle: React.CSSProperties = freePlaced
     ? {
         position: "absolute",
-        left: `${(config.x as number) * 100}%`,
-        top: `${(config.y as number) * 100}%`,
+        left: `${(placeX as number) * 100}%`,
+        top: `${(placeY as number) * 100}%`,
         // A fixed width centered on the drag point so the inner block's
         // percentage maxWidth resolves predictably and long captions wrap
-        // the same way they do in the preset layouts.
-        width: "88%",
+        // the same way they do in the preset layouts. Smart placement narrows
+        // this (maxWidthPct) so a side caption fits the negative space.
+        width: `${Math.round((placement?.maxWidthPct ?? config.maxWidthPct ?? 0.88) * 100)}%`,
         display: "flex",
         justifyContent: "center",
       }
@@ -584,7 +610,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
         right: 0,
         display: "flex",
         justifyContent: "center",
-        ...(POSITION_MAP[position] ?? POSITION_MAP.bottom),
+        ...(POSITION_MAP[placePosition] ?? POSITION_MAP.bottom),
       };
   const containerStyle = template.containerStyle?.(style) ?? {};
   // Generic vertical stacking: lay the words out in a centered column. Templates

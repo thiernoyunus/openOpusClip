@@ -23,11 +23,36 @@ export interface CaptionWord {
    * and informational — RTL detection is text-based, so nothing depends on it.
    */
   language?: string;
+  /**
+   * RENDER-INTERNAL (transient): the owning clip's caption placement, attached by
+   * remapCaptions so the renderer can position this word's block per-clip. NOT
+   * persisted and NOT in the zod schema — never set on stored caption data.
+   */
+  placement?: CaptionPlacement;
 }
 
 // --- Subtitle config ---
 export type SubtitleAnimation = "none" | "word-highlight" | "pop" | "karaoke";
 export type SubtitlePosition = "top" | "middle" | "bottom";
+
+/**
+ * Per-clip caption placement override. When present on a clip it positions THAT
+ * clip's caption blocks; absent → the global SubtitleConfig position/x,y is used.
+ * x/y are normalized 0..1, center-anchored (same convention as SubtitleConfig);
+ * when both are set they win over `position`. Lives ON the clip so split / reorder
+ * / duplicate carry it automatically.
+ */
+export interface CaptionPlacement {
+  position?: SubtitlePosition;
+  x?: number;
+  y?: number;
+  /**
+   * Max caption block width as a fraction of frame width (0..1). Smart placement
+   * narrows side-placed captions so they sit in the negative space beside the
+   * speaker instead of overrunning the frame. Absent → the default ~0.88.
+   */
+  maxWidthPct?: number;
+}
 export type SubtitleEmojiPlacement = "none" | "above-word" | "below-word" | "inline";
 export type SubtitleEmojiAnimation =
   | "none"
@@ -183,6 +208,12 @@ export interface SubtitleConfig {
    */
   x?: number;
   y?: number;
+  /**
+   * Max caption block width (fraction of frame width) for free-placed global
+   * captions — mirrors CaptionPlacement.maxWidthPct. Lets a narrowed (e.g.
+   * smart-placed) caption keep its width when promoted to "all clips". Absent → ~0.88.
+   */
+  maxWidthPct?: number;
 }
 
 // --- Hook config ---
@@ -254,6 +285,7 @@ export interface FramingSegment {
   trackedFaceIds: number[]; // one per panel, reading order
   cameraKeyframes: CameraKeyframe[];
   manualCrop: CropRect | null; // user override; wins over keyframes/tracks
+  captionPlacement?: CaptionPlacement; // per-segment caption position (carried to clips on migration)
 }
 
 /**
@@ -272,6 +304,7 @@ export interface TimelineClip {
   trackedFaceIds: number[]; // one per panel, reading order
   cameraKeyframes: CameraKeyframe[];
   manualCrop: CropRect | null;
+  captionPlacement?: CaptionPlacement; // per-clip caption position; absent → global subtitle position
 }
 
 export interface FramingSource {
@@ -510,6 +543,7 @@ export const subtitleConfigSchema = z.object({
   // configs without x/y still validate and fall back to `position`.
   x: z.number().min(0).max(1).optional(),
   y: z.number().min(0).max(1).optional(),
+  maxWidthPct: z.number().min(0.1).max(1).optional(),
 });
 
 export const hookConfigSchema = z.object({
@@ -551,6 +585,14 @@ export const faceTrackSchema = z.object({
   samples: z.array(cameraKeyframeSchema),
 });
 
+// Per-clip caption placement override (zod-validated → survives render input).
+export const captionPlacementSchema = z.object({
+  position: z.enum(["top", "middle", "bottom"]).optional(),
+  x: z.number().min(0).max(1).optional(),
+  y: z.number().min(0).max(1).optional(),
+  maxWidthPct: z.number().min(0.1).max(1).optional(),
+});
+
 export const framingSegmentSchema = z.object({
   id: z.string(),
   startFrame: z.number().int().min(0),
@@ -559,6 +601,7 @@ export const framingSegmentSchema = z.object({
   trackedFaceIds: z.array(z.number().int()),
   cameraKeyframes: z.array(cameraKeyframeSchema),
   manualCrop: cropRectSchema.nullable(),
+  captionPlacement: captionPlacementSchema.optional(),
 });
 
 export const timelineClipSchema = z.object({
@@ -569,6 +612,7 @@ export const timelineClipSchema = z.object({
   trackedFaceIds: z.array(z.number().int()),
   cameraKeyframes: z.array(cameraKeyframeSchema),
   manualCrop: cropRectSchema.nullable(),
+  captionPlacement: captionPlacementSchema.optional(),
 });
 
 export const sourceCutSchema = z.object({

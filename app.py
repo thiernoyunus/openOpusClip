@@ -454,6 +454,7 @@ async def process_endpoint(
     aspect_ratio: Optional[str] = Form("9:16"),
     mode: Optional[str] = Form("normal"),
     trailer_pace: Optional[str] = Form("standard"),
+    smart_placement: Optional[str] = Form(None),
 ):
     api_key = request.headers.get("X-Gemini-Key")
     if not api_key:
@@ -478,6 +479,7 @@ async def process_endpoint(
         aspect_ratio = body.get("aspect_ratio", aspect_ratio)
         mode = body.get("mode", mode)
         trailer_pace = body.get("trailer_pace", trailer_pace)
+        smart_placement = body.get("smart_placement", smart_placement)
 
     skip_flag = str(skip_analysis).lower() in ("1", "true", "yes")
     # Keep in sync with main.ASPECT_PRESETS. Intentionally NOT importing main here:
@@ -495,6 +497,8 @@ async def process_endpoint(
     trailer_pace = str(trailer_pace or "standard").strip().lower()
     if trailer_pace not in {"punchy", "standard", "extended"}:
         trailer_pace = "standard"
+
+    smart_placement_flag = str(smart_placement).lower() in ("1", "true", "yes", "on")
 
     # Cast first: a JSON body may send a non-string (int/bool) for the engine.
     transcription_engine = str(transcription_engine or "whisper").strip().lower()
@@ -594,6 +598,8 @@ async def process_endpoint(
     cmd.extend(["--aspect-ratio", aspect_ratio])
     cmd.extend(["--mode", mode])
     cmd.extend(["--trailer-pace", trailer_pace])
+    if smart_placement_flag:
+        cmd.append("--smart-placement")
     cmd.extend(["-o", job_output_dir])
 
     print(f"[attestation] job={job_id} ip={attestation['ip']} source={attestation['source']} ack=true")

@@ -15,7 +15,7 @@ export const EDITOR_FPS = 30;
  * is capped.
  */
 const EditorCanvas = forwardRef(function EditorCanvas(
-    { sourceUrl, framing, subtitles = null, durationInFrames, trackerOn = false, dispatch },
+    { sourceUrl, framing, subtitles = null, durationInFrames, trackerOn = false, captionScope = 'all', dispatch },
     playerRef
 ) {
     // Output canvas = the clip's aspect ratio (defaults to 9:16 for older clips).
@@ -91,7 +91,14 @@ const EditorCanvas = forwardRef(function EditorCanvas(
                 {/* Drag-to-reposition handle for captions. Only the handle itself
                     captures pointer events, so it coexists with the tracker layer. */}
                 {subtitles && (
-                    <CaptionDragOverlay subtitles={subtitles} dispatch={dispatch} />
+                    <CaptionDragOverlay
+                        subtitles={subtitles}
+                        dispatch={dispatch}
+                        framing={framing}
+                        playerRef={playerRef}
+                        scope={captionScope}
+                        fps={EDITOR_FPS}
+                    />
                 )}
             </div>
         </div>

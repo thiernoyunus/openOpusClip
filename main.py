@@ -1648,7 +1648,91 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
 
     return captions
 
-def assemble_trailer(input_video, output_dir, video_title, transcript, duration, fps, aspect_ratio, pace='standard'):
+def compute_smart_placements(framing_data):
+    """DOAC 'smart placement': per segment, place captions in the WIDEST
+    face-free horizontal band — beside a lone speaker, or in the gap between
+    people — so the caption dodges every face. Governing rule: never sit over a
+    face. Mutates segments (adds captionPlacement) in place; returns framing_data.
+
+    Works for multi-person shots (panels/interviews): it considers EVERY face in
+    the segment, not just one. Portrait output keeps the default bottom (no
+    horizontal room). If no gap is wide enough (faces span the frame) the segment
+    stays at the bottom. The caption is narrowed (maxWidthPct) to fit its gap.
+    """
+    MARGIN = 0.04   # breathing room added around each face box
+    MIN_GAP = 0.30  # a usable gap must be at least this wide (fraction of width)
+    ASYM = 0.12     # widest gap must beat the next by this much (else ~centered → bottom)
+    out_w = framing_data.get('outputWidth') or 1080
+    out_h = framing_data.get('outputHeight') or 1920
+    aspect = out_w / out_h if out_h else 0.5625
+    if aspect < 1.0:
+        return framing_data  # portrait → bottom everywhere (no side room)
+
+    segments = framing_data.get('segments', [])
+    face_tracks = framing_data.get('faceTracks', [])
+
+    for seg in segments:
+        sf, ef = seg['startFrame'], seg['endFrame']
+        crop = seg.get('manualCrop')
+        if not crop and seg.get('cameraKeyframes'):
+            ks = [k for k in seg['cameraKeyframes'] if sf <= k['frame'] < ef] or seg['cameraKeyframes']
+            crop = {k: sum(kf[k] for kf in ks) / len(ks) for k in ('x', 'y', 'w', 'h')}
+
+        # Occupied x-intervals from EVERY face present, mapped to output + margin.
+        occ = []
+        for ft in face_tracks:
+            pts = [(s['x'] + s['w'] / 2.0, s['w']) for s in ft.get('samples', [])
+                   if sf <= s['frame'] < ef]
+            if len(pts) < 2:
+                continue
+            scx = sum(p[0] for p in pts) / len(pts)
+            sw = sum(p[1] for p in pts) / len(pts)
+            if crop and crop.get('w'):
+                ocx = (scx - crop['x']) / crop['w']
+                ohw = (sw / 2.0) / crop['w']
+            else:
+                ocx, ohw = scx, sw / 2.0
+            occ.append((max(0.0, ocx - ohw - MARGIN), min(1.0, ocx + ohw + MARGIN)))
+        if not occ:
+            continue  # no faces → bottom
+
+        # Merge occupied intervals; the free gaps are their complement in [0,1].
+        occ.sort()
+        merged = [list(occ[0])]
+        for a, b in occ[1:]:
+            if a <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], b)
+            else:
+                merged.append([a, b])
+        gaps = []  # (width, start, end)
+        cursor = 0.0
+        for a, b in merged:
+            if a - cursor > 0:
+                gaps.append((a - cursor, cursor, a))
+            cursor = max(cursor, b)
+        if 1.0 - cursor > 0:
+            gaps.append((1.0 - cursor, cursor, 1.0))
+        if not gaps:
+            continue  # faces span the width → bottom
+
+        gaps.sort(reverse=True)  # widest first
+        gw, ga, gb = gaps[0]
+        second = gaps[1][0] if len(gaps) > 1 else 0.0
+        # Side-place only when the widest gap CLEARLY beats the rest — true for an
+        # off-center speaker or a real between-people gap. A single CENTERED face
+        # splits the frame into two ~equal side gaps; that's not a deliberate open
+        # side, so keep the caption at the bottom.
+        if gw >= MIN_GAP and (gw - second) >= ASYM:
+            seg['captionPlacement'] = {
+                'x': round((ga + gb) / 2.0, 3),
+                'y': 0.5,
+                'maxWidthPct': round(min(0.6, gw * 0.9), 3),
+            }
+        # else: no clear open side → leave default (bottom)
+    return framing_data
+
+
+def assemble_trailer(input_video, output_dir, video_title, transcript, duration, fps, aspect_ratio, pace='standard', smart_placement=False):
     """Build a Diary-of-a-CEO-style cold-open trailer (Option B: concat-then-frame-once).
 
     Steps (LOCKED spec):
@@ -1780,6 +1864,12 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
         'fadeOut': True,
         'cutCrossfade': False,
     }
+    # Smart placement (opt-in): position captions per segment to avoid the
+    # speaker's face. No-op on portrait output (speaker is centered → bottom).
+    if smart_placement:
+        compute_smart_placements(framing_data)
+        n_placed = sum(1 for s in framing_data.get('segments', []) if s.get('captionPlacement'))
+        print(f"   🧠 Smart placement: positioned captions on {n_placed} segment(s).")
     with open(framing_path, 'w') as f:
         json.dump(framing_data, f)
     print(f"   🎯 Injected DOAC subtitles + transitions into {framing_path}")
@@ -1831,6 +1921,7 @@ if __name__ == '__main__':
     parser.add_argument('--aspect-ratio', choices=sorted(ASPECT_PRESETS), default='9:16', help="Output aspect ratio.")
     parser.add_argument('--mode', choices=['normal', 'trailer'], default='normal', help="Processing mode: 'normal' viral clips, or 'trailer' (Diary-of-a-CEO cold-open).")
     parser.add_argument('--trailer-pace', choices=sorted(TRAILER_PACE_PRESETS), default='standard', help="Trailer length/cut-density preset (trailer mode): punchy ~35s, standard ~60s, extended ~90s.")
+    parser.add_argument('--smart-placement', action='store_true', help="Trailer mode: auto-position captions to avoid the speaker's face (DOAC smart placement; effective on wide/square output).")
 
     args = parser.parse_args()
 
@@ -1902,6 +1993,7 @@ if __name__ == '__main__':
                 transcript, duration, fps,
                 aspect_ratio=args.aspect_ratio,
                 pace=args.trailer_pace,
+                smart_placement=args.smart_placement,
             )
         except ClipAnalysisError as e:
             print(f"❌ Trailer assembly failed: {e}")
