@@ -131,10 +131,14 @@ export default function CaptionDragOverlay({ subtitles, dispatch, framing, playe
                     : { type: 'SET_CLIP_CAPTION_PLACEMENT', original: originalFramingRef.current, clipId: dragClipIdRef.current, placement }
             );
         } else {
+            // All-clips drag: set the global position AND clear per-clip overrides
+            // so the move actually applies to every clip — otherwise an overridden
+            // (e.g. smart-placed) clip wins at render and wouldn't move. Undo
+            // restores the full pre-drag framing.
             dispatch(
                 transient
-                    ? { type: 'SET_SUBTITLES', transient: true, subtitles: { ...subtitlesRef.current, x, y } }
-                    : { type: 'SET_SUBTITLES', original: originalRef.current, subtitles: { ...subtitlesRef.current, x, y } }
+                    ? { type: 'APPLY_CAPTION_PLACEMENT_TO_ALL', transient: true, placement: { x, y } }
+                    : { type: 'APPLY_CAPTION_PLACEMENT_TO_ALL', original: originalFramingRef.current, placement: { x, y } }
             );
         }
     };

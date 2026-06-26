@@ -143,7 +143,23 @@ export const editorReducer = (state, action) => {
             const clips = state.framing.clips.map((c) =>
                 c.captionPlacement ? { ...c, captionPlacement: undefined } : c
             );
-            return withHistory({ ...state.framing, subtitles: nextSubs, clips });
+            const nextFraming = { ...state.framing, subtitles: nextSubs, clips };
+            // transient/original mirror SET_SUBTITLES so an All-clips DRAG (which
+            // both moves the global position AND clears per-clip overrides so the
+            // move actually applies everywhere) is one smooth, undoable step.
+            if (action.transient) {
+                return { ...state, framing: nextFraming, dirty: true };
+            }
+            if (action.original !== undefined) {
+                return {
+                    ...state,
+                    framing: nextFraming,
+                    dirty: true,
+                    past: [...state.past.slice(-HISTORY_LIMIT + 1), action.original],
+                    future: [],
+                };
+            }
+            return withHistory(nextFraming);
         }
         case 'EDIT_CAPTION_WORD': {
             const subs = state.framing.subtitles;
