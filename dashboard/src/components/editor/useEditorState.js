@@ -135,10 +135,15 @@ export const editorReducer = (state, action) => {
             if (typeof p.x === 'number' && typeof p.y === 'number') {
                 nextSubs.x = p.x;
                 nextSubs.y = p.y;
+                // Keep a promoted side caption's narrowed width (else it falls back
+                // to the default ~88% and can spill back over the speaker).
+                if (typeof p.maxWidthPct === 'number') nextSubs.maxWidthPct = p.maxWidthPct;
+                else delete nextSubs.maxWidthPct;
             } else if (p.position) {
                 nextSubs.position = p.position;
                 delete nextSubs.x;
                 delete nextSubs.y;
+                delete nextSubs.maxWidthPct;
             }
             const clips = state.framing.clips.map((c) =>
                 c.captionPlacement ? { ...c, captionPlacement: undefined } : c

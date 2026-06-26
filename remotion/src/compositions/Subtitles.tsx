@@ -600,7 +600,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
         // percentage maxWidth resolves predictably and long captions wrap
         // the same way they do in the preset layouts. Smart placement narrows
         // this (maxWidthPct) so a side caption fits the negative space.
-        width: `${Math.round((placement?.maxWidthPct ?? 0.88) * 100)}%`,
+        width: `${Math.round((placement?.maxWidthPct ?? config.maxWidthPct ?? 0.88) * 100)}%`,
         display: "flex",
         justifyContent: "center",
       }

@@ -208,6 +208,12 @@ export interface SubtitleConfig {
    */
   x?: number;
   y?: number;
+  /**
+   * Max caption block width (fraction of frame width) for free-placed global
+   * captions — mirrors CaptionPlacement.maxWidthPct. Lets a narrowed (e.g.
+   * smart-placed) caption keep its width when promoted to "all clips". Absent → ~0.88.
+   */
+  maxWidthPct?: number;
 }
 
 // --- Hook config ---
@@ -537,6 +543,7 @@ export const subtitleConfigSchema = z.object({
   // configs without x/y still validate and fall back to `position`.
   x: z.number().min(0).max(1).optional(),
   y: z.number().min(0).max(1).optional(),
+  maxWidthPct: z.number().min(0.1).max(1).optional(),
 });
 
 export const hookConfigSchema = z.object({
