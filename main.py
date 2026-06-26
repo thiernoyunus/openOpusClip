@@ -1648,63 +1648,80 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
 
     return captions
 
-def _avg_face_center(samples, start_f, end_f):
-    """Average (cx, cy) of a face track's samples inside [start_f, end_f), and the
-    sample count. Coords are SOURCE-normalized 0..1. Returns (None, 0) if absent."""
-    pts = [(s['x'] + s['w'] / 2.0, s['y'] + s['h'] / 2.0)
-           for s in samples if start_f <= s['frame'] < end_f]
-    if not pts:
-        return None, 0
-    n = len(pts)
-    return (sum(p[0] for p in pts) / n, sum(p[1] for p in pts) / n), n
-
-
 def compute_smart_placements(framing_data):
-    """DOAC 'smart placement': per segment, position captions to avoid the
-    speaker's face. Governing rule — never sit over a face. Mutates segments
-    (adds captionPlacement) in place and returns framing_data.
+    """DOAC 'smart placement': per segment, place captions in the WIDEST
+    face-free horizontal band — beside a lone speaker, or in the gap between
+    people — so the caption dodges every face. Governing rule: never sit over a
+    face. Mutates segments (adds captionPlacement) in place; returns framing_data.
 
-    Heuristic (MVP):
-      - Portrait output (aspect < 1.0, e.g. 9:16 / 4:5): speaker is centered/large
-        → leave default (bottom). Side placement needs horizontal room.
-      - Landscape/square output, ONE dominant face: map its source center through
-        the segment crop into output space; if it sits left → caption RIGHT, if
-        right → caption LEFT (narrowed to the open side); if centered → bottom.
-      - Two+ faces in frame → bottom (between-them is deferred).
+    Works for multi-person shots (panels/interviews): it considers EVERY face in
+    the segment, not just one. Portrait output keeps the default bottom (no
+    horizontal room). If no gap is wide enough (faces span the frame) the segment
+    stays at the bottom. The caption is narrowed (maxWidthPct) to fit its gap.
     """
+    MARGIN = 0.04   # breathing room added around each face box
+    MIN_GAP = 0.30  # a usable gap must be at least this wide (fraction of width)
     out_w = framing_data.get('outputWidth') or 1080
     out_h = framing_data.get('outputHeight') or 1920
     aspect = out_w / out_h if out_h else 0.5625
+    if aspect < 1.0:
+        return framing_data  # portrait → bottom everywhere (no side room)
+
     segments = framing_data.get('segments', [])
     face_tracks = framing_data.get('faceTracks', [])
 
     for seg in segments:
         sf, ef = seg['startFrame'], seg['endFrame']
-        present = []  # (sample_count, (cx, cy)) for faces in this segment
-        for ft in face_tracks:
-            c, n = _avg_face_center(ft.get('samples', []), sf, ef)
-            if c and n >= 2:
-                present.append((n, c))
-        if not present or aspect < 1.0 or len(present) >= 2:
-            continue  # no face / portrait / multi-person → default bottom
-
-        present.sort(reverse=True)  # dominant = most-present face
-        scx, _scy = present[0][1]
-
-        # Map source x → output x through the segment's crop (fill/track/split
-        # carry cameraKeyframes; fit/general has none → full frame, x preserved).
         crop = seg.get('manualCrop')
         if not crop and seg.get('cameraKeyframes'):
             ks = [k for k in seg['cameraKeyframes'] if sf <= k['frame'] < ef] or seg['cameraKeyframes']
             crop = {k: sum(kf[k] for kf in ks) / len(ks) for k in ('x', 'y', 'w', 'h')}
-        ocx = (scx - crop['x']) / crop['w'] if crop and crop.get('w') else scx
-        ocx = min(1.0, max(0.0, ocx))
 
-        if ocx <= 0.40:
-            seg['captionPlacement'] = {'x': 0.70, 'y': 0.55, 'maxWidthPct': 0.5}
-        elif ocx >= 0.60:
-            seg['captionPlacement'] = {'x': 0.30, 'y': 0.55, 'maxWidthPct': 0.5}
-        # else: speaker is centered → leave default (bottom)
+        # Occupied x-intervals from EVERY face present, mapped to output + margin.
+        occ = []
+        for ft in face_tracks:
+            pts = [(s['x'] + s['w'] / 2.0, s['w']) for s in ft.get('samples', [])
+                   if sf <= s['frame'] < ef]
+            if len(pts) < 2:
+                continue
+            scx = sum(p[0] for p in pts) / len(pts)
+            sw = sum(p[1] for p in pts) / len(pts)
+            if crop and crop.get('w'):
+                ocx = (scx - crop['x']) / crop['w']
+                ohw = (sw / 2.0) / crop['w']
+            else:
+                ocx, ohw = scx, sw / 2.0
+            occ.append((max(0.0, ocx - ohw - MARGIN), min(1.0, ocx + ohw + MARGIN)))
+        if not occ:
+            continue  # no faces → bottom
+
+        # Merge occupied intervals; the free gaps are their complement in [0,1].
+        occ.sort()
+        merged = [list(occ[0])]
+        for a, b in occ[1:]:
+            if a <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], b)
+            else:
+                merged.append([a, b])
+        gaps = []  # (width, start, end)
+        cursor = 0.0
+        for a, b in merged:
+            if a - cursor > 0:
+                gaps.append((a - cursor, cursor, a))
+            cursor = max(cursor, b)
+        if 1.0 - cursor > 0:
+            gaps.append((1.0 - cursor, cursor, 1.0))
+        if not gaps:
+            continue  # faces span the width → bottom
+
+        gw, ga, gb = max(gaps)
+        if gw >= MIN_GAP:
+            seg['captionPlacement'] = {
+                'x': round((ga + gb) / 2.0, 3),
+                'y': 0.5,
+                'maxWidthPct': round(min(0.6, gw * 0.9), 3),
+            }
+        # else: widest gap too narrow → leave default (bottom)
     return framing_data
 
 
