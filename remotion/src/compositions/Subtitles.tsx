@@ -486,7 +486,28 @@ export const Subtitles: React.FC<SubtitlesProps> = ({ config }) => {
         maxChars: config.style.maxWords * 14,
       }
     : template.grouping;
-  const blocks = groupCaptionsIntoBlocks(config.captions, grouping);
+  // A grouped block can straddle a clip boundary (a manual split or trailer cut
+  // mid-phrase), and its words may then carry DIFFERENT per-clip placements.
+  // Split each block into runs of same-placement words so every run renders in
+  // its own clip's position instead of all using the first word's.
+  type Block = ReturnType<typeof groupCaptionsIntoBlocks>[number];
+  const splitByPlacement = (block: Block): Block[] => {
+    const out: Block[] = [];
+    let run: Block["words"] = [];
+    const flush = () => {
+      if (run.length) out.push({ words: run, startMs: run[0].startMs, endMs: run[run.length - 1].endMs, text: run.map((w) => w.text).join(" ") });
+    };
+    let key: string | null = null;
+    for (const w of block.words) {
+      const k = JSON.stringify(w.placement ?? null);
+      if (run.length && k !== key) { flush(); run = []; }
+      run.push(w);
+      key = k;
+    }
+    flush();
+    return out;
+  };
+  const blocks = groupCaptionsIntoBlocks(config.captions, grouping).flatMap(splitByPlacement);
 
   return (
     <AbsoluteFill>

@@ -278,10 +278,10 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
             }
             return;
         }
-        const next = { ...subs, position: pos };
-        delete next.x;
-        delete next.y;
-        dispatch({ type: 'SET_SUBTITLES', subtitles: next });
+        // All clips: set the global position AND clear per-clip overrides, so the
+        // preset applies everywhere (overrides otherwise win at render and the
+        // change wouldn't show on overridden clips).
+        dispatch({ type: 'APPLY_CAPTION_PLACEMENT_TO_ALL', placement: { position: pos } });
     };
 
     // Clear the current clip's override (back to the global position).
