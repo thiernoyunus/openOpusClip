@@ -181,6 +181,7 @@ function App() {
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, processing, complete, error
   const [results, setResults] = useState(null);
+  const [sortBy, setSortBy] = useState('score'); // 'score' | 'order'
   const [logs, setLogs] = useState([]);
   const [processingMedia, setProcessingMedia] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard'); // dashboard, settings
@@ -1224,6 +1225,22 @@ function App() {
                   </span>
                 )}
                 <div className="ml-auto flex items-center gap-2">
+                  {results?.clips?.length > 1 && (
+                    <div className="flex items-center rounded-lg border border-edge overflow-hidden text-xs">
+                      <button
+                        onClick={() => setSortBy('score')}
+                        className={`px-2.5 py-1.5 transition-colors ${sortBy === 'score' ? 'bg-surface2 text-fg' : 'text-muted hover:text-fg'}`}
+                      >
+                        Virality
+                      </button>
+                      <button
+                        onClick={() => setSortBy('order')}
+                        className={`px-2.5 py-1.5 border-l border-edge transition-colors ${sortBy === 'order' ? 'bg-surface2 text-fg' : 'text-muted hover:text-fg'}`}
+                      >
+                        Original
+                      </button>
+                    </div>
+                  )}
                   <button
                     onClick={() => setShowProcessingModal(true)}
                     className="flex items-center gap-1.5 text-xs text-muted hover:text-fg border border-edge hover:bg-white/5 px-2.5 py-1.5 rounded-lg transition-colors"
@@ -1244,11 +1261,18 @@ function App() {
               <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
                 {results.clips && results.clips.length > 0 ? (
                   <div className="grid gap-x-4 gap-y-6 pb-10 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-                    {results.clips.map((clip, i) => (
+                    {results.clips
+                      .map((clip, i) => ({ clip, i }))
+                      .sort((a, b) => sortBy === 'score'
+                        ? (Number(b.clip.virality_score) || 0) - (Number(a.clip.virality_score) || 0)
+                        : a.i - b.i)
+                      .map(({ clip, i }, pos, arr) => (
                       <ResultCard
                         key={i}
                         clip={clip}
                         index={i}
+                        prevIndex={pos > 0 ? arr[pos - 1].i : null}
+                        nextIndex={pos < arr.length - 1 ? arr[pos + 1].i : null}
                         jobId={jobId}
                         uploadPostKey={uploadPostKey}
                         uploadUserId={uploadUserId}
