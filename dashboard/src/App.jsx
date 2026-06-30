@@ -1266,11 +1266,13 @@ function App() {
                       .sort((a, b) => sortBy === 'score'
                         ? (Number(b.clip.virality_score) || 0) - (Number(a.clip.virality_score) || 0)
                         : a.i - b.i)
-                      .map(({ clip, i }) => (
+                      .map(({ clip, i }, pos, arr) => (
                       <ResultCard
                         key={i}
                         clip={clip}
                         index={i}
+                        prevIndex={pos > 0 ? arr[pos - 1].i : null}
+                        nextIndex={pos < arr.length - 1 ? arr[pos + 1].i : null}
                         jobId={jobId}
                         uploadPostKey={uploadPostKey}
                         uploadUserId={uploadUserId}

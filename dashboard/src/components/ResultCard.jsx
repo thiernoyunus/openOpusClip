@@ -38,7 +38,7 @@ const ScoreBadge = ({ score, lg, box }) => {
 
 const BREAKDOWN_LABELS = { hook: 'Hook', flow: 'Flow', value: 'Value', trend: 'Trend' };
 
-export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUserId, geminiApiKey, elevenLabsKey, onPlay, onPause, openIndex, setOpenIndex, totalClips, onEdit }) {
+export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, uploadPostKey, uploadUserId, geminiApiKey, elevenLabsKey, onPlay, onPause, openIndex, setOpenIndex, totalClips, onEdit }) {
     const isOpen = openIndex === index;
     const [showModal, setShowModal] = useState(false);
     const [showSubtitleModal, setShowSubtitleModal] = useState(false);
@@ -522,8 +522,8 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
             {isOpen && (
                 <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-[fadeIn_0.2s_ease-out]" onClick={() => setOpenIndex(null)}>
                     <div className="absolute top-5 right-5 flex items-center gap-2 z-10">
-                        <button disabled={index <= 0} onClick={(e) => { e.stopPropagation(); setOpenIndex(index - 1); }} className="w-9 h-9 rounded-lg bg-surface2 border border-edge text-fg flex items-center justify-center hover:bg-white/10 disabled:opacity-40 transition-colors" aria-label="Previous clip"><ArrowUp size={16} /></button>
-                        <button disabled={index >= totalClips - 1} onClick={(e) => { e.stopPropagation(); setOpenIndex(index + 1); }} className="w-9 h-9 rounded-lg bg-surface2 border border-edge text-fg flex items-center justify-center hover:bg-white/10 disabled:opacity-40 transition-colors" aria-label="Next clip"><ArrowDown size={16} /></button>
+                        <button disabled={prevIndex === null} onClick={(e) => { e.stopPropagation(); setOpenIndex(prevIndex); }} className="w-9 h-9 rounded-lg bg-surface2 border border-edge text-fg flex items-center justify-center hover:bg-white/10 disabled:opacity-40 transition-colors" aria-label="Previous clip"><ArrowUp size={16} /></button>
+                        <button disabled={nextIndex === null} onClick={(e) => { e.stopPropagation(); setOpenIndex(nextIndex); }} className="w-9 h-9 rounded-lg bg-surface2 border border-edge text-fg flex items-center justify-center hover:bg-white/10 disabled:opacity-40 transition-colors" aria-label="Next clip"><ArrowDown size={16} /></button>
                         <button onClick={(e) => { e.stopPropagation(); setOpenIndex(null); }} className="w-9 h-9 rounded-lg bg-surface2 border border-edge text-fg flex items-center justify-center hover:bg-white/10 transition-colors" aria-label="Close"><X size={16} /></button>
                     </div>
 
