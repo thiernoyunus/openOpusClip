@@ -440,7 +440,10 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
 
     const title = clip.video_title_for_youtube_short || `Viral clip ${index + 1}`;
     const description = clip.video_description_for_tiktok || clip.video_description_for_instagram || '';
-    const hasScore = typeof clip.virality_score === 'number';
+    // LLM may return stringified numbers — coerce defensively
+    const num = (v) => (v === undefined || v === null || v === '' || isNaN(Number(v)) ? NaN : Number(v));
+    const viralityScore = num(clip.virality_score);
+    const hasScore = !isNaN(viralityScore);
     const breakdown = clip.score_breakdown || {};
     const transcriptText = captions.map((c) => c.text).join(' ');
     const durSec = Math.floor(clipDuration);
@@ -477,7 +480,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                     />
                     <span className="absolute top-2 left-2 bg-black/65 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">Clip {index + 1}</span>
                     <span className="absolute top-2 right-2 bg-black/65 text-white text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums">{fmtTime(durSec)}</span>
-                    {hasScore && <div className="absolute bottom-2 left-2"><ScoreBadge score={clip.virality_score} box /></div>}
+                    {hasScore && <div className="absolute bottom-2 left-2"><ScoreBadge score={viralityScore} box /></div>}
 
                     {!playing && (
                         <div className="absolute inset-0 flex items-center justify-center bg-black/10 group-hover:bg-black/25 transition-colors pointer-events-none">
@@ -535,19 +538,20 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                         <div className="flex-1 min-w-0 p-5 overflow-y-auto custom-scrollbar">
                             <h2 className="text-base font-medium text-fg leading-snug">{title}</h2>
                             <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
-                                {hasScore && <ScoreBadge score={clip.virality_score} />}
+                                {hasScore && <ScoreBadge score={viralityScore} />}
                                 {clip.viral_hook_text && <span className="inline-flex items-center gap-1 text-[11px] text-muted bg-surface2 border border-edge px-2 py-0.5 rounded"><Wand2 size={11} /> Hook</span>}
                                 <span className="text-[11px] text-muted bg-surface2 border border-edge px-2 py-0.5 rounded tabular-nums">{durSec}s</span>
                             </div>
                             {hasScore && (
                                 <div className="mt-4 p-3 bg-surface2 border border-edge rounded-lg">
                                     <div className="flex items-center justify-between mb-2.5">
-                                        <span className="flex items-center gap-1.5 text-xs font-medium text-fg"><Flame size={13} className={scoreTheme(clip.virality_score).text} /> Virality score</span>
-                                        <span className={`text-lg font-bold tabular-nums ${scoreTheme(clip.virality_score).text}`}>{clip.virality_score}</span>
+                                        <span className="flex items-center gap-1.5 text-xs font-medium text-fg"><Flame size={13} className={scoreTheme(viralityScore).text} /> Virality score</span>
+                                        <span className={`text-lg font-bold tabular-nums ${scoreTheme(viralityScore).text}`}>{viralityScore}</span>
                                     </div>
                                     <div className="space-y-1.5">
                                         {Object.keys(BREAKDOWN_LABELS).map((k) => {
-                                            const v = typeof breakdown[k] === 'number' ? breakdown[k] : 0;
+                                            const pv = num(breakdown[k]);
+                                            const v = isNaN(pv) ? 0 : pv;
                                             return (
                                                 <div key={k} className="flex items-center gap-2">
                                                     <span className="text-[10px] text-muted w-9 shrink-0">{BREAKDOWN_LABELS[k]}</span>
