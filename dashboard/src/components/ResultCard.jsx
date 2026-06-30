@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Type, Calendar, Clock, Languages, Play, ArrowUp, ArrowDown, FileText, Crop } from 'lucide-react';
+import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Type, Calendar, Clock, Languages, Play, ArrowUp, ArrowDown, FileText, Crop, Flame } from 'lucide-react';
 import { getApiUrl } from '../config';
 import SubtitleModal from './SubtitleModal';
 import HookModal from './HookModal';
@@ -10,6 +10,33 @@ const fmtTime = (s) => {
     s = Math.max(0, Math.floor(s || 0));
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
+
+// Virality score → full Tailwind class strings (kept static so the JIT can see them)
+const scoreTheme = (score) => {
+    if (score >= 80) return { text: 'text-emerald-400', border: 'border-emerald-500/60', bar: 'bg-emerald-400' };
+    if (score >= 60) return { text: 'text-amber-400', border: 'border-amber-500/60', bar: 'bg-amber-400' };
+    return { text: 'text-orange-400', border: 'border-orange-500/60', bar: 'bg-orange-400' };
+};
+
+// Solid dark fill + bright colored number + colored border = readable on any frame
+const ScoreBadge = ({ score, lg, box }) => {
+    const t = scoreTheme(score);
+    // OpusClip-style: big bold number in a solid boxed badge with a colored border
+    if (box) {
+        return (
+            <span className={`inline-flex flex-col items-center justify-center bg-black/85 ${t.text} border-2 ${t.border} rounded-lg shadow-md w-12 h-12 leading-none`}>
+                <span className="text-xl font-extrabold tabular-nums">{score}</span>
+            </span>
+        );
+    }
+    return (
+        <span className={`inline-flex items-center gap-1 bg-black/85 ${t.text} border ${t.border} font-bold rounded-md tabular-nums shadow-sm ${lg ? 'text-sm px-2 py-1' : 'text-xs px-1.5 py-1'}`}>
+            <Flame size={lg ? 13 : 12} /> {score}
+        </span>
+    );
+};
+
+const BREAKDOWN_LABELS = { hook: 'Hook', flow: 'Flow', value: 'Value', trend: 'Trend' };
 
 export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUserId, geminiApiKey, elevenLabsKey, onPlay, onPause, openIndex, setOpenIndex, totalClips, onEdit }) {
     const isOpen = openIndex === index;
@@ -413,6 +440,11 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
 
     const title = clip.video_title_for_youtube_short || `Viral clip ${index + 1}`;
     const description = clip.video_description_for_tiktok || clip.video_description_for_instagram || '';
+    // LLM may return stringified numbers — coerce defensively
+    const num = (v) => (v === undefined || v === null || v === '' || isNaN(Number(v)) ? NaN : Number(v));
+    const viralityScore = num(clip.virality_score);
+    const hasScore = !isNaN(viralityScore);
+    const breakdown = clip.score_breakdown || {};
     const transcriptText = captions.map((c) => c.text).join(' ');
     const durSec = Math.floor(clipDuration);
 
@@ -448,6 +480,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                     />
                     <span className="absolute top-2 left-2 bg-black/65 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">Clip {index + 1}</span>
                     <span className="absolute top-2 right-2 bg-black/65 text-white text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums">{fmtTime(durSec)}</span>
+                    {hasScore && <div className="absolute bottom-2 left-2"><ScoreBadge score={viralityScore} box /></div>}
 
                     {!playing && (
                         <div className="absolute inset-0 flex items-center justify-center bg-black/10 group-hover:bg-black/25 transition-colors pointer-events-none">
@@ -505,9 +538,34 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                         <div className="flex-1 min-w-0 p-5 overflow-y-auto custom-scrollbar">
                             <h2 className="text-base font-medium text-fg leading-snug">{title}</h2>
                             <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+                                {hasScore && <ScoreBadge score={viralityScore} />}
                                 {clip.viral_hook_text && <span className="inline-flex items-center gap-1 text-[11px] text-muted bg-surface2 border border-edge px-2 py-0.5 rounded"><Wand2 size={11} /> Hook</span>}
                                 <span className="text-[11px] text-muted bg-surface2 border border-edge px-2 py-0.5 rounded tabular-nums">{durSec}s</span>
                             </div>
+                            {hasScore && (
+                                <div className="mt-4 p-3 bg-surface2 border border-edge rounded-lg">
+                                    <div className="flex items-center justify-between mb-2.5">
+                                        <span className="flex items-center gap-1.5 text-xs font-medium text-fg"><Flame size={13} className={scoreTheme(viralityScore).text} /> Virality score</span>
+                                        <span className={`text-lg font-bold tabular-nums ${scoreTheme(viralityScore).text}`}>{viralityScore}</span>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        {Object.keys(BREAKDOWN_LABELS).map((k) => {
+                                            const pv = num(breakdown[k]);
+                                            const v = isNaN(pv) ? 0 : pv;
+                                            return (
+                                                <div key={k} className="flex items-center gap-2">
+                                                    <span className="text-[10px] text-muted w-9 shrink-0">{BREAKDOWN_LABELS[k]}</span>
+                                                    <div className="flex-1 h-1.5 bg-black/40 rounded-full overflow-hidden">
+                                                        <div className={`h-full rounded-full ${scoreTheme(v).bar}`} style={{ width: `${Math.max(0, Math.min(100, v))}%` }} />
+                                                    </div>
+                                                    <span className="text-[10px] text-muted w-6 text-right tabular-nums">{v}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    {clip.virality_reason && <p className="text-[11px] text-muted leading-relaxed mt-2.5">{clip.virality_reason}</p>}
+                                </div>
+                            )}
                             {description && <p className="text-sm text-muted leading-relaxed mt-4">{description}</p>}
                             {transcriptText && (
                                 <div className="mt-5">
