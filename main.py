@@ -19,6 +19,7 @@ from google import genai
 from dotenv import load_dotenv
 import json
 from transcription import WHISPER_MODELS, transcribe
+from ffmpeg_utils import video_codec_args
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module='google.protobuf')
@@ -1035,7 +1036,7 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
         '-s', f'{OUTPUT_WIDTH}x{OUTPUT_HEIGHT}', '-pix_fmt', 'bgr24',
         '-r', str(fps), '-i', '-',
         '-vf', 'unsharp=5:5:1.5,eq=brightness=0.06:contrast=1.1:saturation=1.15',
-        '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-an', temp_video_output
+        *video_codec_args('final'), '-an', temp_video_output
     ]
 
     ffmpeg_process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -2092,8 +2093,7 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
             '-ss', str(start),
             '-to', str(end),
             '-i', input_video,
-            '-c:v', 'libx264', '-crf', '12', '-preset', 'ultrafast',
-            '-g', '15', '-keyint_min', '15', '-sc_threshold', '0',
+            *video_codec_args('intermediate', keyframe_interval=15),
             '-af', afade,
             '-c:a', 'aac',
             seg_path,
@@ -2140,8 +2140,7 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
             'ffmpeg', '-y',
             '-f', 'concat', '-safe', '0',
             '-i', concat_txt,
-            '-c:v', 'libx264', '-crf', '12', '-preset', 'ultrafast',
-            '-g', '15', '-keyint_min', '15', '-sc_threshold', '0',
+            *video_codec_args('intermediate', keyframe_interval=15),
             '-c:a', 'aac',
             trailer_source,
         ]
@@ -2404,8 +2403,7 @@ if __name__ == '__main__':
                 # seeks decode fast — long GOPs cause a multi-second black
                 # flash on layout switch in the live preview. Negligible
                 # size cost; this cut also serves as the editor-source fallback.
-                '-c:v', 'libx264', '-crf', '12', '-preset', 'ultrafast',
-                '-g', '15', '-keyint_min', '15', '-sc_threshold', '0',
+                *video_codec_args('intermediate', keyframe_interval=15),
                 '-c:a', 'aac',
                 clip_cut_path
             ]
@@ -2422,8 +2420,7 @@ if __name__ == '__main__':
                 '-i', input_video,
                 # Dense keyframes so the editor (which seeks this padded
                 # source constantly) repaints fast after a layout switch.
-                '-c:v', 'libx264', '-crf', '12', '-preset', 'ultrafast',
-                '-g', '15', '-keyint_min', '15', '-sc_threshold', '0',
+                *video_codec_args('intermediate', keyframe_interval=15),
                 '-c:a', 'aac',
                 clip_source_path
             ]

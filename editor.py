@@ -5,6 +5,7 @@ import subprocess
 import time
 from google import genai
 from google.genai import types
+from ffmpeg_utils import video_codec_args
 
 class VideoEditor:
     def __init__(self, api_key):
@@ -606,7 +607,7 @@ Return ONLY a JSON array of this exact shape:
             'ffmpeg', '-y',
             '-i', input_path,
             '-vf', filter_string,
-            '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
+            *video_codec_args('final'),
             '-c:a', 'copy',
             output_path
         ]
