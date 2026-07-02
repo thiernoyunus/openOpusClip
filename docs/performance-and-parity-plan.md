@@ -9,6 +9,24 @@ everything else (Studio, AI Agent tab) gets hidden, not built on.
 (timeline) → Track C (models/emotion) → remaining UX polish. Tasks within a track are
 independent unless noted. One task = one branch = one PR (per CLAUDE.md).
 
+### Status (updated 2026-07-02, overnight run)
+Shipped as open PRs off `main` — each verified as far as possible without a running job:
+- **A1** ✅ PR #47 — VideoToolbox HW encoding (`ffmpeg_utils.py`)
+- **A2 + A10** ✅ PR #48 — compact clip prompt + structured JSON output
+- **A8** ✅ PR #49 — right-size Gemini models (judge + editor text tasks)
+- **A3** ✅ PR #50 — downscale detection + cheaper resizes
+- **A7** ✅ PR #51 — cache dubbed-video transcription
+- **A6** ✅ PR #52 — cache Gemini Files-API uploads
+
+Not yet done (need a full clipping/trailer job + your eyes to verify safely — do NOT merge blind):
+- **A4** (parallelize per-clip loop) & **A9** (fold decode passes) — real risk of corrupt/misordered
+  output; must run an end-to-end job to verify. **A5** parallel trailer cuts (the CRF half is
+  covered by A1's videotoolbox path).
+- **Tracks B, C, D** — all need the running app/editor to verify.
+
+Verify the shipped PRs by running one clipping job + one trailer job; the encoding PRs are the
+ones to watch (editor black-flash on the dense-keyframe path). `OPENSHORTS_HWACCEL=0` reverts A1.
+
 ---
 
 ## Track A — Pipeline performance (speed + cost)
