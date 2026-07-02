@@ -127,6 +127,20 @@ def _cand(script, last_text):
     return {'script': script, 'moments_ordered': [{'text': last_text}]}
 
 
+def test_sentence_grouping_skips_words_with_missing_timestamps():
+    # Bad ASR output can yield words with start/end=None; must not crash and
+    # must not corrupt sentence boundaries around the gap.
+    words = [
+        {'word': 'This', 'start': 0.0, 'end': 0.3},
+        {'word': 'is', 'start': 0.35, 'end': 0.5},
+        {'word': 'broken', 'start': None, 'end': None},
+        {'word': 'one.', 'start': 0.55, 'end': 0.9},
+    ]
+    tr = {'segments': [{'words': words}]}
+    sents = _build_sentence_transcript(tr)  # must not raise
+    assert sents[0]['text'] == 'This is one.'
+
+
 def test_deterministic_pick_prefers_clean_and_cliffhanger():
     # cand0: filler-heavy + resolved ending; cand1: clean + open-question ending.
     cand0 = _cand("Okay yeah exactly uh the money doubles. Sunken cost fallacy.",

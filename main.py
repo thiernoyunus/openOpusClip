@@ -1494,6 +1494,8 @@ def _build_sentence_transcript(transcript_result):
     prev_end = None
     for segment in transcript_result['segments']:
         for w in segment.get('words', []):
+            if w.get('start') is None or w.get('end') is None:
+                continue  # skip words with missing timestamps (bad ASR output)
             if cur and prev_end is not None and float(w['start']) - prev_end > 1.2:
                 flush()
             cur.append(w)
@@ -1819,6 +1821,8 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
     refine_words = []
     for segment in transcript_result['segments']:
         for word in segment.get('words', []):
+            if word.get('start') is None or word.get('end') is None:
+                continue  # skip words with missing timestamps (bad ASR output)
             refine_words.append({
                 'word': word['word'],
                 'start': word['start'],
