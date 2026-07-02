@@ -23,12 +23,12 @@ const ASPECT_RATIOS = [
   { value: '16:9', label: '16:9 · Landscape' },
 ];
 
-// Pace presets mirror main.TRAILER_PACE_PRESETS. All keep the rapid ~3s-cut DOAC
-// montage feel; the preset only scales how many cuts (= total length).
+// Pace presets mirror main.TRAILER_PACE_PRESETS. Moments are coherent complete
+// thoughts (~4-10s); the preset scales how many beats the trailer holds.
 const PACES = [
-  { value: 'punchy', label: 'Punchy · ~35s, fast cuts' },
+  { value: 'punchy', label: 'Punchy · ~35s, tightest' },
   { value: 'standard', label: 'Standard · ~60s (recommended)' },
-  { value: 'extended', label: 'Extended · ~90s montage' },
+  { value: 'extended', label: 'Extended · ~90s' },
 ];
 
 // Same decryption used by App.jsx to read the Soniox key out of localStorage,
@@ -324,8 +324,8 @@ export default function TrailerPage() {
             Podcast Trailer
           </h1>
           <p className="text-zinc-400 mt-2 leading-relaxed">
-            Turn a full podcast episode into one gripping cold-open trailer. The AI cuts the best
-            moments into a fast, Diary-of-a-CEO-style montage that ends on a cliffhanger — then drops
+            Turn a full podcast episode into one gripping cold-open trailer. The AI scripts the best
+            moments into a coherent Diary-of-a-CEO-style story that ends on a cliffhanger — then drops
             you into the editor to fine-tune.
           </p>
         </div>
@@ -462,7 +462,7 @@ export default function TrailerPage() {
                 ))}
               </select>
               <span className="block text-[11px] text-zinc-500 mt-2">
-                All keep DOAC-style rapid cuts — longer just means more cuts, not slower ones.
+                All follow the DOAC story arc — longer just holds more beats, not slower ones.
               </span>
             </label>
 
