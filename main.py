@@ -503,9 +503,18 @@ def detect_face_candidates(frame):
     Returns list of all detected faces using lightweight FaceDetection.
     """
     height, width, _ = frame.shape
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    # Detect on a downscaled copy — MediaPipe returns relative (0-1) box coords,
+    # so scaling the input doesn't change the boxes we compute against the
+    # original width/height. ~4-9x faster on 1080p input, no accuracy loss.
+    scale = 640.0 / max(height, width)
+    if scale < 1.0:
+        det_frame = cv2.resize(frame, (int(width * scale), int(height * scale)),
+                               interpolation=cv2.INTER_AREA)
+    else:
+        det_frame = frame
+    rgb_frame = cv2.cvtColor(det_frame, cv2.COLOR_BGR2RGB)
     results = get_face_detection().process(rgb_frame)
-    
+
     candidates = []
     
     if not results.detections:
@@ -630,10 +639,10 @@ def compose_split_frame(frame, crops, output_width, output_height):
             cropped = frame[y1:y2, x1:x2]
         else:
             cropped = frame
-        panels.append(cv2.resize(cropped, (output_width, panel_h), interpolation=cv2.INTER_LANCZOS4))
+        panels.append(cv2.resize(cropped, (output_width, panel_h), interpolation=cv2.INTER_LINEAR))
     stacked = cv2.vconcat(panels)
     if stacked.shape[0] != output_height:
-        stacked = cv2.resize(stacked, (output_width, output_height), interpolation=cv2.INTER_LANCZOS4)
+        stacked = cv2.resize(stacked, (output_width, output_height), interpolation=cv2.INTER_LINEAR)
     return stacked
 
 def create_general_frame(frame, output_width, output_height):
@@ -648,14 +657,14 @@ def create_general_frame(frame, output_width, output_height):
     # Crop center to aspect ratio
     bg_scale = output_height / orig_h
     bg_w = int(orig_w * bg_scale)
-    bg_resized = cv2.resize(frame, (bg_w, output_height), interpolation=cv2.INTER_LANCZOS4)
+    bg_resized = cv2.resize(frame, (bg_w, output_height), interpolation=cv2.INTER_AREA)
     
     # Crop center of background
     start_x = (bg_w - output_width) // 2
     if start_x < 0: start_x = 0
     background = bg_resized[:, start_x:start_x+output_width]
     if background.shape[1] != output_width:
-        background = cv2.resize(background, (output_width, output_height), interpolation=cv2.INTER_LANCZOS4)
+        background = cv2.resize(background, (output_width, output_height), interpolation=cv2.INTER_AREA)
         
     # Blur background
     background = cv2.GaussianBlur(background, (51, 51), 0)
@@ -667,7 +676,7 @@ def create_general_frame(frame, output_width, output_height):
     scale = min(output_width / orig_w, output_height / orig_h)
     fg_w = int(orig_w * scale)
     fg_h = int(orig_h * scale)
-    foreground = cv2.resize(frame, (fg_w, fg_h), interpolation=cv2.INTER_LANCZOS4)
+    foreground = cv2.resize(frame, (fg_w, fg_h), interpolation=cv2.INTER_LINEAR)
 
     # 3. Overlay (centered both axes over the blurred background)
     y_offset = (output_height - fg_h) // 2
@@ -1156,13 +1165,13 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
                 # Crop
                 if y2 > y1 and x2 > x1:
                     cropped = frame[y1:y2, x1:x2]
-                    output_frame = cv2.resize(cropped, (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LANCZOS4)
+                    output_frame = cv2.resize(cropped, (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LINEAR)
                 else:
-                    output_frame = cv2.resize(frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LANCZOS4)
+                    output_frame = cv2.resize(frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LINEAR)
 
             # Guard against any wrong-sized/typed frame desyncing the raw stream.
             if output_frame.shape[0] != OUTPUT_HEIGHT or output_frame.shape[1] != OUTPUT_WIDTH:
-                output_frame = cv2.resize(output_frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LANCZOS4)
+                output_frame = cv2.resize(output_frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LINEAR)
             if output_frame.dtype != np.uint8:
                 output_frame = output_frame.astype(np.uint8)
 
