@@ -136,6 +136,11 @@ TRAILER_PACE_PRESETS = {
 # real fix. Env-overridable so we can A/B 3-flash vs 3.5-flash without a code edit.
 TRAILER_MODEL = os.environ.get('TRAILER_MODEL', 'gemini-3.5-flash')
 
+# The judge only picks the best index from a shortlist — a cheap task that
+# doesn't need the expensive selection model (3.5-flash is 15x the input price
+# of 2.5-flash). Env-overridable.
+TRAILER_JUDGE_MODEL = os.environ.get('TRAILER_JUDGE_MODEL', 'gemini-2.5-flash')
+
 # How many candidate selections to sample. 1 = single-shot (the judge is skipped).
 # Best-of-N only helps against random variance, not the systematic biases above,
 # so we run single-shot on the better model. Bump this to re-enable best-of-N.
@@ -1865,7 +1870,7 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
         best = 0
         print("   🧑‍⚖️ Only one usable candidate; skipping judge.")
     else:
-        best = _judge_trailer_candidates(client, model_name, candidates)
+        best = _judge_trailer_candidates(client, TRAILER_JUDGE_MODEL, candidates)
     winner = candidates[best]
     moments = winner['moments_ordered']
     script = winner['script']

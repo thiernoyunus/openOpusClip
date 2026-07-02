@@ -9,7 +9,9 @@ from google.genai import types
 class VideoEditor:
     def __init__(self, api_key):
         self.client = genai.Client(api_key=api_key)
-        self.model_name = "gemini-3-flash-preview" 
+        self.model_name = "gemini-3-flash-preview"
+        # Cheap model for tiny text-only tasks (caption emoji, b-roll keywords).
+        self.text_model_name = os.environ.get("EDITOR_TEXT_MODEL", "gemini-2.5-flash-lite")
 
     def upload_video(self, video_path):
         """Uploads video to Gemini File API."""
@@ -288,7 +290,7 @@ Return ONLY JSON of this exact shape:
 
         try:
             response = self.client.models.generate_content(
-                model=self.model_name,
+                model=self.text_model_name,
                 contents=[prompt],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
@@ -436,7 +438,7 @@ Return ONLY a JSON array of this exact shape:
 
         try:
             response = self.client.models.generate_content(
-                model=self.model_name,
+                model=self.text_model_name,
                 contents=[prompt],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
