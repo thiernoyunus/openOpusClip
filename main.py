@@ -16,6 +16,7 @@ from tqdm import tqdm
 import yt_dlp
 # import whisper (replaced by faster_whisper inside function)
 from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 import json
 from transcription import WHISPER_MODELS, transcribe
@@ -54,7 +55,7 @@ VIDEO_DURATION_SECONDS: {video_duration}
 TRANSCRIPT_TEXT (raw):
 {transcript_text}
 
-WORDS_JSON (array of {{w, s, e}} where s/e are seconds):
+WORDS_JSON (array of [word, start, end] where start/end are seconds):
 {words_json}
 
 STRICT EXCLUSIONS:
@@ -1361,15 +1362,17 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
     
     print(f"🤖  Initializing Gemini with model: {model_name}")
 
-    # Extract words
+    # Extract words as compact [word, start, end] arrays (rounded to 2dp) —
+    # ~40-50% fewer prompt tokens than verbose {w,s,e} dicts, same information.
     words = []
     for segment in transcript_result['segments']:
         for word in segment.get('words', []):
-            words.append({
-                'w': word['word'],
-                's': word['start'],
-                'e': word['end']
-            })
+            s, e = word.get('start'), word.get('end')
+            words.append([
+                word['word'],
+                round(s, 2) if s is not None else s,
+                round(e, 2) if e is not None else e,
+            ])
 
     user_focus = ""
     if moment_prompt and moment_prompt.strip():
@@ -1382,7 +1385,7 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
     prompt = GEMINI_PROMPT_TEMPLATE.format(
         video_duration=video_duration,
         transcript_text=json.dumps(transcript_result['text']),
-        words_json=json.dumps(words),
+        words_json=json.dumps(words, separators=(',', ':')),
         min_len=min_clip_length,
         max_len=max_clip_length,
         user_focus=user_focus,
@@ -1393,9 +1396,10 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
         try:
             response = client.models.generate_content(
                 model=model_name,
-                contents=prompt
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
             )
-        
+
             # --- Cost Calculation ---
             try:
                 usage = response.usage_metadata
@@ -1705,7 +1709,10 @@ def _generate_trailer_candidate(client, model_name, prompt, sentences,
     last_error = None
     for attempt in range(1, max_retries + 1):
         try:
-            response = client.models.generate_content(model=model_name, contents=prompt)
+            response = client.models.generate_content(
+                model=model_name, contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
             cost_analysis = _trailer_cost(response, model_name)
             result_json = json.loads(_strip_json_fence(response.text))
 
@@ -1777,7 +1784,10 @@ def _judge_trailer_candidates(client, model_name, candidates):
     judge_prompt = TRAILER_JUDGE_TEMPLATE.format(
         n=len(candidates), candidates="\n".join(listing))
     try:
-        resp = client.models.generate_content(model=model_name, contents=judge_prompt)
+        resp = client.models.generate_content(
+            model=model_name, contents=judge_prompt,
+            config=types.GenerateContentConfig(response_mime_type="application/json"),
+        )
         obj = json.loads(_strip_json_fence(resp.text))
         best = int(obj['best'])
         if 0 <= best < len(candidates):
