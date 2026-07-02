@@ -1,6 +1,7 @@
 import os
 import re
 import subprocess
+from ffmpeg_utils import video_codec_args
 
 # Right-to-left scripts (Arabic incl. Persian/Urdu, Hebrew, Syriac, Thaana).
 _RTL_RE = re.compile(r"[֐-׿؀-ۿ܀-ݏݐ-ݿހ-޿ࢠ-ࣿיִ-﷿ﹰ-﻿]")
@@ -224,7 +225,7 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
         '-i', video_path,
         '-vf', f"subtitles='{safe_srt_path}'{fontsdir_clause}:force_style='{style_string}'",
         '-c:a', 'copy',
-        '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
+        *video_codec_args('final'),
         output_path
     ]
 
