@@ -16,17 +16,15 @@ _UPLOAD_CACHE = {}
 
 
 def _file_fingerprint(path):
-    """Stable content fingerprint (size + hash of first/last 1MB) so the cache
-    hits across the per-request temp copies, which have different paths/mtimes.
-    Falls back to (abspath, mtime) if the file can't be read."""
+    """Stable whole-file content hash so the cache hits across the per-request
+    temp copies (different paths/mtimes) without risking a collision between
+    two different same-size clips — these are short clips (~15-60s), so a
+    full hash is cheap. Falls back to (abspath, mtime) if the file can't be read."""
     try:
-        size = os.path.getsize(path)
-        h = hashlib.md5(str(size).encode())
+        h = hashlib.md5()
         with open(path, "rb") as f:
-            h.update(f.read(1024 * 1024))
-            if size > 1024 * 1024:
-                f.seek(-1024 * 1024, os.SEEK_END)
-                h.update(f.read(1024 * 1024))
+            for chunk in iter(lambda: f.read(4 * 1024 * 1024), b""):
+                h.update(chunk)
         return h.hexdigest()
     except OSError:
         return (os.path.abspath(path), os.path.getmtime(path))
