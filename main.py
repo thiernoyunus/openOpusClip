@@ -5,6 +5,7 @@ import subprocess
 import argparse
 import re
 import sys
+import threading
 from scenedetect import open_video, SceneManager
 from scenedetect.detectors import ContentDetector
 import torch
@@ -195,18 +196,20 @@ DOAC_STYLE = {
 ENABLE_YOLO_FALLBACK = os.environ.get("ENABLE_YOLO_FALLBACK", "false").lower() in ("1", "true", "yes")
 # Stable two-person scenes default to the stacked SPLIT layout (Opus-style)
 AUTO_SPLIT_LAYOUT = os.environ.get("AUTO_SPLIT_LAYOUT", "true").lower() in ("1", "true", "yes")
-_yolo_model = None
-_face_detection = None
+# Per-thread detector instances: clips can process in parallel, and neither
+# MediaPipe graphs nor lazy global init are safe to share across threads.
+_detectors = threading.local()
 
 
 def get_face_detection():
-    """Initialize MediaPipe only when video framing actually needs it."""
-    global _face_detection
-    if _face_detection is None:
+    """Initialize MediaPipe only when video framing actually needs it (one
+    instance per worker thread — MediaPipe graphs are not thread-safe)."""
+    det = getattr(_detectors, 'face_detection', None)
+    if det is None:
         import mediapipe as mp
-        mp_face_detection = mp.solutions.face_detection
-        _face_detection = mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
-    return _face_detection
+        det = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+        _detectors.face_detection = det
+    return det
 
 
 def run_logged_command(command, label, output_path=None, check=False, interval=10):
@@ -551,12 +554,13 @@ def detect_person_yolo(frame):
     if not ENABLE_YOLO_FALLBACK:
         return None
 
-    global _yolo_model
-    if _yolo_model is None:
+    model = getattr(_detectors, 'yolo_model', None)
+    if model is None:
         from ultralytics import YOLO
-        _yolo_model = YOLO('yolov8n.pt')
+        model = YOLO('yolov8n.pt')
+        _detectors.yolo_model = model
 
-    results = _yolo_model(frame, verbose=False, classes=[0]) # class 0 is person
+    results = model(frame, verbose=False, classes=[0]) # class 0 is person
     
     if not results:
         return None
@@ -2403,8 +2407,9 @@ if __name__ == '__main__':
             json.dump(clips_data, f, indent=2)
         print(f"   Saved metadata to {metadata_file}")
 
-        # 5. Process each clip
-        for i, clip in enumerate(clips_data['shorts']):
+        # 5. Process each clip. Clips are fully independent (own cuts, own
+        #    output files, thread-local detectors), so run a few in parallel.
+        def process_one_clip(i, clip):
             start = clip['start']
             end = clip['end']
             print(f"\n🎬 Processing Clip {i+1}: {start}s - {end}s")
@@ -2494,6 +2499,34 @@ if __name__ == '__main__':
 
             if success:
                 print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
+            return bool(success)
+
+        def process_one_clip_safe(i, clip):
+            # One clip crashing must not take down its siblings (serially it
+            # aborted the rest of the job; in parallel we finish the survivors).
+            try:
+                return process_one_clip(i, clip)
+            except Exception as e:
+                print(f"   ❌ Clip {i+1} failed: {e}")
+                return False
+
+        # Each worker drives its own ffmpeg decode/encode + detection pipeline,
+        # so a few workers saturate the machine. Tunable; 1 = old serial behavior.
+        clip_workers = int(os.environ.get('OPENSHORTS_CLIP_WORKERS', '0')) \
+            or max(1, min(4, (os.cpu_count() or 8) // 4))
+        shorts = clips_data['shorts']
+        if clip_workers > 1 and len(shorts) > 1:
+            print(f"\n⚡ Processing {len(shorts)} clips with {clip_workers} parallel workers...")
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=clip_workers) as pool:
+                results = list(pool.map(lambda ic: process_one_clip_safe(*ic), enumerate(shorts)))
+        else:
+            results = [process_one_clip_safe(i, c) for i, c in enumerate(shorts)]
+        ok = sum(results)
+        print(f"\n📊 Clips ready: {ok}/{len(shorts)}")
+        if ok == 0:
+            print("❌ No clips could be processed.")
+            sys.exit(2)
 
     # Clean up original if requested
     if args.url and not args.keep_original and os.path.exists(input_video):
