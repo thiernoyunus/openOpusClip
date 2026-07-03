@@ -2100,10 +2100,11 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
     moments_ordered = trailer['moments_ordered']
     print(f"🎞️  Trailer: {len(moments_ordered)} ordered moments.")
 
-    # 3. Cut each moment (playback order) as a re-encoded segment.
-    seg_paths = []
-    seg_frames = []
-    for k, moment in enumerate(moments_ordered):
+    # 3. Cut each moment (playback order) as a re-encoded segment. The cuts are
+    #    independent ffmpeg subprocesses, so run them in parallel (~3-5x on the
+    #    cut phase); frame counts are then measured serially in playback order
+    #    because the concat offset math depends on that ordering.
+    def _cut_segment(k, moment):
         start = float(moment['start'])
         end = float(moment['end'])
         seg_path = os.path.join(output_dir, f"trailer_seg_{k}.mp4")
@@ -2125,7 +2126,17 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
             seg_path,
         ]
         run_logged_command(cut_command, f"Cutting trailer segment {k}", seg_path)
+        return seg_path
 
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        # list() preserves playback order regardless of completion order.
+        seg_paths = list(pool.map(lambda km: _cut_segment(*km), enumerate(moments_ordered)))
+
+    seg_frames = []
+    for k, (seg_path, moment) in enumerate(zip(seg_paths, moments_ordered)):
+        start = float(moment['start'])
+        end = float(moment['end'])
         # Record EXACT frame count via cv2 — do NOT compute (end-start)*fps
         # because ffmpeg -ss/-to are not frame-exact. If cv2 can't open the seg
         # (codec/corrupt cut), fall back to the duration*fps estimate so a 0/neg
@@ -2139,7 +2150,6 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
         if f_k <= 0:
             raise ClipAnalysisError(f"Trailer segment {k} produced no frames ({start:.3f}s-{end:.3f}s).")
         print(f"   📐 Segment {k}: {f_k} frames ({start:.3f}s-{end:.3f}s)")
-        seg_paths.append(seg_path)
         seg_frames.append(f_k)
 
     # 4. Concat (lossless stream copy; re-encode fallback). The trailer source
