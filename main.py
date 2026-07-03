@@ -2399,6 +2399,9 @@ if __name__ == '__main__':
                 '-ss', str(start),
                 '-to', str(end),
                 '-i', input_video,
+                # Force even width/height — yuv420p (video_codec_args) needs it,
+                # and source videos (local uploads, some downloads) can be odd-sized.
+                '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
                 # Dense keyframes (every 0.5s @30fps) so the web editor's
                 # seeks decode fast — long GOPs cause a multi-second black
                 # flash on layout switch in the live preview. Negligible
@@ -2418,6 +2421,8 @@ if __name__ == '__main__':
                 '-ss', str(pad_start),
                 '-to', str(pad_end),
                 '-i', input_video,
+                # Force even width/height — see the unpadded-cut comment above.
+                '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
                 # Dense keyframes so the editor (which seeks this padded
                 # source constantly) repaints fast after a layout switch.
                 *video_codec_args('intermediate', keyframe_interval=15),
