@@ -2133,6 +2133,15 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
         # list() preserves playback order regardless of completion order.
         seg_paths = list(pool.map(lambda km: _cut_segment(*km), enumerate(moments_ordered)))
 
+    # Fail fast if any cut silently failed (run_logged_command doesn't raise):
+    # a missing/empty segment would otherwise corrupt the offset math and crash
+    # much later, deep inside concat/scenedetect, with a confusing traceback.
+    for k, seg_path in enumerate(seg_paths):
+        if not os.path.exists(seg_path) or os.path.getsize(seg_path) == 0:
+            m = moments_ordered[k]
+            raise ClipAnalysisError(
+                f"Trailer segment {k} failed to cut ({float(m['start']):.3f}s-{float(m['end']):.3f}s).")
+
     seg_frames = []
     for k, (seg_path, moment) in enumerate(zip(seg_paths, moments_ordered)):
         start = float(moment['start'])
