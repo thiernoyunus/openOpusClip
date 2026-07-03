@@ -1,15 +1,35 @@
 import os
 import json
 import re
+import hashlib
 import subprocess
 import time
 from google import genai
 from google.genai import types
 
-# Process-wide cache of Gemini Files-API uploads, keyed by (abspath, mtime).
+# Process-wide cache of Gemini Files-API uploads, keyed by a content fingerprint.
 # Gemini file handles live ~48h, so repeat edits/effects on the same clip can
 # reuse the upload instead of re-uploading + re-processing the whole video.
+# NOTE: /api/edit and /api/effects copy the clip to a fresh temp file per
+# request, so path+mtime would ALWAYS miss — we fingerprint content instead.
 _UPLOAD_CACHE = {}
+
+
+def _file_fingerprint(path):
+    """Stable content fingerprint (size + hash of first/last 1MB) so the cache
+    hits across the per-request temp copies, which have different paths/mtimes.
+    Falls back to (abspath, mtime) if the file can't be read."""
+    try:
+        size = os.path.getsize(path)
+        h = hashlib.md5(str(size).encode())
+        with open(path, "rb") as f:
+            h.update(f.read(1024 * 1024))
+            if size > 1024 * 1024:
+                f.seek(-1024 * 1024, os.SEEK_END)
+                h.update(f.read(1024 * 1024))
+        return h.hexdigest()
+    except OSError:
+        return (os.path.abspath(path), os.path.getmtime(path))
 
 
 class VideoEditor:
@@ -25,8 +45,8 @@ class VideoEditor:
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
-        # Reuse a prior upload of this exact file if it's still ACTIVE.
-        cache_key = (os.path.abspath(video_path), os.path.getmtime(video_path))
+        # Reuse a prior upload of this exact file (by content) if it's still ACTIVE.
+        cache_key = _file_fingerprint(video_path)
         cached_name = _UPLOAD_CACHE.get(cache_key)
         if cached_name:
             try:
