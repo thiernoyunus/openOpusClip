@@ -1,11 +1,35 @@
 import os
 import json
 import re
+import hashlib
 import subprocess
 import time
 from google import genai
 from google.genai import types
 from ffmpeg_utils import video_codec_args
+
+# Process-wide cache of Gemini Files-API uploads, keyed by a content fingerprint.
+# Gemini file handles live ~48h, so repeat edits/effects on the same clip can
+# reuse the upload instead of re-uploading + re-processing the whole video.
+# NOTE: /api/edit and /api/effects copy the clip to a fresh temp file per
+# request, so path+mtime would ALWAYS miss — we fingerprint content instead.
+_UPLOAD_CACHE = {}
+
+
+def _file_fingerprint(path):
+    """Stable whole-file content hash so the cache hits across the per-request
+    temp copies (different paths/mtimes) without risking a collision between
+    two different same-size clips — these are short clips (~15-60s), so a
+    full hash is cheap. Falls back to (abspath, mtime) if the file can't be read."""
+    try:
+        h = hashlib.md5()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(4 * 1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return (os.path.abspath(path), os.path.getmtime(path))
+
 
 class VideoEditor:
     def __init__(self, api_key):
@@ -21,20 +45,34 @@ class VideoEditor:
         # Ensure we are passing a path that exists
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Video file not found: {video_path}")
-            
+
+        # Reuse a prior upload of this exact file (by content) if it's still ACTIVE.
+        cache_key = _file_fingerprint(video_path)
+        cached_name = _UPLOAD_CACHE.get(cache_key)
+        if cached_name:
+            try:
+                info = self.client.files.get(name=cached_name)
+                if info.state == "ACTIVE":
+                    print("♻️  Reusing cached Gemini upload.")
+                    return info
+            except Exception:
+                pass  # Expired/deleted handle — fall through to a fresh upload.
+            _UPLOAD_CACHE.pop(cache_key, None)
+
         # Using 'file' keyword instead of 'path'
         try:
             file_upload = self.client.files.upload(file=video_path)
         except Exception as e:
             print(f"❌ Gemini Upload Error: {e}")
             raise e
-        
+
         # Wait for processing
         print("⏳ Waiting for video processing by Gemini...")
         while True:
             file_info = self.client.files.get(name=file_upload.name)
             if file_info.state == "ACTIVE":
                 print("✅ Video processed and ready.")
+                _UPLOAD_CACHE[cache_key] = file_upload.name
                 return file_upload
             elif file_info.state == "FAILED":
                 raise Exception("Video processing failed by Gemini.")
