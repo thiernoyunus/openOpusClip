@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import subprocess
 from ffmpeg_utils import video_codec_args
 
@@ -24,9 +25,27 @@ def transcribe_audio(video_path):
     """
     from transcription import transcribe
 
+    # Cache the result next to the video — subtitling the same (dubbed) file
+    # twice otherwise re-runs the whole whisper pass. Keyed by mtime.
+    cache_path = video_path + ".transcript.json"
+    try:
+        if (os.path.exists(cache_path)
+                and os.path.getmtime(cache_path) >= os.path.getmtime(video_path)):
+            with open(cache_path, encoding="utf-8") as f:
+                print(f"🎙️  Using cached transcript for: {video_path}")
+                return json.load(f)
+    except (OSError, ValueError):
+        pass  # ValueError covers JSONDecodeError on a corrupt cache.
+
     print(f"🎙️  Transcribing audio from: {video_path}")
     transcript = transcribe(video_path, strip_words=True)
     print(f"✅ Transcription complete. Language: {transcript.get('language')}")
+    try:
+        with open(cache_path, "w", encoding="utf-8") as f:
+            # ensure_ascii=False keeps Arabic/RTL text readable, not \uXXXX escapes.
+            json.dump(transcript, f, ensure_ascii=False)
+    except Exception:
+        pass  # a cache-write failure must never break the successful transcription
     return transcript
 
 
