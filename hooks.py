@@ -4,6 +4,7 @@ import subprocess
 import urllib.request
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, features
 from subtitles import is_rtl
+from ffmpeg_utils import video_codec_args
 
 # Arabic shaping + bidi in PIL needs Pillow built with libraqm. Without it we
 # fall back to the basic layout engine (Arabic renders unshaped/LTR — caveat).
@@ -239,7 +240,7 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
             '-i', img_path,
             '-filter_complex', f"[0:v][1:v]overlay={overlay_x}:{overlay_y}",
             '-c:a', 'copy',
-            '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
+            *video_codec_args('final'),
             output_path
         ]
         
