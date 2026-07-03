@@ -41,9 +41,10 @@ def transcribe_audio(video_path):
     print(f"✅ Transcription complete. Language: {transcript.get('language')}")
     try:
         with open(cache_path, "w", encoding="utf-8") as f:
-            json.dump(transcript, f)
-    except OSError:
-        pass
+            # ensure_ascii=False keeps Arabic/RTL text readable, not \uXXXX escapes.
+            json.dump(transcript, f, ensure_ascii=False)
+    except Exception:
+        pass  # a cache-write failure must never break the successful transcription
     return transcript
 
 
