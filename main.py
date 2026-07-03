@@ -1368,11 +1368,11 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
     for segment in transcript_result['segments']:
         for word in segment.get('words', []):
             s, e = word.get('start'), word.get('end')
-            words.append([
-                word['word'],
-                round(s, 2) if s is not None else s,
-                round(e, 2) if e is not None else e,
-            ])
+            # Skip words with missing timestamps — [word, null, null] breaks the
+            # prompt's [word, start, end] contract and can confuse clip boundaries.
+            if s is None or e is None:
+                continue
+            words.append([word.get('word', ''), round(s, 2), round(e, 2)])
 
     user_focus = ""
     if moment_prompt and moment_prompt.strip():
