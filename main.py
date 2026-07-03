@@ -712,7 +712,10 @@ def analyze_scenes_strategy(video_path, scenes):
     if not cap.isOpened():
         return ['TRACK'] * len(scenes)
         
-    for start, end in tqdm(scenes, desc="   Analyzing Scenes"):
+    # Progress bars off outside the main thread — concurrent clips would
+    # interleave \r updates into one garbled log line.
+    for start, end in tqdm(scenes, desc="   Analyzing Scenes",
+                           disable=threading.current_thread() is not threading.main_thread()):
         # Sample 3 frames (start, middle, end)
         frames_to_check = [
             start.get_frames() + 5,
@@ -1086,7 +1089,9 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
     # Cameraman for stacked two-person SPLIT scenes (panels are W x H/2)
     split_cameraman = SplitCameraman(original_width, original_height, OUTPUT_WIDTH / (OUTPUT_HEIGHT / 2))
 
-    with tqdm(total=total_frames, desc="   Processing", file=sys.stdout) as pbar:
+    # Bar off outside the main thread (see analyze_scenes_strategy note).
+    with tqdm(total=total_frames, desc="   Processing", file=sys.stdout,
+              disable=threading.current_thread() is not threading.main_thread()) as pbar:
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
@@ -2512,8 +2517,12 @@ if __name__ == '__main__':
 
         # Each worker drives its own ffmpeg decode/encode + detection pipeline,
         # so a few workers saturate the machine. Tunable; 1 = old serial behavior.
-        clip_workers = int(os.environ.get('OPENSHORTS_CLIP_WORKERS', '0')) \
-            or max(1, min(4, (os.cpu_count() or 8) // 4))
+        try:
+            clip_workers = int(os.environ.get('OPENSHORTS_CLIP_WORKERS', '0'))
+        except ValueError:
+            clip_workers = 0
+        if clip_workers <= 0:
+            clip_workers = max(1, min(4, (os.cpu_count() or 8) // 4))
         shorts = clips_data['shorts']
         if clip_workers > 1 and len(shorts) > 1:
             print(f"\n⚡ Processing {len(shorts)} clips with {clip_workers} parallel workers...")
@@ -2524,8 +2533,13 @@ if __name__ == '__main__':
             results = [process_one_clip_safe(i, c) for i, c in enumerate(shorts)]
         ok = sum(results)
         print(f"\n📊 Clips ready: {ok}/{len(shorts)}")
-        if ok == 0:
-            print("❌ No clips could be processed.")
+        if ok < len(shorts):
+            # app.py maps shorts[i] -> clip_{i+1}.mp4 by POSITION, so we can't
+            # prune failed entries from the metadata without re-pointing the
+            # survivors at the wrong files. Fail the job (the serial loop's
+            # behavior too — a clip crash killed it); siblings still finished
+            # above, so the logs show exactly which clip broke and why.
+            print(f"❌ {len(shorts) - ok} clip(s) failed; failing the job so no broken clip links are served.")
             sys.exit(2)
 
     # Clean up original if requested
