@@ -506,9 +506,11 @@ def detect_face_candidates(frame):
     # Detect on a downscaled copy — MediaPipe returns relative (0-1) box coords,
     # so scaling the input doesn't change the boxes we compute against the
     # original width/height. ~4-9x faster on 1080p input, no accuracy loss.
-    scale = 640.0 / max(height, width)
+    max_dim = max(height, width)
+    scale = 640.0 / max_dim if max_dim else 1.0
     if scale < 1.0:
-        det_frame = cv2.resize(frame, (int(width * scale), int(height * scale)),
+        # max(1, ...) guards cv2.resize against a 0-px side on extreme aspect ratios.
+        det_frame = cv2.resize(frame, (max(1, int(width * scale)), max(1, int(height * scale))),
                                interpolation=cv2.INTER_AREA)
     else:
         det_frame = frame
