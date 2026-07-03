@@ -12,18 +12,21 @@ def video_codec_args(quality='intermediate', keyframe_interval=None):
     keyframe_interval: force a GOP size for dense keyframes (editor seek).
     """
     use_hw = platform.system() == 'Darwin' and os.environ.get('OPENSHORTS_HWACCEL', '1') != '0'
+    # yuv420p keeps output universally playable (browsers/QuickTime). Encoding
+    # from bgr24 rawvideo, ffmpeg can otherwise pick yuv444p → black/unplayable.
     if use_hw:
         # VideoToolbox is bitrate-driven, not CRF; these track the old CRF quality.
-        args = ['-c:v', 'h264_videotoolbox', '-b:v', '12M' if quality == 'final' else '8M']
+        args = ['-c:v', 'h264_videotoolbox', '-b:v', '12M' if quality == 'final' else '8M',
+                '-pix_fmt', 'yuv420p']
         if keyframe_interval:
             args += ['-g', str(keyframe_interval)]
         return args
     # ponytail: CPU fallback. veryfast/crf16 replaces the old ultrafast/crf12
     # intermediates (huge files) and medium/crf18 finals.
     if quality == 'final':
-        args = ['-c:v', 'libx264', '-preset', 'medium', '-crf', '18']
+        args = ['-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p']
     else:
-        args = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '16']
+        args = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '16', '-pix_fmt', 'yuv420p']
     if keyframe_interval:
         args += ['-g', str(keyframe_interval), '-keyint_min', str(keyframe_interval), '-sc_threshold', '0']
     return args

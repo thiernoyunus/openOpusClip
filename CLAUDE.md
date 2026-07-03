@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+(The "explain things in plain language, no jargon" rule now lives in the global `~/.claude/CLAUDE.md` so it applies to every project, not just this one.)
+
 ## Git Workflow (follow every session)
 
 Keep branches short-lived and merge fast — long-lived branches drift from `main` and cause painful divergence later.
