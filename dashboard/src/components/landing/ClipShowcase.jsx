@@ -32,7 +32,7 @@ function ClipCard({ platform, poster, cardRef }) {
   return (
     <div
       ref={cardRef}
-      className="showcase-card relative w-[132px] sm:w-[150px] shrink-0 rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-xl shadow-black/40 bg-surface"
+      className="showcase-card relative w-[120px] sm:w-[140px] shrink-0 rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-xl shadow-black/40 bg-surface"
       style={{ aspectRatio: '9 / 16' }}
     >
       <img src={poster} alt={`Vertical clip for ${label}`} loading="lazy" className="w-full h-full object-cover" />
@@ -61,9 +61,11 @@ export default function ClipShowcase({ onLaunchApp }) {
   useLayoutEffect(() => {
     const ctx = gsap.context(() => {
       const mm = gsap.matchMedia();
-      // Only pin + scrub on desktop when motion is welcome. Mobile / reduced-motion
-      // fall through to the static CSS layout (source on top, row of cards below).
-      mm.add('(min-width: 768px) and (prefers-reduced-motion: no-preference)', () => {
+      // Only pin + scrub at >=1024px when motion is welcome. Below that (phones AND
+      // tablets) fall through to the static CSS layout — six cards need ~900px in
+      // one row, so tablets must reflow-wrap, not pin (a pinned h-screen stage
+      // would clip the wrapped second row). Breakpoint MUST match the lg: classes.
+      mm.add('(min-width: 1024px) and (prefers-reduced-motion: no-preference)', () => {
         const cards = cardRefs.current.filter(Boolean);
         const badges = stageRef.current.querySelectorAll('.showcase-badge');
 
@@ -107,8 +109,8 @@ export default function ClipShowcase({ onLaunchApp }) {
   }, []);
 
   return (
-    <section ref={stageRef} className="relative motion-safe:md:h-[300vh]">
-      <div className="showcase-stage motion-safe:md:sticky motion-safe:md:top-0 motion-safe:md:h-screen flex flex-col items-center justify-center px-6 py-16 overflow-hidden">
+    <section ref={stageRef} className="relative motion-safe:lg:h-[300vh]">
+      <div className="showcase-stage motion-safe:lg:sticky motion-safe:lg:top-0 motion-safe:lg:h-screen flex flex-col items-center justify-center px-6 py-16 overflow-hidden">
         {/* dark radial stage glow */}
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(59,130,246,0.10),transparent_60%)]" />
 
@@ -152,7 +154,7 @@ export default function ClipShowcase({ onLaunchApp }) {
           ))}
         </div>
 
-        <p className="showcase-tagline mt-8 text-center text-zinc-400 motion-safe:md:opacity-0 motion-safe:md:translate-y-3">
+        <p className="showcase-tagline mt-8 text-center text-zinc-400 motion-safe:lg:opacity-0 motion-safe:lg:translate-y-3">
           One long video. <span className="text-white font-semibold">15 scored, captioned, vertical clips.</span>
         </p>
       </div>
