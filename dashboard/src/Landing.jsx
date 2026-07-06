@@ -1,5 +1,6 @@
 import React from 'react';
 import { Sparkles, Zap, Globe, FileVideo, Subtitles, Youtube, Instagram, Shield, Github, ArrowRight, Play, Check, ChevronDown, Monitor, Cpu, Languages, Type, Upload, Scissors } from 'lucide-react';
+import ClipShowcase from './components/landing/ClipShowcase';
 
 const TikTokIcon = ({ size = 16, className = "" }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
@@ -8,7 +9,7 @@ const TikTokIcon = ({ size = 16, className = "" }) => (
 );
 
 const FeatureCard = ({ icon: Icon, title, description }) => (
-  <div className="group bg-surface/50 backdrop-blur-xl border border-white/10 rounded-2xl p-6 hover:border-primary/30 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5">
+  <div className="reveal-up group bg-surface/50 backdrop-blur-xl border border-white/10 rounded-2xl p-6 hover:border-primary/30 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5">
     <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4 group-hover:bg-primary/20 transition-colors">
       <Icon size={24} className="text-primary" />
     </div>
@@ -57,6 +58,28 @@ const FAQItem = ({ question, answer, isOpen, onClick }) => (
 
 export default function Landing({ onLaunchApp }) {
   const [openFaq, setOpenFaq] = React.useState(null);
+
+  // Light scroll-in for feature cards. gsap.from restores the natural state, and
+  // matchMedia skips it entirely under reduced-motion, so cards can never end up
+  // stuck invisible.
+  React.useLayoutEffect(() => {
+    let cleanup = () => {};
+    (async () => {
+      const gsap = (await import('gsap')).default;
+      const { ScrollTrigger } = await import('gsap/ScrollTrigger');
+      gsap.registerPlugin(ScrollTrigger);
+      const mm = gsap.matchMedia();
+      mm.add('(prefers-reduced-motion: no-preference)', () => {
+        ScrollTrigger.batch('.reveal-up', {
+          start: 'top 88%',
+          onEnter: (els) =>
+            gsap.from(els, { opacity: 0, y: 24, duration: 0.5, stagger: 0.08, ease: 'power2.out', overwrite: true }),
+        });
+      });
+      cleanup = () => mm.revert();
+    })();
+    return () => cleanup();
+  }, []);
 
   const features = [
     {
@@ -214,7 +237,7 @@ export default function Landing({ onLaunchApp }) {
           </h1>
 
           <p className="hero-description text-lg md:text-xl text-zinc-400 max-w-3xl mx-auto mb-10 leading-relaxed">
-            Two tools in one. <strong className="text-white">Clip Generator:</strong> turn your long-form videos into viral shorts with AI moment detection, smart cropping, and auto subtitles. <strong className="text-white">YouTube Studio:</strong> generate thumbnails, viral title suggestions, and descriptions with chapters. Self-hosted, open source, no limits.
+            Drop one long video. Get a week of scored, captioned, vertical clips — free, on your own machine.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
@@ -252,6 +275,53 @@ export default function Landing({ onLaunchApp }) {
                 <Youtube size={18} />
                 <span className="text-sm">Shorts</span>
               </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Scroll-driven "1 video → many clips" showcase */}
+      <ClipShowcase onLaunchApp={onLaunchApp} />
+
+      {/* What the AI does to every clip — real job assets */}
+      <section className="py-20 px-6">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-14">
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">What the AI does to every clip</h2>
+            <p className="text-zinc-400 max-w-2xl mx-auto">Real clips from a real job — one 2-hour podcast, cut into 15 scored shorts.</p>
+          </div>
+          <div className="grid md:grid-cols-3 gap-6">
+            <div className="bg-surface/50 border border-white/10 rounded-2xl p-6">
+              <img src="/landing/clip-1.jpg" alt="Vertical clip with burned-in captions" loading="lazy" className="rounded-xl mb-4 w-full aspect-[9/16] object-cover" />
+              <h3 className="text-lg font-semibold text-white mb-1">Word-level captions</h3>
+              <p className="text-zinc-400 text-sm leading-relaxed">Auto-transcribed and burned in with an active-word highlight — the caption style that keeps viewers watching to the end.</p>
+            </div>
+            <div className="bg-surface/50 border border-white/10 rounded-2xl p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <img src="/landing/source-poster.jpg" alt="Original 16:9 frame" loading="lazy" className="rounded-lg w-1/2 aspect-video object-cover" />
+                <ArrowRight size={20} className="text-primary shrink-0" />
+                <img src="/landing/clip-4.jpg" alt="Reframed 9:16 frame" loading="lazy" className="rounded-lg w-1/3 aspect-[9/16] object-cover" />
+              </div>
+              <h3 className="text-lg font-semibold text-white mb-1">Smart 9:16 reframe</h3>
+              <p className="text-zinc-400 text-sm leading-relaxed">Face-tracking crop keeps the speaker centered. Two-person shots stack both guests so nobody gets cut off.</p>
+            </div>
+            <div className="bg-surface/50 border border-white/10 rounded-2xl p-6">
+              <h3 className="text-lg font-semibold text-white mb-3">Virality score on each clip</h3>
+              <ul className="space-y-2">
+                {[
+                  ['The Quran: Your Most Powerful Weapon', 95],
+                  ['Modern Muslims: Entitled or Hardworking?', 90],
+                  ['Wives: Choose Your Priorities', 88],
+                  ['Social Media & The Fitna of Women', 85],
+                  ['How to Find Time for Knowledge', 82],
+                ].map(([title, score]) => (
+                  <li key={title} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="text-zinc-300 truncate">{title}</span>
+                    <span className="font-extrabold text-[#3DD68C] shrink-0">{score}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-zinc-500 text-xs mt-4 leading-relaxed">Every clip is ranked 0–100 so you post the winners first.</p>
             </div>
           </div>
         </div>

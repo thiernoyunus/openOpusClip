@@ -3,6 +3,8 @@
 *.webm
 *.mov
 *.mkv
+# ...except landing-page hero assets, which the site needs at runtime
+!dashboard/public/landing/*.mp4
 
 # YOLO model
 *.pt
