@@ -9,7 +9,7 @@ const TikTokIcon = ({ size = 16, className = "" }) => (
 );
 
 const FeatureCard = ({ icon: Icon, title, description }) => (
-  <div className="reveal-up group bg-surface/50 backdrop-blur-xl border border-white/10 rounded-2xl p-6 hover:border-primary/30 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5">
+  <div className="group bg-surface/50 backdrop-blur-xl border border-white/10 rounded-2xl p-6 hover:border-primary/30 transition-all duration-300 hover:shadow-lg hover:shadow-primary/5">
     <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4 group-hover:bg-primary/20 transition-colors">
       <Icon size={24} className="text-primary" />
     </div>
@@ -58,28 +58,6 @@ const FAQItem = ({ question, answer, isOpen, onClick }) => (
 
 export default function Landing({ onLaunchApp }) {
   const [openFaq, setOpenFaq] = React.useState(null);
-
-  // Light scroll-in for feature cards. gsap.from restores the natural state, and
-  // matchMedia skips it entirely under reduced-motion, so cards can never end up
-  // stuck invisible.
-  React.useLayoutEffect(() => {
-    let cleanup = () => {};
-    (async () => {
-      const gsap = (await import('gsap')).default;
-      const { ScrollTrigger } = await import('gsap/ScrollTrigger');
-      gsap.registerPlugin(ScrollTrigger);
-      const mm = gsap.matchMedia();
-      mm.add('(prefers-reduced-motion: no-preference)', () => {
-        ScrollTrigger.batch('.reveal-up', {
-          start: 'top 88%',
-          onEnter: (els) =>
-            gsap.from(els, { opacity: 0, y: 24, duration: 0.5, stagger: 0.08, ease: 'power2.out', overwrite: true }),
-        });
-      });
-      cleanup = () => mm.revert();
-    })();
-    return () => cleanup();
-  }, []);
 
   const features = [
     {
