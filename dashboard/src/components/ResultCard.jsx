@@ -38,7 +38,7 @@ const ScoreBadge = ({ score, lg, box }) => {
 
 const BREAKDOWN_LABELS = { hook: 'Hook', flow: 'Flow', value: 'Value', trend: 'Trend' };
 
-export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, uploadPostKey, uploadUserId, geminiApiKey, elevenLabsKey, onPlay, onPause, openIndex, setOpenIndex, totalClips, onEdit }) {
+export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], geminiApiKey, elevenLabsKey, onPlay, onPause, openIndex, setOpenIndex, totalClips, onEdit }) {
     const isOpen = openIndex === index;
     const [showModal, setShowModal] = useState(false);
     const [showSubtitleModal, setShowSubtitleModal] = useState(false);
@@ -48,11 +48,9 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     const originalVideoUrl = getApiUrl(clip.video_url); // Never changes — used for Remotion previews
     const [currentVideoUrl, setCurrentVideoUrl] = useState(originalVideoUrl);
 
-    const [platforms, setPlatforms] = useState({
-        tiktok: true,
-        instagram: true,
-        youtube: true
-    });
+    // Account selection: default every connected account to ON until the user unticks it
+    const [accountToggles, setAccountToggles] = useState({});
+    const selectedAccounts = socialAccounts.filter((a) => accountToggles[a.id] ?? true);
     const [postTitle, setPostTitle] = useState("");
     const [postDescription, setPostDescription] = useState("");
     const [isScheduling, setIsScheduling] = useState(false);
@@ -352,14 +350,13 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     };
 
     const handlePost = async () => {
-        if (!uploadPostKey || !uploadUserId) {
-            setPostResult({ success: false, msg: "Missing API Key or User ID." });
+        if (!zernioKey) {
+            setPostResult({ success: false, msg: "Missing Zernio API Key." });
             return;
         }
 
-        const selectedPlatforms = Object.keys(platforms).filter(k => platforms[k]);
-        if (selectedPlatforms.length === 0) {
-            setPostResult({ success: false, msg: "Select at least one platform." });
+        if (selectedAccounts.length === 0) {
+            setPostResult({ success: false, msg: "Select at least one account." });
             return;
         }
 
@@ -375,9 +372,8 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             const payload = {
                 job_id: jobId,
                 clip_index: index,
-                api_key: uploadPostKey,
-                user_id: uploadUserId,
-                platforms: selectedPlatforms,
+                api_key: zernioKey,
+                accounts: selectedAccounts.map((a) => ({ accountId: a.id, platform: a.platform })),
                 title: postTitle,
                 description: postDescription
             };
@@ -610,10 +606,10 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
                         <h3 className="text-lg font-bold text-white mb-4">Post / Schedule</h3>
 
-                        {!uploadPostKey && (
+                        {!zernioKey && (
                             <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/20 text-yellow-200 text-xs rounded-lg flex items-start gap-2">
                                 <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                                <div>Configure API Key in Settings first.</div>
+                                <div>Configure your Zernio API Key in Settings first.</div>
                             </div>
                         )}
 
@@ -669,23 +665,35 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                 )}
                             </div>
 
-                            {/* Platforms */}
+                            {/* Accounts */}
                             <div>
-                                <label className="block text-xs font-bold text-zinc-400 mb-2">Select Platforms</label>
-                                <div className="grid grid-cols-1 gap-2">
-                                    <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors border border-white/5">
-                                        <input type="checkbox" checked={platforms.tiktok} onChange={e => setPlatforms({ ...platforms, tiktok: e.target.checked })} className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary" />
-                                        <div className="flex items-center gap-2 text-sm text-white"><Video size={16} className="text-cyan-400" /> TikTok</div>
-                                    </label>
-                                    <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors border border-white/5">
-                                        <input type="checkbox" checked={platforms.instagram} onChange={e => setPlatforms({ ...platforms, instagram: e.target.checked })} className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary" />
-                                        <div className="flex items-center gap-2 text-sm text-white"><Instagram size={16} className="text-pink-400" /> Instagram</div>
-                                    </label>
-                                    <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors border border-white/5">
-                                        <input type="checkbox" checked={platforms.youtube} onChange={e => setPlatforms({ ...platforms, youtube: e.target.checked })} className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary" />
-                                        <div className="flex items-center gap-2 text-sm text-white"><Youtube size={16} className="text-red-400" /> YouTube Shorts</div>
-                                    </label>
-                                </div>
+                                <label className="block text-xs font-bold text-zinc-400 mb-2">Select Accounts</label>
+                                {socialAccounts.length === 0 ? (
+                                    <p className="text-xs text-zinc-500 p-3 bg-white/5 rounded-lg border border-white/5">
+                                        No social accounts connected yet. Connect them in Settings → Social Integration.
+                                    </p>
+                                ) : (
+                                    <div className="grid grid-cols-1 gap-2">
+                                        {socialAccounts.map((acc) => (
+                                            <label key={acc.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors border border-white/5">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={accountToggles[acc.id] ?? true}
+                                                    onChange={(e) => setAccountToggles({ ...accountToggles, [acc.id]: e.target.checked })}
+                                                    className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary"
+                                                />
+                                                <div className="flex items-center gap-2 text-sm text-white">
+                                                    {acc.platform === 'tiktok' ? <Video size={16} className="text-cyan-400" /> :
+                                                     acc.platform === 'instagram' ? <Instagram size={16} className="text-pink-400" /> :
+                                                     acc.platform === 'youtube' ? <Youtube size={16} className="text-red-400" /> :
+                                                     <Share2 size={16} className="text-zinc-400" />}
+                                                    {acc.displayName || acc.username}
+                                                    <span className="text-xs text-zinc-500 capitalize">{acc.platform}</span>
+                                                </div>
+                                            </label>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         </div>
 
@@ -698,7 +706,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
                         <button
                             onClick={handlePost}
-                            disabled={posting || !uploadPostKey}
+                            disabled={posting || !zernioKey}
                             className="w-full py-3 bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-white font-bold transition-all flex items-center justify-center gap-2"
                         >
                             {posting ? <><Loader2 size={16} className="animate-spin" /> {isScheduling ? 'Scheduling...' : 'Publishing...'}</> : <><Share2 size={16} /> {isScheduling ? 'Schedule Post' : 'Publish Now'}</>}

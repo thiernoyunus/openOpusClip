@@ -8,6 +8,7 @@ import glob
 import time
 import asyncio
 import sys
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from typing import Dict, Optional, List
 from urllib.parse import quote, unquote
@@ -1639,159 +1640,239 @@ async def translate_clip(
         "new_video_url": _video_url(req.job_id, output_filename)
     }
 
+import httpx
+
+# --- Zernio social integration (https://docs.zernio.com) ---
+ZERNIO_API = "https://zernio.com/api/v1"
+
+
+def _zernio_headers(api_key: str) -> dict:
+    return {"Authorization": f"Bearer {api_key}"}
+
+
+# Zernio uploads sit in temporary storage that expires 7 days after upload; a post that
+# publishes after that references expired media and fails silently. Reject far-future
+# schedules/reschedules up front with a clear message.
+# ponytail: hard 7-day cap. Lift it only by uploading permanent media closer to publish time.
+def _reject_if_beyond_media_window(scheduled_date: Optional[str]):
+    if not scheduled_date:
+        return
+    try:
+        when = datetime.fromisoformat(scheduled_date.replace("Z", "+00:00")).replace(tzinfo=None)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail=f"Invalid scheduled date: {scheduled_date}")
+    # Compare naively; hours of timezone slop don't matter at a 7-day boundary.
+    if when - datetime.now() > timedelta(days=7):
+        raise HTTPException(
+            status_code=400,
+            detail="Zernio can only schedule up to 7 days out (uploaded media expires after that). Pick a sooner time.",
+        )
+
+
+async def _zernio_request(method: str, path: str, api_key: str, params: dict = None, json_body: dict = None):
+    """Forward a request to Zernio and return its JSON, mapping errors to HTTP errors."""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.request(
+            method, f"{ZERNIO_API}{path}",
+            headers=_zernio_headers(api_key),
+            params={k: v for k, v in (params or {}).items() if v is not None},
+            json=json_body,
+        )
+    if resp.status_code >= 400:
+        print(f"❌ Zernio {method} {path} -> {resp.status_code}: {resp.text[:500]}")
+        raise HTTPException(status_code=resp.status_code, detail=f"Zernio API error: {resp.text}")
+    return resp.json() if resp.text else {}
+
+
+def _zernio_upload_media(api_key: str, file_path: str, content_type: str) -> str:
+    """Upload a local file to Zernio storage (presign + PUT), return its public URL.
+
+    Sync on purpose: called from threads (BackgroundTasks) and from run_in_executor.
+    """
+    filename = os.path.basename(file_path)
+    with httpx.Client(timeout=600.0) as client:
+        presign = client.post(
+            f"{ZERNIO_API}/media/presign",
+            headers=_zernio_headers(api_key),
+            json={"filename": filename, "contentType": content_type},
+        )
+        if presign.status_code >= 400:
+            raise HTTPException(status_code=presign.status_code, detail=f"Zernio presign failed: {presign.text}")
+        info = presign.json()
+        with open(file_path, "rb") as f:
+            put = client.put(info["uploadUrl"], content=f, headers={"Content-Type": content_type})  # stream, don't buffer 2GB
+        if put.status_code >= 400:
+            raise HTTPException(status_code=put.status_code, detail=f"Zernio media upload failed: {put.text}")
+    return info["publicUrl"]
+
+
+class SocialAccountTarget(BaseModel):
+    accountId: str
+    platform: str
+
+
 class SocialPostRequest(BaseModel):
     job_id: str
     clip_index: int
     api_key: str
-    user_id: str
-    platforms: List[str] # ["tiktok", "instagram", "youtube"]
+    accounts: List[SocialAccountTarget]
     # Optional overrides if frontend wants to edit them
     title: Optional[str] = None
     description: Optional[str] = None
     scheduled_date: Optional[str] = None # ISO-8601 string
     timezone: Optional[str] = "UTC"
 
-import httpx
 
 @app.post("/api/social/post")
 async def post_to_socials(req: SocialPostRequest):
+    """Publish or schedule a rendered clip to social accounts via Zernio."""
     if req.job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
-    
+
     job = jobs[req.job_id]
     if 'result' not in job or 'clips' not in job['result']:
         raise HTTPException(status_code=400, detail="Job result not available")
-        
+    if not req.accounts:
+        raise HTTPException(status_code=400, detail="No social accounts selected")
+
+    # Reject far-future schedules before the (potentially large) upload.
+    _reject_if_beyond_media_window(req.scheduled_date)
+
+    # Pinterest needs a board id per post, which we don't collect yet — reject clearly
+    # so a defaulted-on Pinterest account can't silently fail the whole post.
+    # ponytail: drop this guard once the modals collect a board per Pinterest account.
+    if any(acc.platform == "pinterest" for acc in req.accounts):
+        raise HTTPException(
+            status_code=400,
+            detail="Pinterest posting isn't supported yet (it needs a board). Deselect the Pinterest account and try again.",
+        )
+
     try:
         clip = job['result']['clips'][req.clip_index]
-        # Video URL is relative /videos/..., we need absolute file path
-        # clip['video_url'] is like "/videos/{job_id}/{filename}"
-        # We constructed it as: f"/videos/{job_id}/{clip_filename}"
-        # And file is at f"{OUTPUT_DIR}/{job_id}/{clip_filename}"
-        
+        # clip['video_url'] is "/videos/{job_id}/{filename}"; file lives in OUTPUT_DIR
         filename = unquote(clip['video_url'].split('/')[-1])
         file_path = os.path.join(OUTPUT_DIR, req.job_id, filename)
-        
+
         if not os.path.exists(file_path):
              raise HTTPException(status_code=404, detail=f"Video file not found: {file_path}")
 
-        # Construct parameters for Upload-Post API
-        # Fallbacks
-        final_title = req.title or clip.get('title', 'Viral Short')
+        final_title = req.title or clip.get('title') or clip.get('video_title_for_youtube_short') or 'Viral Short'
         final_description = req.description or clip.get('video_description_for_instagram') or clip.get('video_description_for_tiktok') or "Check this out!"
-        
-        # Prepare form data
-        url = "https://api.upload-post.com/api/upload"
-        headers = {
-            "Authorization": f"Apikey {req.api_key}"
-        }
-        
-        # Prepare data as dict (httpx handles lists for multiple values)
-        data_payload = {
-            "user": req.user_id,
+
+        loop = asyncio.get_running_loop()
+        media_url = await loop.run_in_executor(
+            None, _zernio_upload_media, req.api_key, file_path, "video/mp4"
+        )
+
+        platforms = []
+        for acc in req.accounts:
+            entry = {"platform": acc.platform, "accountId": acc.accountId}
+            if acc.platform == "youtube":
+                entry["platformSpecificData"] = {"title": final_title, "visibility": "public"}
+            platforms.append(entry)
+
+        post_payload = {
             "title": final_title,
-            "platform[]": req.platforms, # Pass list directly
-            "async_upload": "true"  # Enable async upload
+            "content": final_description,
+            "platforms": platforms,
+            "mediaItems": [{"type": "video", "url": media_url}],
         }
-
-        # Add scheduling if present
         if req.scheduled_date:
-            data_payload["scheduled_date"] = req.scheduled_date
-            if req.timezone:
-                data_payload["timezone"] = req.timezone
-        
-        # Add Platform specifics
-        if "tiktok" in req.platforms:
-             data_payload["tiktok_title"] = final_description
-             
-        if "instagram" in req.platforms:
-             data_payload["instagram_title"] = final_description
-             data_payload["media_type"] = "REELS"
+            post_payload["scheduledFor"] = req.scheduled_date
+            post_payload["timezone"] = req.timezone or "UTC"
+        else:
+            post_payload["publishNow"] = True
 
-        if "youtube" in req.platforms:
-             yt_title = req.title or clip.get('video_title_for_youtube_short', final_title)
-             data_payload["youtube_title"] = yt_title
-             data_payload["youtube_description"] = final_description
-             data_payload["privacyStatus"] = "public"
+        print(f"📡 Sending to Zernio for {[a.platform for a in req.accounts]} (scheduled: {bool(req.scheduled_date)})")
+        return await _zernio_request("POST", "/posts", req.api_key, json_body=post_payload)
 
-        # Send File
-        # httpx AsyncClient requires async file reading or bytes. 
-        # Since we have MAX_FILE_SIZE_MB, reading into memory is safe-ish.
-        with open(file_path, "rb") as f:
-            file_content = f.read()
-            
-        files = {
-            "video": (filename, file_content, "video/mp4")
-        }
-
-        # Switch to synchronous Client to avoid "sync request with AsyncClient" error with multipart/files
-        with httpx.Client(timeout=120.0) as client:
-            print(f"📡 Sending to Upload-Post for platforms: {req.platforms}")
-            response = client.post(url, headers=headers, data=data_payload, files=files)
-            
-        if response.status_code not in [200, 201, 202]: # Added 201
-             print(f"❌ Upload-Post Error: {response.text}")
-             raise HTTPException(status_code=response.status_code, detail=f"Vendor API Error: {response.text}")
-
-        return response.json()
-
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Social Post Exception: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/social/user")
-async def get_social_user(api_key: str = Header(..., alias="X-Upload-Post-Key")):
-    """Proxy to fetch user ID from Upload-Post"""
-    if not api_key:
-         raise HTTPException(status_code=400, detail="Missing X-Upload-Post-Key header")
-         
-    url = "https://api.upload-post.com/api/uploadposts/users"
-    print(f"🔍 Fetching User ID from: {url}")
-    headers = {"Authorization": f"Apikey {api_key}"}
-    
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code != 200:
-                print(f"❌ Upload-Post User Fetch Error: {resp.text}")
-                raise HTTPException(status_code=resp.status_code, detail=f"Failed to fetch user: {resp.text}")
-            
-            data = resp.json()
-            print(f"🔍 Upload-Post User Response: {data}")
-            
-            user_id = None
-            # The structure is {'success': True, 'profiles': [{'username': '...'}, ...]}
-            profiles_list = []
-            if isinstance(data, dict):
-                 raw_profiles = data.get('profiles', [])
-                 if isinstance(raw_profiles, list):
-                     for p in raw_profiles:
-                         username = p.get('username')
-                         if username:
-                             # Determine connected platforms
-                             socials = p.get('social_accounts', {})
-                             connected = []
-                             # Check typical platforms
-                             for platform in ['tiktok', 'instagram', 'youtube']:
-                                 account_info = socials.get(platform)
-                                 # If it's a dict and typically has data, or just not empty string
-                                 if isinstance(account_info, dict):
-                                     connected.append(platform)
-                             
-                             profiles_list.append({
-                                 "username": username,
-                                 "connected": connected
-                             })
-            
-            if not profiles_list:
-                # Fallback if no profiles found
-                return {"profiles": [], "error": "No profiles found"}
-                
-            return {"profiles": profiles_list}
-            
-            
-        except Exception as e:
-             raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/social/accounts")
+async def get_social_accounts(api_key: str = Header(..., alias="X-Zernio-Key")):
+    """List social accounts connected to the user's Zernio workspace."""
+    data = await _zernio_request("GET", "/accounts", api_key)
+    raw = data.get("accounts", data) if isinstance(data, dict) else data
+    accounts = []
+    for a in raw if isinstance(raw, list) else []:
+        accounts.append({
+            "id": a.get("_id"),
+            "platform": a.get("platform"),
+            "username": a.get("username"),
+            "displayName": a.get("displayName") or a.get("username"),
+            "profileUrl": a.get("profileUrl"),
+            "isActive": a.get("isActive", True),
+        })
+    return {"accounts": accounts}
+
+
+@app.get("/api/social/connect/{platform}")
+async def get_social_connect_url(platform: str, api_key: str = Header(..., alias="X-Zernio-Key")):
+    """Get the OAuth URL to connect a social account of the given platform."""
+    # Zernio groups accounts under profiles; use the default (first) profile.
+    # A brand-new key has none, so create one on demand rather than dead-ending the connect flow.
+    profiles = await _zernio_request("GET", "/profiles", api_key)
+    raw = profiles.get("profiles", profiles) if isinstance(profiles, dict) else profiles
+    if not isinstance(raw, list) or not raw:
+        created = await _zernio_request("POST", "/profiles", api_key, json_body={"name": "OpenShorts"})
+        default = created.get("profile", created) if isinstance(created, dict) else created
+    else:
+        default = next((p for p in raw if p.get("isDefault")), raw[0])
+    data = await _zernio_request("GET", f"/connect/{platform}", api_key, params={"profileId": default.get("_id")})
+    return {"authUrl": data.get("authUrl")}
+
+
+@app.get("/api/social/posts")
+async def list_social_posts(
+    api_key: str = Header(..., alias="X-Zernio-Key"),
+    status: Optional[str] = None,
+    dateFrom: Optional[str] = None,
+    dateTo: Optional[str] = None,
+    page: int = 1,
+    limit: int = 100,
+):
+    """List posts (scheduled/published/failed) for the calendar view."""
+    return await _zernio_request("GET", "/posts", api_key, params={
+        "status": status, "dateFrom": dateFrom, "dateTo": dateTo, "page": page, "limit": limit,
+    })
+
+
+@app.put("/api/social/posts/{post_id}")
+async def update_social_post(post_id: str, body: dict, api_key: str = Header(..., alias="X-Zernio-Key")):
+    """Update a scheduled post (e.g. reschedule: {scheduledFor, timezone})."""
+    # Same media-expiry ceiling as posting — a reschedule past the window would fail at publish.
+    _reject_if_beyond_media_window(body.get("scheduledFor"))
+    return await _zernio_request("PUT", f"/posts/{post_id}", api_key, json_body=body)
+
+
+@app.delete("/api/social/posts/{post_id}")
+async def delete_social_post(post_id: str, api_key: str = Header(..., alias="X-Zernio-Key")):
+    """Delete a scheduled post."""
+    return await _zernio_request("DELETE", f"/posts/{post_id}", api_key)
+
+
+@app.get("/api/social/analytics")
+async def get_social_analytics(
+    api_key: str = Header(..., alias="X-Zernio-Key"),
+    accountId: Optional[str] = None,
+    platform: Optional[str] = None,
+    postId: Optional[str] = None,
+    fromDate: Optional[str] = None,
+    toDate: Optional[str] = None,
+    sortBy: Optional[str] = None,
+    page: int = 1,
+    limit: int = 50,
+):
+    """Per-post + overview analytics from Zernio (filterable by account/platform)."""
+    return await _zernio_request("GET", "/analytics", api_key, params={
+        "accountId": accountId, "platform": platform, "postId": postId,
+        "fromDate": fromDate, "toDate": toDate, "sortBy": sortBy, "page": page, "limit": limit,
+    })
 
 # --- Thumbnail Studio Endpoints ---
 
@@ -2132,9 +2213,9 @@ async def thumbnail_publish(
     description: str = Form(...),
     thumbnail_url: str = Form(...),
     api_key: str = Form(...),
-    user_id: str = Form(...),
+    account_id: str = Form(...),
 ):
-    """Kick off a background upload to YouTube via Upload-Post and return immediately."""
+    """Kick off a background upload to YouTube via Zernio and return immediately."""
     if session_id not in thumbnail_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -2158,35 +2239,28 @@ async def thumbnail_publish(
     publish_jobs[publish_id] = {"status": "uploading", "result": None, "error": None}
 
     def do_upload():
-        """Runs in a thread via BackgroundTasks — does the actual multipart upload."""
+        """Runs in a thread via BackgroundTasks — uploads media to Zernio, then creates the post."""
         try:
-            upload_url = "https://api.upload-post.com/api/upload"
-            headers = {"Authorization": f"Apikey {api_key}"}
-            data_payload = {
-                "user": user_id,
-                "platform[]": ["youtube"],
-                "title": title,          # required base field (fallback)
-                "async_upload": "true",
-                "youtube_title": title,
-                "youtube_description": description,
-                "privacyStatus": "public",
+            print(f"📡 [Thumbnail] Publishing to YouTube via Zernio... (publish_id={publish_id})")
+            video_url = _zernio_upload_media(api_key, video_path, "video/mp4")
+            thumb_public_url = _zernio_upload_media(api_key, thumb_path, "image/jpeg")
+
+            post_payload = {
+                "title": title,
+                "content": description,
+                "mediaItems": [{"type": "video", "url": video_url, "thumbnail": thumb_public_url}],
+                "platforms": [{
+                    "platform": "youtube",
+                    "accountId": account_id,
+                    "platformSpecificData": {"title": title, "visibility": "public"},
+                }],
+                "publishNow": True,
             }
-            video_filename = os.path.basename(video_path)
-            thumb_filename = os.path.basename(thumb_path)
-
-            print(f"📡 [Thumbnail] Publishing to YouTube via Upload-Post... (publish_id={publish_id})")
-            with open(video_path, "rb") as vf, open(thumb_path, "rb") as tf:
-                files = {
-                    "video": (video_filename, vf.read(), "video/mp4"),
-                    "thumbnail": (thumb_filename, tf.read(), "image/jpeg"),
-                }
-
-            # Use a long timeout — video uploads can take several minutes
             with httpx.Client(timeout=600.0) as client:
-                response = client.post(upload_url, headers=headers, data=data_payload, files=files)
+                response = client.post(f"{ZERNIO_API}/posts", headers=_zernio_headers(api_key), json=post_payload)
 
-            if response.status_code not in [200, 201, 202]:
-                err = f"Upload-Post API Error ({response.status_code}): {response.text}"
+            if response.status_code >= 400:
+                err = f"Zernio API Error ({response.status_code}): {response.text}"
                 print(f"❌ {err}")
                 publish_jobs[publish_id]["status"] = "failed"
                 publish_jobs[publish_id]["error"] = err
