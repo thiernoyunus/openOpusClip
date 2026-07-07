@@ -114,6 +114,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     useEffect(() => {
         if (!clip.framing_url) { setFramingCaptions(null); return; }
         let alive = true;
+        setFramingCaptions(null); // drop the previous clip's config so it can't flash
         fetch(getApiUrl(clip.framing_url))
             .then(res => res.ok ? res.json() : null)
             .then(f => {
@@ -587,6 +588,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                     durationInSeconds={clipDuration}
                                     subtitles={previewSubtitles}
                                     className="aspect-[9/16]"
+                                    loop={false}
                                 />
                             ) : (
                                 <video src={currentVideoUrl} controls autoPlay playsInline className="w-full h-full object-cover aspect-[9/16]" />

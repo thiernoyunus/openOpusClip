@@ -36,12 +36,17 @@ export default function RemotionPreview({
     const durationInFrames = Math.max(1, Math.round(durationInSeconds * fps));
     const playerRef = useRef(null);
 
+    // Keep the latest callbacks in a ref so the listener effect can run once on
+    // mount instead of re-subscribing every render (callers pass inline fns).
+    const callbacksRef = useRef({ onPlay, onPause, onEnded });
+    callbacksRef.current = { onPlay, onPause, onEnded };
+
     useEffect(() => {
         const player = playerRef.current;
-        if (!player || (!onPlay && !onPause && !onEnded)) return;
-        const handlePlay = () => onPlay && onPlay(player.getCurrentFrame() / fps);
-        const handlePause = () => onPause && onPause();
-        const handleEnded = () => onEnded && onEnded();
+        if (!player) return;
+        const handlePlay = () => callbacksRef.current.onPlay && callbacksRef.current.onPlay(player.getCurrentFrame() / fps);
+        const handlePause = () => callbacksRef.current.onPause && callbacksRef.current.onPause();
+        const handleEnded = () => callbacksRef.current.onEnded && callbacksRef.current.onEnded();
         player.addEventListener('play', handlePlay);
         player.addEventListener('pause', handlePause);
         player.addEventListener('ended', handleEnded);
@@ -50,7 +55,7 @@ export default function RemotionPreview({
             player.removeEventListener('pause', handlePause);
             player.removeEventListener('ended', handleEnded);
         };
-    }, [onPlay, onPause, onEnded]);
+    }, []);
 
     const inputProps = useMemo(
         () => ({
