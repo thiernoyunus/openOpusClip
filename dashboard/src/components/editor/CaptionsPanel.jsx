@@ -136,8 +136,8 @@ function TemplateButton({ tpl, active, onClick, onCustomize }) {
                     <Pencil size={11} />
                 </span>
             )}
-            <span className="flex items-center justify-center h-9 overflow-hidden">
-                <CaptionPreview templateId={tpl.id} previewFontPx={18} />
+            <span className="flex items-center justify-center w-full h-11 overflow-hidden">
+                <CaptionPreview templateId={tpl.id} animate={active} />
             </span>
             <span className="block text-[10px] text-muted mt-1 truncate">{tpl.label}</span>
         </button>
