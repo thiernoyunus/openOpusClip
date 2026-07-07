@@ -158,7 +158,13 @@ export default function SocialCalendar({ zernioKey, accounts = [], onGoToSetting
   });
 
   // --- Analytics data (defensive: Zernio returns a paginated post list, possibly with an overview block) ---
-  const statPosts = stats ? (Array.isArray(stats) ? stats : stats.posts || stats.analytics || stats.data || []) : [];
+  const statPosts = stats
+    ? (Array.isArray(stats) ? stats
+      : Array.isArray(stats.posts) ? stats.posts
+      : Array.isArray(stats.data) ? stats.data
+      : Array.isArray(stats.analytics) ? stats.analytics
+      : [])
+    : [];
   const overview = stats?.overview || null;
   const sum = (key) => statPosts.reduce((acc, p) => acc + (Number(p.analytics?.[key]) || 0), 0);
   const totals = overview || {

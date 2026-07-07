@@ -259,8 +259,11 @@ function App() {
   }, [sonioxKey]);
 
   useEffect(() => {
-    if (zernioKey && socialAccounts.length === 0) {
+    // Refetch on every key change so a swapped key never leaves stale account IDs.
+    if (zernioKey) {
       fetchSocialAccounts();
+    } else {
+      setSocialAccounts([]);
     }
   }, [zernioKey]);
 

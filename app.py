@@ -8,6 +8,7 @@ import glob
 import time
 import asyncio
 import sys
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from typing import Dict, Optional, List
 from urllib.parse import quote, unquote
@@ -1680,7 +1681,7 @@ def _zernio_upload_media(api_key: str, file_path: str, content_type: str) -> str
             raise HTTPException(status_code=presign.status_code, detail=f"Zernio presign failed: {presign.text}")
         info = presign.json()
         with open(file_path, "rb") as f:
-            put = client.put(info["uploadUrl"], content=f.read(), headers={"Content-Type": content_type})
+            put = client.put(info["uploadUrl"], content=f, headers={"Content-Type": content_type})  # stream, don't buffer 2GB
         if put.status_code >= 400:
             raise HTTPException(status_code=put.status_code, detail=f"Zernio media upload failed: {put.text}")
     return info["publicUrl"]
@@ -1714,6 +1715,22 @@ async def post_to_socials(req: SocialPostRequest):
         raise HTTPException(status_code=400, detail="Job result not available")
     if not req.accounts:
         raise HTTPException(status_code=400, detail="No social accounts selected")
+
+    # Zernio uploads sit in temporary storage that expires 7 days after upload; a post
+    # scheduled beyond that would publish against expired media and fail silently. Reject
+    # early (before the upload) with a clear message.
+    # ponytail: hard 7-day cap. Lift it only by uploading permanent media closer to publish time.
+    if req.scheduled_date:
+        try:
+            when = datetime.fromisoformat(req.scheduled_date.replace("Z", "+00:00"))
+            when = when.replace(tzinfo=None)  # compare naively; hours of tz slop don't matter at a 7-day boundary
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid scheduled_date: {req.scheduled_date}")
+        if when - datetime.now() > timedelta(days=7):
+            raise HTTPException(
+                status_code=400,
+                detail="Zernio can only schedule up to 7 days out (uploaded media expires after that). Pick a sooner time.",
+            )
 
     try:
         clip = job['result']['clips'][req.clip_index]
