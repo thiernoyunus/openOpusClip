@@ -4,7 +4,9 @@ import { getApiUrl } from '../config';
 import SubtitleModal from './SubtitleModal';
 import HookModal from './HookModal';
 import TranslateModal from './TranslateModal';
+import RemotionPreview from './RemotionPreview';
 import { renderInBrowser } from '../lib/renderInBrowser';
+import { defaultSubtitleConfig, loadDefaultCaptionStyle } from './editor/useEditorState';
 
 const fmtTime = (s) => {
     s = Math.max(0, Math.floor(s || 0));
@@ -72,6 +74,29 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     // Accumulate Remotion layers across operations
     const [activeLayers, setActiveLayers] = useState({ subtitles: null, hook: null, effects: null });
 
+    // Caption config saved in the editor for this clip (position/style/on-off),
+    // loaded from the clip's framing. null = clip has no framing / not loaded.
+    const [framingCaptions, setFramingCaptions] = useState(null);
+
+    // Default captions in the preview (Opus-style): overlay the same caption
+    // engine the editor/export use, so the user sees captions WITHOUT opening
+    // the editor. Only on an untouched clip (any applied edit is already baked
+    // into currentVideoUrl).
+    const previewSubtitles = React.useMemo(() => {
+        if (captions.length === 0) return null;
+        if (currentVideoUrl !== originalVideoUrl) return null;
+        // Prefer what the user set in the editor: keep its position/style but use
+        // the clip-relative caption timings from the transcript endpoint.
+        if (framingCaptions) {
+            if (framingCaptions.subtitles) return { ...framingCaptions.subtitles, captions };
+            // Captions were explicitly turned off in the editor → show none.
+            if (framingCaptions.captionsInitialized) return null;
+        }
+        // Untouched clip → fall back to the user's default caption style, if on.
+        if (loadDefaultCaptionStyle()?.enabled !== true) return null;
+        return defaultSubtitleConfig(captions);
+    }, [captions, currentVideoUrl, originalVideoUrl, framingCaptions]);
+
     // Fetch clip duration from transcript endpoint
     useEffect(() => {
         if (!jobId || index === undefined) return;
@@ -83,6 +108,24 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             })
             .catch(() => {});
     }, [jobId, index]);
+
+    // Load the clip's saved framing so the preview mirrors editor caption edits
+    // (position/style, or captions turned off). Only the caption bits are used.
+    useEffect(() => {
+        if (!clip.framing_url) { setFramingCaptions(null); return; }
+        let alive = true;
+        fetch(getApiUrl(clip.framing_url))
+            .then(res => res.ok ? res.json() : null)
+            .then(f => {
+                if (!alive || !f) return;
+                setFramingCaptions({
+                    subtitles: f.subtitles ?? null,
+                    captionsInitialized: f.captionsInitialized ?? false,
+                });
+            })
+            .catch(() => {});
+        return () => { alive = false; };
+    }, [clip.framing_url]);
 
     // Initialize/Reset form when modal opens
     useEffect(() => {
@@ -463,6 +506,17 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     className="relative aspect-[9/16] rounded-xl overflow-hidden bg-black border border-edge cursor-pointer"
                     onClick={() => { if (!playing) setOpenIndex(index); }}
                 >
+                    {playing && previewSubtitles ? (
+                        <RemotionPreview
+                            videoUrl={originalVideoUrl}
+                            durationInSeconds={clipDuration}
+                            subtitles={previewSubtitles}
+                            loop={false}
+                            onPlay={(t) => onPlay && onPlay(clip.start + t)}
+                            onPause={() => onPause && onPause()}
+                            onEnded={() => setPlaying(false)}
+                        />
+                    ) : (
                     <video
                         ref={videoRef}
                         src={currentVideoUrl}
@@ -474,6 +528,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                         onPause={() => onPause && onPause()}
                         onEnded={() => { setPlaying(false); if (videoRef.current) videoRef.current.currentTime = 0; }}
                     />
+                    )}
                     <span className="absolute top-2 left-2 bg-black/65 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">Clip {index + 1}</span>
                     <span className="absolute top-2 right-2 bg-black/65 text-white text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums">{fmtTime(durSec)}</span>
                     {hasScore && <div className="absolute bottom-2 left-2"><ScoreBadge score={viralityScore} box /></div>}
@@ -481,7 +536,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     {!playing && (
                         <div className="absolute inset-0 flex items-center justify-center bg-black/10 group-hover:bg-black/25 transition-colors pointer-events-none">
                             <button
-                                onClick={(e) => { e.stopPropagation(); setPlaying(true); videoRef.current && videoRef.current.play(); }}
+                                onClick={(e) => { e.stopPropagation(); setPlaying(true); if (!previewSubtitles) videoRef.current && videoRef.current.play(); }}
                                 className="w-12 h-12 rounded-full bg-black/55 backdrop-blur flex items-center justify-center text-white pointer-events-auto hover:bg-black/75 active:scale-95 transition-all"
                                 aria-label="Play clip"
                             >
@@ -526,7 +581,16 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     <div className="bg-surface border border-edge rounded-2xl w-full max-w-4xl max-h-[88vh] overflow-hidden flex shadow-2xl" onClick={(e) => e.stopPropagation()}>
                         {/* Preview */}
                         <div className="w-[clamp(200px,26vw,280px)] shrink-0 bg-black relative">
-                            <video src={currentVideoUrl} controls autoPlay playsInline className="w-full h-full object-cover aspect-[9/16]" />
+                            {previewSubtitles ? (
+                                <RemotionPreview
+                                    videoUrl={originalVideoUrl}
+                                    durationInSeconds={clipDuration}
+                                    subtitles={previewSubtitles}
+                                    className="aspect-[9/16]"
+                                />
+                            ) : (
+                                <video src={currentVideoUrl} controls autoPlay playsInline className="w-full h-full object-cover aspect-[9/16]" />
+                            )}
                             <span className="absolute top-3 right-3 bg-black/65 text-white text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums">{fmtTime(durSec)}</span>
                         </div>
 
