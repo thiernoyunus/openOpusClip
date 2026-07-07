@@ -1650,6 +1650,25 @@ def _zernio_headers(api_key: str) -> dict:
     return {"Authorization": f"Bearer {api_key}"}
 
 
+# Zernio uploads sit in temporary storage that expires 7 days after upload; a post that
+# publishes after that references expired media and fails silently. Reject far-future
+# schedules/reschedules up front with a clear message.
+# ponytail: hard 7-day cap. Lift it only by uploading permanent media closer to publish time.
+def _reject_if_beyond_media_window(scheduled_date: Optional[str]):
+    if not scheduled_date:
+        return
+    try:
+        when = datetime.fromisoformat(scheduled_date.replace("Z", "+00:00")).replace(tzinfo=None)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail=f"Invalid scheduled date: {scheduled_date}")
+    # Compare naively; hours of timezone slop don't matter at a 7-day boundary.
+    if when - datetime.now() > timedelta(days=7):
+        raise HTTPException(
+            status_code=400,
+            detail="Zernio can only schedule up to 7 days out (uploaded media expires after that). Pick a sooner time.",
+        )
+
+
 async def _zernio_request(method: str, path: str, api_key: str, params: dict = None, json_body: dict = None):
     """Forward a request to Zernio and return its JSON, mapping errors to HTTP errors."""
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -1716,21 +1735,17 @@ async def post_to_socials(req: SocialPostRequest):
     if not req.accounts:
         raise HTTPException(status_code=400, detail="No social accounts selected")
 
-    # Zernio uploads sit in temporary storage that expires 7 days after upload; a post
-    # scheduled beyond that would publish against expired media and fail silently. Reject
-    # early (before the upload) with a clear message.
-    # ponytail: hard 7-day cap. Lift it only by uploading permanent media closer to publish time.
-    if req.scheduled_date:
-        try:
-            when = datetime.fromisoformat(req.scheduled_date.replace("Z", "+00:00"))
-            when = when.replace(tzinfo=None)  # compare naively; hours of tz slop don't matter at a 7-day boundary
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid scheduled_date: {req.scheduled_date}")
-        if when - datetime.now() > timedelta(days=7):
-            raise HTTPException(
-                status_code=400,
-                detail="Zernio can only schedule up to 7 days out (uploaded media expires after that). Pick a sooner time.",
-            )
+    # Reject far-future schedules before the (potentially large) upload.
+    _reject_if_beyond_media_window(req.scheduled_date)
+
+    # Pinterest needs a board id per post, which we don't collect yet — reject clearly
+    # so a defaulted-on Pinterest account can't silently fail the whole post.
+    # ponytail: drop this guard once the modals collect a board per Pinterest account.
+    if any(acc.platform == "pinterest" for acc in req.accounts):
+        raise HTTPException(
+            status_code=400,
+            detail="Pinterest posting isn't supported yet (it needs a board). Deselect the Pinterest account and try again.",
+        )
 
     try:
         clip = job['result']['clips'][req.clip_index]
@@ -1800,11 +1815,14 @@ async def get_social_accounts(api_key: str = Header(..., alias="X-Zernio-Key")):
 async def get_social_connect_url(platform: str, api_key: str = Header(..., alias="X-Zernio-Key")):
     """Get the OAuth URL to connect a social account of the given platform."""
     # Zernio groups accounts under profiles; use the default (first) profile.
+    # A brand-new key has none, so create one on demand rather than dead-ending the connect flow.
     profiles = await _zernio_request("GET", "/profiles", api_key)
     raw = profiles.get("profiles", profiles) if isinstance(profiles, dict) else profiles
     if not isinstance(raw, list) or not raw:
-        raise HTTPException(status_code=400, detail="No Zernio profile found for this API key")
-    default = next((p for p in raw if p.get("isDefault")), raw[0])
+        created = await _zernio_request("POST", "/profiles", api_key, json_body={"name": "OpenShorts"})
+        default = created.get("profile", created) if isinstance(created, dict) else created
+    else:
+        default = next((p for p in raw if p.get("isDefault")), raw[0])
     data = await _zernio_request("GET", f"/connect/{platform}", api_key, params={"profileId": default.get("_id")})
     return {"authUrl": data.get("authUrl")}
 
@@ -1827,6 +1845,8 @@ async def list_social_posts(
 @app.put("/api/social/posts/{post_id}")
 async def update_social_post(post_id: str, body: dict, api_key: str = Header(..., alias="X-Zernio-Key")):
     """Update a scheduled post (e.g. reschedule: {scheduledFor, timezone})."""
+    # Same media-expiry ceiling as posting — a reschedule past the window would fail at publish.
+    _reject_if_beyond_media_window(body.get("scheduledFor"))
     return await _zernio_request("PUT", f"/posts/{post_id}", api_key, json_body=body)
 
 

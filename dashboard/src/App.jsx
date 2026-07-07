@@ -876,7 +876,8 @@ function App() {
                         </div>
                       )}
                       <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                        {['tiktok', 'instagram', 'youtube', 'facebook', 'twitter', 'linkedin', 'threads', 'pinterest'].map((p) => (
+                        {/* Pinterest omitted: Zernio needs a per-post board id we don't collect yet */}
+                        {['tiktok', 'instagram', 'youtube', 'facebook', 'twitter', 'linkedin', 'threads'].map((p) => (
                           <button
                             key={p}
                             onClick={() => connectSocialAccount(p)}
