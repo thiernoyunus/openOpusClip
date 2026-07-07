@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Youtube, Upload, FileVideo, X, Scissors, Captions } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Youtube, Upload, FileVideo, X, Scissors, Captions, ChevronLeft, ChevronRight, Ban } from 'lucide-react';
 import { getApiUrl } from '../config';
 import { CAPTION_TEMPLATES } from '@remotion-src/lib/captionTemplates';
 import { saveDefaultCaptionStyle, loadDefaultCaptionStyle } from './editor/useEditorState';
@@ -25,6 +25,32 @@ const CLIP_LENGTHS = [
     { value: '180-300', label: '3 – 5m', min: 180, max: 300 },
     { value: '300-600', label: '5 – 10m', min: 300, max: 600 },
 ];
+
+// One caption-style tile: a framed preview cell above a label. The preview
+// (children) is centered in a fixed-height stage so every template lines up
+// regardless of its own font size, and clips if it overflows.
+function CaptionCell({ selected, label, onClick, children }) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            title={label}
+            aria-pressed={selected}
+            className={`snap-start w-[104px] flex flex-col gap-1.5 rounded-xl p-1.5 border transition-colors ${
+                selected
+                    ? 'bg-viral/15 border-viral/60 ring-1 ring-viral/40'
+                    : 'border-edge bg-surface2/40 hover:bg-white/5 hover:border-white/15'
+            }`}
+        >
+            <span className="flex items-center justify-center h-16 w-full rounded-lg bg-black/40 overflow-hidden">
+                {children}
+            </span>
+            <span className={`block text-[10px] font-medium truncate max-w-full text-center ${selected ? 'text-fg' : 'text-muted'}`}>
+                {label}
+            </span>
+        </button>
+    );
+}
 
 function ClipTab({ active, onClick, icon: Icon, label }) {
     return (
@@ -77,6 +103,11 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
         const d = loadDefaultCaptionStyle();
         return d?.enabled === true ? (d.style?.template ?? 'none') : 'none';
     });
+    const captionStripRef = useRef(null);
+    const scrollCaptions = (dir) => {
+        const el = captionStripRef.current;
+        if (el) el.scrollBy({ left: dir * el.clientWidth * 0.85, behavior: 'smooth' });
+    };
 
     // Trim (Don't-clip mode, single file only — we can read its duration locally).
     // durMeta is tagged with the file it was measured for, so we derive `duration`
@@ -370,35 +401,51 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
                     )}
                 </div>
 
-                {/* Caption preset strip */}
+                {/* Caption preset strip — two-row grid, paged horizontally */}
                 <div className="mt-4">
-                    <span className="block text-xs font-medium text-zinc-400 mb-2">Caption style <span className="text-zinc-600">(applied when you add captions in the editor)</span></span>
-                    <div className="flex gap-2 overflow-x-auto custom-scrollbar pb-2">
-                        <button
-                            type="button"
-                            onClick={() => pickCaption(null)}
-                            className={`shrink-0 w-24 h-16 rounded-lg border flex flex-col items-center justify-center gap-1 transition-colors ${
-                                captionTemplate === 'none' ? 'bg-viral/15 border-viral/50' : 'border-edge bg-surface2/50 hover:bg-white/5'
-                            }`}
-                        >
-                            <X size={16} className="text-muted" />
-                            <span className="text-[10px] text-muted">No caption</span>
-                        </button>
-                        {CAPTION_TEMPLATES.map((tpl) => (
+                    <div className="flex items-center justify-between mb-2.5">
+                        <span className="text-xs font-medium text-zinc-400">
+                            Caption style <span className="text-zinc-600">(shown on your clips — fine-tune in the editor)</span>
+                        </span>
+                        <div className="flex items-center gap-1.5">
                             <button
-                                key={tpl.id}
                                 type="button"
-                                onClick={() => pickCaption(tpl)}
-                                title={tpl.label}
-                                className={`shrink-0 w-24 h-16 px-1 rounded-lg border flex flex-col items-center justify-center gap-1 overflow-hidden transition-colors ${
-                                    captionTemplate === tpl.id ? 'bg-viral/15 border-viral/50' : 'border-edge bg-surface2/50 hover:bg-white/5'
-                                }`}
+                                onClick={() => scrollCaptions(-1)}
+                                aria-label="Previous caption styles"
+                                className="w-7 h-7 rounded-full border border-edge bg-surface2/60 text-muted flex items-center justify-center hover:text-fg hover:bg-white/5 transition-colors"
                             >
-                                <span className="flex items-center justify-center h-7 overflow-hidden">
-                                    <CaptionPreview templateId={tpl.id} previewFontPx={15} />
-                                </span>
-                                <span className="block text-[9px] text-muted truncate max-w-full">{tpl.label}</span>
+                                <ChevronLeft size={15} />
                             </button>
+                            <button
+                                type="button"
+                                onClick={() => scrollCaptions(1)}
+                                aria-label="More caption styles"
+                                className="w-7 h-7 rounded-full border border-edge bg-surface2/60 text-muted flex items-center justify-center hover:text-fg hover:bg-white/5 transition-colors"
+                            >
+                                <ChevronRight size={15} />
+                            </button>
+                        </div>
+                    </div>
+                    <div
+                        ref={captionStripRef}
+                        className="grid grid-rows-2 grid-flow-col auto-cols-max gap-2.5 overflow-x-auto custom-scrollbar pb-2 snap-x"
+                    >
+                        <CaptionCell
+                            selected={captionTemplate === 'none'}
+                            label="No caption"
+                            onClick={() => pickCaption(null)}
+                        >
+                            <Ban size={20} className="text-muted" strokeWidth={1.75} />
+                        </CaptionCell>
+                        {CAPTION_TEMPLATES.map((tpl) => (
+                            <CaptionCell
+                                key={tpl.id}
+                                selected={captionTemplate === tpl.id}
+                                label={tpl.label}
+                                onClick={() => pickCaption(tpl)}
+                            >
+                                <CaptionPreview templateId={tpl.id} animate={captionTemplate === tpl.id} />
+                            </CaptionCell>
                         ))}
                     </div>
                 </div>
