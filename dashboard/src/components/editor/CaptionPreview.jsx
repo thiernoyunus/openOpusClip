@@ -88,10 +88,9 @@ export default function CaptionPreview({ templateId, animate = false, words = SA
     }, [animate, template, words.length]);
 
     // Scale the (wrapped) caption to fit its box. scrollWidth/Height ignore CSS
-    // transforms, so they give the natural layout size regardless of `fit`.
-    // Runs every render (catches font load + animation size shifts); the
-    // no-op-when-unchanged guard below keeps that from looping.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // transforms, so the natural layout size is stable across animation frames
+    // (templates animate via transforms) — measuring only when the template,
+    // words, or loaded fonts change avoids per-frame layout thrashing.
     useLayoutEffect(() => {
         const box = boxRef.current, cap = capRef.current;
         if (!box || !cap) return;
@@ -100,7 +99,7 @@ export default function CaptionPreview({ templateId, animate = false, words = SA
         if (!bw || !bh || !cw || !ch) return;
         const next = Math.min(bw / cw, bh / ch, 1) * 0.94;
         setFit((prev) => (Math.abs(prev - next) > 0.005 ? next : prev));
-    });
+    }, [templateId, words, fontsReady]);
 
     if (!template) return null;
 
