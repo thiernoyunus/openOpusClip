@@ -56,7 +56,7 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 8. **Hook Overlay** - Text overlays with styled fonts
 9. **Voice Dubbing** - Optional ElevenLabs AI translation (30+ languages)
 10. **S3 Backup** - Silent background upload
-11. **Social Distribution** - Upload-Post API (async upload)
+11. **Social Distribution** - Zernio API (publish, schedule, calendar, analytics)
 
 ### Key Files
 | File | Purpose |
@@ -89,7 +89,11 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 | POST | `/api/hook` | Add text hook overlays |
 | POST | `/api/translate` | AI voice dubbing via ElevenLabs |
 | GET | `/api/translate/languages` | List supported dubbing languages |
-| POST | `/api/social/post` | Post to social media (async upload) |
+| POST | `/api/social/post` | Publish/schedule a clip via Zernio |
+| GET | `/api/social/accounts` | List connected social accounts (Zernio) |
+| GET | `/api/social/connect/{platform}` | Get OAuth URL to connect an account |
+| GET/PUT/DELETE | `/api/social/posts[/{id}]` | List, reschedule, delete scheduled posts |
+| GET | `/api/social/analytics` | Per-post/per-account stats (Zernio) |
 
 ### Concurrency Model
 Async job queue with semaphore-based concurrency control. Configure via `MAX_CONCURRENT_JOBS` env var (default: 5). Jobs auto-cleanup after 1 hour.
@@ -104,12 +108,12 @@ Async job queue with semaphore-based concurrency control. Configure via `MAX_CON
 **Client-side (localStorage, encrypted):**
 - `GEMINI_API_KEY` - Google Gemini API key (required)
 - `ELEVENLABS_API_KEY` - ElevenLabs API key for voice dubbing (optional)
-- `UPLOAD_POST_API_KEY` - Upload-Post API key for social posting (optional)
+- `ZERNIO_API_KEY` - Zernio API key for social posting, scheduling & analytics (optional)
 
 > API keys are stored encrypted in the browser and sent via headers only when needed. Never stored server-side.
 
 ## Tech Stack
 - **Backend:** Python 3.11, FastAPI, google-genai, faster-whisper, ultralytics (YOLOv8), mediapipe, opencv-python, yt-dlp, FFmpeg, httpx
 - **Frontend:** React 18, Vite 4, Tailwind CSS 3.4
-- **External APIs:** Google Gemini, ElevenLabs Dubbing, Upload-Post
+- **External APIs:** Google Gemini, ElevenLabs Dubbing, Zernio
 - **Infrastructure:** Docker + Docker Compose, AWS S3
