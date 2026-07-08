@@ -911,8 +911,9 @@ def _clip_caption_origin(output_dir: str, clip_index: int):
         try:
             with open(matches[0]) as f:
                 framing = json.load(f)
-            origin = framing.get("captionsOriginFrame", framing.get("clipInFrame", 0)) or 0
-            fps = (framing.get("source") or {}).get("fps") or 30.0
+            if isinstance(framing, dict):
+                origin = framing.get("captionsOriginFrame", framing.get("clipInFrame", 0)) or 0
+                fps = (framing.get("source") or {}).get("fps") or 30.0
         except (OSError, json.JSONDecodeError):
             pass
     return int(origin), float(fps)
@@ -931,9 +932,10 @@ def _extension_caption_words(ext: dict, transcript: dict, captions_origin: int, 
     words = []
     for segment in transcript.get("segments", []):
         for w in segment.get("words", []):
-            if w["end"] > start_sec and w["start"] < end_sec:
-                fs = frame_offset + round((w["start"] - start_sec) * src_fps)
-                fe = frame_offset + round((w["end"] - start_sec) * src_fps)
+            ws, we = w.get("start"), w.get("end")
+            if ws is not None and we is not None and we > start_sec and ws < end_sec:
+                fs = frame_offset + round((ws - start_sec) * src_fps)
+                fe = frame_offset + round((we - start_sec) * src_fps)
                 cap = {
                     "text": w.get("word", "").strip(),
                     "startMs": int((fs - captions_origin) / src_fps * 1000),
@@ -974,7 +976,8 @@ async def get_source_transcript(job_id: str):
     has_original = os.path.exists(original_path)
     duration = 0.0
     if has_original:
-        duration = _probe_media(original_path)["duration"]
+        loop = asyncio.get_running_loop()
+        duration = (await loop.run_in_executor(None, _probe_media, original_path))["duration"]
     if not duration:
         # Fall back to the last transcript word so the picker still renders a range
         # even if the original probe is momentarily unavailable.
@@ -987,6 +990,7 @@ async def get_source_transcript(job_id: str):
         words = [
             {"text": w.get("word", "").strip(), "start": float(w["start"]), "end": float(w["end"])}
             for w in segment.get("words", [])
+            if w.get("start") is not None and w.get("end") is not None
         ]
         if words:
             segments.append({
@@ -1010,7 +1014,8 @@ def _run_extend_task(task_id: str, job_id: str, clip_index: int, start_sec: floa
     Runs in a BackgroundTask; updates extend_tasks[task_id]."""
     def _fail(msg):
         with extend_tasks_lock:
-            extend_tasks[task_id] = {"status": "error", "error": msg}
+            prev = extend_tasks.get(task_id, {})
+            extend_tasks[task_id] = {**prev, "status": "error", "error": msg}
 
     tmp_paths = []
     try:
@@ -1053,9 +1058,13 @@ def _run_extend_task(task_id: str, job_id: str, clip_index: int, start_sec: floa
         # 2. Concat the segment onto the end of the editor source.
         list_path = os.path.join(output_dir, f".extend_{task_id}_list.txt")
         tmp_paths.append(list_path)
+        def _concat_quote(p):
+            # ffmpeg concat demuxer: single-quote the path and escape any
+            # embedded single quote (paths can carry a video title's apostrophe).
+            return os.path.abspath(p).replace("'", "'\\''")
         with open(list_path, "w") as f:
-            f.write(f"file '{os.path.abspath(source_path)}'\n")
-            f.write(f"file '{os.path.abspath(seg_path)}'\n")
+            f.write(f"file '{_concat_quote(source_path)}'\n")
+            f.write(f"file '{_concat_quote(seg_path)}'\n")
         combined_path = os.path.join(output_dir, f".extend_{task_id}_out.mp4")
         tmp_paths.append(combined_path)
 
@@ -1105,7 +1114,9 @@ def _run_extend_task(task_id: str, job_id: str, clip_index: int, start_sec: floa
             words = _extension_caption_words(ext_record, transcript, origin, src_fps)
 
         with extend_tasks_lock:
+            prev = extend_tasks.get(task_id, {})
             extend_tasks[task_id] = {
+                **prev,
                 "status": "done",
                 "result": {
                     "newDurationFrames": new_frames,
@@ -1139,7 +1150,8 @@ async def extend_clip(job_id: str, clip_index: int, req: ExtendClipRequest, back
             detail="Original video not available for this project — process the video again to enable Extend.",
         )
     start_sec, end_sec = float(req.start_sec), float(req.end_sec)
-    duration = _probe_media(original_path)["duration"] or 0.0
+    loop = asyncio.get_running_loop()
+    duration = (await loop.run_in_executor(None, _probe_media, original_path))["duration"] or 0.0
     if not (0 <= start_sec < end_sec):
         raise HTTPException(status_code=422, detail="start_sec must be >= 0 and less than end_sec")
     if duration and end_sec > duration + 0.5:
@@ -1151,7 +1163,12 @@ async def extend_clip(job_id: str, clip_index: int, req: ExtendClipRequest, back
 
     task_id = str(uuid.uuid4())
     with extend_tasks_lock:
-        extend_tasks[task_id] = {"status": "pending"}
+        # Prune finished tasks older than an hour so this dict can't grow forever.
+        now = time.time()
+        for tid, t in list(extend_tasks.items()):
+            if now - t.get("created_at", 0) > 3600:
+                extend_tasks.pop(tid, None)
+        extend_tasks[task_id] = {"status": "pending", "created_at": now}
     background_tasks.add_task(_run_extend_task, task_id, job_id, clip_index, start_sec, end_sec)
     return {"task_id": task_id}
 
