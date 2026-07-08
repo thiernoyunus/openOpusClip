@@ -30,141 +30,179 @@ const PLATFORMS = [
 function ClipCard({ platform, poster, cardRef }) {
   const { Icon, label, score, bg } = platform;
   return (
+    // Outer wrapper: NO overflow-hidden, so the platform circle can spill past
+    // the top edge without being clipped. Media clipping lives on the inner div.
     <div
       ref={cardRef}
-      className="showcase-card relative w-[120px] sm:w-[140px] shrink-0 rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-xl shadow-black/40 bg-surface"
-      style={{ aspectRatio: '9 / 16' }}
+      className="showcase-card relative w-[120px] sm:w-[140px] shrink-0"
     >
-      <img src={poster} alt={`Vertical clip for ${label}`} loading="lazy" className="w-full h-full object-cover" />
-      {/* platform icon, overlapping the top edge */}
+      <div
+        className="rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-xl shadow-black/40 bg-surface"
+        style={{ aspectRatio: '9 / 16' }}
+      >
+        <img src={poster} alt={`Vertical clip for ${label}`} loading="lazy" className="w-full h-full object-cover" />
+        {/* virality score, bottom-left — stays inside the media */}
+        <div className="showcase-badge absolute bottom-2 left-2 bg-black/70 backdrop-blur rounded-lg px-2 py-1 leading-none">
+          <div className="text-[8px] font-semibold tracking-widest text-zinc-400">SCORE</div>
+          <div className="text-lg font-extrabold text-[#3DD68C]">{score}</div>
+        </div>
+      </div>
+      {/* platform icon, overlapping the top edge (on the un-clipped outer div) */}
       <div
         className="showcase-badge absolute -top-3 left-1/2 -translate-x-1/2 w-8 h-8 rounded-full flex items-center justify-center text-white ring-2 ring-background"
         style={{ backgroundColor: bg }}
       >
         <Icon size={16} />
       </div>
-      {/* virality score, bottom-left */}
-      <div className="showcase-badge absolute bottom-2 left-2 bg-black/70 backdrop-blur rounded-lg px-2 py-1 leading-none">
-        <div className="text-[8px] font-semibold tracking-widest text-zinc-400">SCORE</div>
-        <div className="text-lg font-extrabold text-[#3DD68C]">{score}</div>
-      </div>
     </div>
   );
 }
 
 export default function ClipShowcase({ onLaunchApp }) {
-  const stageRef = useRef(null);
+  const rootRef = useRef(null);
   const videoRef = useRef(null);
   const sourceRef = useRef(null);
+  const barRef = useRef(null);
   const cardRefs = useRef([]);
 
   useLayoutEffect(() => {
-    // Autoplay only when motion is welcome. Under prefers-reduced-motion the
-    // matchMedia branch below never runs (nothing would pause the loop), so we
-    // simply never start it — reduced-motion users see the static poster frame.
-    const allowMotion = window.matchMedia('(prefers-reduced-motion: no-preference)').matches;
-    if (allowMotion && videoRef.current) videoRef.current.play().catch(() => {});
-
     const ctx = gsap.context(() => {
       const mm = gsap.matchMedia();
-      // Only pin + scrub at >=1024px when motion is welcome. Below that (phones AND
-      // tablets) fall through to the static CSS layout — six cards need ~900px in
-      // one row, so tablets must reflow-wrap, not pin (a pinned h-screen stage
-      // would clip the wrapped second row). Breakpoint MUST match the lg: classes.
-      mm.add('(min-width: 1024px) and (prefers-reduced-motion: no-preference)', () => {
-        const cards = cardRefs.current.filter(Boolean);
-        const badges = stageRef.current.querySelectorAll('.showcase-badge');
 
-        // collapsed start: cards tucked below/behind, badges hidden
-        gsap.set(cards, { opacity: 0, scale: 0.75, yPercent: 40 });
-        gsap.set(badges, { scale: 0, opacity: 0 });
+      // ── Motion path: self-running loop on desktop, video allowed everywhere ──
+      // Only build the timeline at >=1024px. Below that we keep it cheap and show
+      // the static final layout (CSS), but the video may still play if motion is ok.
+      mm.add(
+        {
+          isDesktop: '(min-width: 1024px)',
+          reduceMotion: '(prefers-reduced-motion: reduce)',
+        },
+        (context) => {
+          const { isDesktop, reduceMotion } = context.conditions;
 
-        const tl = gsap.timeline({
-          scrollTrigger: {
-            trigger: stageRef.current,
-            start: 'top top',
-            end: 'bottom bottom',
-            scrub: 1,
-            pin: '.showcase-stage',
+          // Video: play only when motion is welcome. Reduced-motion → poster only.
+          if (!reduceMotion && videoRef.current) videoRef.current.play().catch(() => {});
+
+          // No loop timeline for reduced-motion or non-desktop: render static final
+          // state (cards + badges already visible via base CSS — nothing to do).
+          if (reduceMotion || !isDesktop) return;
+
+          const cards = cardRefs.current.filter(Boolean);
+          const badges = rootRef.current.querySelectorAll('.showcase-badge');
+          const shimmer = rootRef.current.querySelector('.showcase-shimmer');
+
+          // 1. One-time intro: source card + input bar drift in, then STAY PUT.
+          //    Kept outside the loop so the hero video never blinks on repeat.
+          gsap.fromTo(
+            [sourceRef.current, barRef.current],
+            { y: -30, opacity: 0 },
+            { y: 0, opacity: 1, ease: 'power3.out', duration: 0.6, stagger: 0.12 }
+          );
+
+          // Repeating cycle: shimmer -> clips deal out -> badges -> fade out.
+          const tl = gsap.timeline({ repeat: -1, repeatDelay: 1.2, delay: 0.7 });
+
+          // 2. Processing beat — shimmer sweeps the bar + a gentle button pulse.
+          tl.fromTo(
+            shimmer,
+            { xPercent: -120, opacity: 0.9 },
+            { xPercent: 120, ease: 'power1.inOut', duration: 1.0 },
+            0
+          );
+          tl.to('.showcase-cta', { scale: 1.05, duration: 0.35, yoyo: true, repeat: 1, ease: 'sine.inOut' }, 0.1);
+
+          // 3. Six clips deal out below, staggered + alternating tilt.
+          tl.fromTo(
+            cards,
+            { opacity: 0, scale: 0.7, y: 50 },
+            {
+              opacity: 1, scale: 1, y: 0,
+              rotate: (i) => (i % 2 === 0 ? -3 : 3),
+              ease: 'power3.out', duration: 0.5, stagger: 0.07,
+            },
+            0.9
+          );
+          // Then platform + score badges pop.
+          tl.fromTo(
+            badges,
+            { scale: 0, opacity: 0 },
+            { scale: 1, opacity: 1, ease: 'back.out(1.7)', duration: 0.35, stagger: 0.03 },
+            1.5
+          );
+
+          // 4. Hold, then clips + badges fade down/out quickly. Source stays put.
+          tl.to([cards, badges], {
+            opacity: 0, y: 30, duration: 0.4, ease: 'power1.in', stagger: 0.02,
+          }, '+=2');
+
+          // Pause the loop + video when offscreen; resume when visible.
+          ScrollTrigger.create({
+            trigger: rootRef.current,
+            start: 'top bottom',
+            end: 'bottom top',
             onToggle: (self) => {
               const v = videoRef.current;
-              if (!v) return;
-              if (self.isActive) v.play().catch(() => {});
-              else v.pause();
+              if (self.isActive) {
+                tl.play();
+                if (v) v.play().catch(() => {});
+              } else {
+                tl.pause();
+                if (v) v.pause();
+              }
             },
-          },
-        });
-
-        // Phase A — source shrinks & rises, making room for the clips.
-        tl.to(sourceRef.current, { scale: 0.62, yPercent: -14, ease: 'power2.inOut', duration: 0.35 }, 0);
-        // Phase B — clips stream out of the machine.
-        tl.to(cards, {
-          opacity: 1, scale: 1, yPercent: 0,
-          rotate: (i) => (i - 2.5) * 1.6,
-          ease: 'power3.out', duration: 0.5,
-          stagger: 0.06,
-        }, 0.28);
-        // Phase C — score badges + platform icons pop in.
-        tl.to(badges, {
-          scale: 1, opacity: 1, ease: 'back.out(1.7)', duration: 0.3, stagger: 0.03,
-        }, 0.7);
-        tl.to('.showcase-tagline', { opacity: 1, y: 0, duration: 0.3 }, 0.82);
-      });
-    }, stageRef);
+          });
+        }
+      );
+    }, rootRef);
     return () => ctx.revert();
   }, []);
 
   return (
-    <section ref={stageRef} className="relative motion-safe:lg:h-[300vh]">
-      <div className="showcase-stage motion-safe:lg:sticky motion-safe:lg:top-0 motion-safe:lg:h-screen flex flex-col items-center justify-center px-6 py-16 motion-safe:lg:py-8 overflow-hidden">
-        {/* dark radial stage glow */}
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(59,130,246,0.10),transparent_60%)]" />
+    <section ref={rootRef} className="relative min-h-[80vh] flex flex-col items-center justify-center px-6 py-16 overflow-hidden">
+      {/* dark radial stage glow */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(59,130,246,0.10),transparent_60%)]" />
 
-        {/* source 16:9 video */}
-        {/* aspect-video keeps the 16:9 shape; on the pinned desktop layout the
-            source is sized by VIEWPORT HEIGHT (h-auto → h-[38vh] w-auto) so the
-            whole composition fits short 1366x768 / 1024x768 screens without the
-            h-screen stage clipping the settled cards/tagline. */}
-        <div ref={sourceRef} className="showcase-source relative w-full max-w-[680px] aspect-video motion-safe:lg:w-auto motion-safe:lg:max-w-none motion-safe:lg:h-[38vh] motion-safe:lg:max-h-[400px] rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-2xl shadow-black/50">
-          <video
-            ref={videoRef}
-            className="w-full h-full object-cover"
-            src="/landing/source-loop.mp4"
-            poster="/landing/source-poster.jpg"
-            muted
-            playsInline
-            loop
-            preload="metadata"
-          />
-        </div>
+      {/* source 16:9 video */}
+      <div ref={sourceRef} className="showcase-source relative w-full max-w-[560px] aspect-video rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-2xl shadow-black/50">
+        <video
+          ref={videoRef}
+          className="w-full h-full object-cover"
+          src="/landing/source-loop.mp4"
+          poster="/landing/source-poster.jpg"
+          muted
+          playsInline
+          loop
+          preload="metadata"
+        />
+      </div>
 
-        {/* input bar mock — the primary CTA */}
+      {/* input bar mock — the primary CTA */}
+      <div ref={barRef} className="relative z-10 mt-6">
         <button
           onClick={onLaunchApp}
-          className="relative z-10 mt-6 flex items-center gap-3 bg-black/60 backdrop-blur border border-white/10 rounded-full pl-4 pr-2 py-2 hover:border-primary/40 transition-colors group"
+          className="showcase-cta relative flex items-center gap-3 bg-black/60 backdrop-blur border border-white/10 rounded-full pl-4 pr-2 py-2 hover:border-primary/40 transition-colors group overflow-hidden"
         >
+          {/* shimmer sweep for the "processing" beat */}
+          <span className="showcase-shimmer pointer-events-none absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-white/15 to-transparent opacity-0" />
           <Link2 size={16} className="text-zinc-500" />
           <span className="text-sm text-zinc-400">Drop a long video and…</span>
           <span className="flex items-center gap-1.5 bg-white text-black text-sm font-semibold rounded-full px-4 py-1.5 group-hover:bg-primary group-hover:text-white transition-colors">
             Get clips <ArrowRight size={15} />
           </span>
         </button>
+      </div>
 
-        {/* generated 9:16 clips */}
-        <div className="relative z-0 mt-8 flex flex-wrap items-start justify-center gap-3 sm:gap-4 max-w-5xl">
-          {PLATFORMS.map((p, i) => (
+      {/* generated 9:16 clips */}
+      <div className="relative z-0 mt-10 flex flex-nowrap lg:flex-wrap items-start justify-start lg:justify-center gap-3 sm:gap-4 max-w-5xl w-full overflow-x-auto lg:overflow-visible snap-x snap-mandatory pb-2 px-1">
+        {PLATFORMS.map((p, i) => (
+          <div key={p.label} className="snap-center pt-3">
             <ClipCard
-              key={p.label}
               platform={p}
               poster={`/landing/clip-${i + 1}.jpg`}
               cardRef={(el) => (cardRefs.current[i] = el)}
             />
-          ))}
-        </div>
-
-        <p className="showcase-tagline mt-8 text-center text-zinc-400 motion-safe:lg:opacity-0 motion-safe:lg:translate-y-3">
-          One long video. <span className="text-white font-semibold">15 scored, captioned, vertical clips.</span>
-        </p>
+          </div>
+        ))}
       </div>
     </section>
   );
