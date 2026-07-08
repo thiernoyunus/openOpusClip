@@ -239,6 +239,45 @@ export const editorReducer = (state, action) => {
             clips.splice(at, 0, { ...action.clip, id: newClipId() });
             return withHistory({ ...state.framing, clips });
         }
+        case 'EXTEND_SOURCE': {
+            // "Extend a clip": the backend already appended a section of the
+            // ORIGINAL video onto the end of the padded editor source, so grow the
+            // source duration, insert the new clip after the selected clip (or at
+            // the end), and append the appended section's caption words to the
+            // subtitle track so they render at the moment they're spoken.
+            const { newDurationFrames, clip, afterClipId, words } = action;
+            const framing = state.framing;
+            const clips = [...framing.clips];
+            let at = clips.length;
+            if (afterClipId) {
+                const idx = clips.findIndex((c) => c.id === afterClipId);
+                if (idx !== -1) at = idx + 1;
+            }
+            // ponytail: auto-reframe analysis of extensions is a later upgrade —
+            // the new clip is a plain fill with no tracking; the manual Tracker
+            // already works on it.
+            clips.splice(at, 0, {
+                id: newClipId(),
+                sourceStart: clip.sourceStart,
+                sourceEnd: clip.sourceEnd,
+                layout: clip.layout || 'fill',
+                trackedFaceIds: [],
+                cameraKeyframes: [],
+                manualCrop: null,
+            });
+            const nextFraming = {
+                ...framing,
+                source: { ...framing.source, durationFrames: newDurationFrames },
+                clips,
+            };
+            if (nextFraming.subtitles && Array.isArray(words) && words.length) {
+                nextFraming.subtitles = {
+                    ...nextFraming.subtitles,
+                    captions: [...(nextFraming.subtitles.captions || []), ...words],
+                };
+            }
+            return withHistory(nextFraming);
+        }
         case 'DELETE_CLIP': {
             // Remove a clip; the gap closes by ripple. Never empty the track.
             if (state.framing.clips.length <= 1) return state;

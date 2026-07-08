@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Loader2, AlertCircle, Captions, Crosshair, Sparkles, Type, Music, Clapperboard, ChevronRight, ChevronDown, Check, Crop, Trash2 } from 'lucide-react';
 import { getApiUrl } from '../../config';
 import useEditorState, { defaultSubtitleConfig, loadDefaultCaptionStyle, tracksInClip, LAYOUT_PANELS } from './useEditorState';
-import { outputDurationFrames, outputToSource, placedClips, sourceToOutputAll } from '@remotion-src/lib/edl';
+import { outputDurationFrames, outputToSource, placedClips } from '@remotion-src/lib/edl';
 import EditorTopBar from './EditorTopBar';
 import EditorCanvas, { EDITOR_FPS } from './EditorCanvas';
 import EditorTimeline from './EditorTimeline';
@@ -14,6 +14,7 @@ import TextPanel from './TextPanel';
 import AudioPanel from './AudioPanel';
 import BrollPanel from './BrollPanel';
 import ManualCropModal from './ManualCropModal';
+import ExtendClipModal from './ExtendClipModal';
 
 const LAYOUT_LABEL = {
     fill: 'Fill',
@@ -310,13 +311,22 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     // opens it, clicking the active tool (or the header chevron) collapses it.
     const [panelOpen, setPanelOpen] = useState(false);
     const [trackerOn, setTrackerOn] = useState(false);
+    // "Extend a clip": modal open + a background flag while the appended section
+    // is being cut/concatenated on the server (editing stays usable meanwhile).
+    const [showExtendModal, setShowExtendModal] = useState(false);
+    const [extending, setExtending] = useState(false);
     // Caption placement scope: 'all' = drag/preset edits the global subtitle
     // position (every clip); 'clip' = edits only the clip at the playhead.
     const [captionScope, setCaptionScope] = useState('all');
     const playerRef = useRef(null);
 
     const framingUrl = clip.framing_url ? getApiUrl(clip.framing_url) : null;
-    const sourceUrl = clip.source_url ? getApiUrl(clip.source_url) : null;
+    // Bumped after an Extend rewrites _source.mp4 on disk, so the player drops
+    // its cached copy of the old (shorter) file and can seek into the new frames.
+    const [sourceVersion, setSourceVersion] = useState(0);
+    const sourceUrl = clip.source_url
+        ? getApiUrl(clip.source_url) + (sourceVersion ? `?v=${sourceVersion}` : '')
+        : null;
 
     useEffect(() => {
         if (!framingUrl) {
@@ -584,6 +594,53 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         return hit?.clip.id ?? framing.clips?.[0]?.id ?? null;
     }, [framing]);
 
+    // Extend a clip: POST the section, then poll the background task. On done,
+    // grow the source, insert the new clip after the selected one, and append
+    // the appended section's caption words (both to the subtitle track via the
+    // reducer and to the local transcript list so they show and survive a toggle).
+    const handleExtendAdd = useCallback(async (startSec, endSec) => {
+        setShowExtendModal(false);
+        setExtending(true);
+        try {
+            const res = await fetch(getApiUrl(`/api/clips/${jobId}/${index}/extend`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ start_sec: startSec, end_sec: endSec }),
+            });
+            if (!res.ok) {
+                const detail = await res.json().catch(() => ({}));
+                throw new Error(detail.detail || `Extend failed (${res.status}).`);
+            }
+            const { task_id } = await res.json();
+            const deadline = Date.now() + 180000; // ~3 min
+            for (;;) {
+                await new Promise((r) => setTimeout(r, 2000));
+                if (Date.now() > deadline) throw new Error('Adding the section timed out.');
+                const st = await fetch(getApiUrl(`/api/clips/${jobId}/${index}/extend/${task_id}`));
+                if (!st.ok) throw new Error('Lost contact with the server.');
+                const task = await st.json();
+                if (task.status === 'done') {
+                    const { newDurationFrames, insertStart, insertEnd, words } = task.result;
+                    setSourceVersion(Date.now());
+                    dispatch({
+                        type: 'EXTEND_SOURCE',
+                        newDurationFrames,
+                        clip: { sourceStart: insertStart, sourceEnd: insertEnd, layout: 'fill' },
+                        afterClipId: state.selectedIds[0] || null,
+                        words,
+                    });
+                    setCaptions((prev) => [...prev, ...(words || [])]);
+                    break;
+                }
+                if (task.status === 'error') throw new Error(task.error || 'Adding the section failed.');
+            }
+        } catch (e) {
+            showError(e.message);
+        } finally {
+            setExtending(false);
+        }
+    }, [jobId, index, dispatch, state.selectedIds, showError]);
+
     const title =
         clip.video_title_for_youtube_short || `Clip ${typeof index === 'number' ? index + 1 : ''}`;
 
@@ -630,6 +687,8 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                             playerRef={playerRef}
                             onEditWord={handleEditWord}
                             dispatch={dispatch}
+                            onOpenExtend={() => setShowExtendModal(true)}
+                            extending={extending}
                         />
 
                         <div className="flex-1 min-w-0 bg-background flex min-h-0">
@@ -715,6 +774,14 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                         dispatch={dispatch}
                         sourceUrl={sourceUrl}
                     />
+
+                    {showExtendModal && (
+                        <ExtendClipModal
+                            jobId={jobId}
+                            onClose={() => setShowExtendModal(false)}
+                            onAdd={handleExtendAdd}
+                        />
+                    )}
                 </>
             )}
         </div>
