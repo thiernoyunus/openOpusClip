@@ -48,6 +48,10 @@ job_queue = asyncio.Queue()
 jobs: Dict[str, Dict] = {}
 thumbnail_sessions: Dict[str, Dict] = {}
 publish_jobs: Dict[str, Dict] = {}  # {publish_id: {status, result, error}}
+# "Extend a clip" background tasks: {task_id: {status, error?, result?}}. In-memory
+# is fine — a task is short-lived and the frontend polls it immediately after start.
+extend_tasks: Dict[str, Dict] = {}
+extend_tasks_lock = threading.Lock()
 # Semester to limit concurrency to MAX_CONCURRENT_JOBS
 concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
@@ -824,6 +828,343 @@ class SubtitleRequest(BaseModel):
     input_filename: Optional[str] = None
 
 
+# --- "Extend a clip": pull an arbitrary section of the full original into a short ---
+
+def _ffprobe_json(path: str) -> dict:
+    """Run ffprobe and return the parsed JSON (streams + format), or {} on error."""
+    try:
+        out = subprocess.check_output([
+            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "-show_streams", "-show_format", path,
+        ], stderr=subprocess.DEVNULL)
+        return json.loads(out.decode("utf-8", "replace"))
+    except (subprocess.CalledProcessError, OSError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+def _probe_media(path: str) -> dict:
+    """Video + audio stream parameters of a media file, for matching an
+    extension segment to the clip's editor source before concatenation."""
+    info = _ffprobe_json(path)
+    v = next((s for s in info.get("streams", []) if s.get("codec_type") == "video"), {})
+    a = next((s for s in info.get("streams", []) if s.get("codec_type") == "audio"), {})
+    # fps from "num/den" avg_frame_rate (fall back to r_frame_rate).
+    fps = 30.0
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        rate = v.get(key)
+        if rate and "/" in rate:
+            num, den = rate.split("/")
+            try:
+                if float(den) != 0:
+                    fps = float(num) / float(den)
+                    break
+            except ValueError:
+                pass
+    duration = 0.0
+    try:
+        duration = float(info.get("format", {}).get("duration") or 0.0)
+    except (ValueError, TypeError):
+        pass
+    return {
+        "width": int(v.get("width") or 0),
+        "height": int(v.get("height") or 0),
+        "fps": fps,
+        "pix_fmt": v.get("pix_fmt") or "yuv420p",
+        "has_audio": bool(a),
+        "audio_rate": int(a.get("sample_rate") or 48000) if a else 48000,
+        "audio_channels": int(a.get("channels") or 2) if a else 2,
+        "duration": duration,
+    }
+
+
+def _probe_frame_count(path: str, fps: float) -> int:
+    """Number of video frames in a file. Prefers the container's nb_frames, then
+    an exact decoded count, then duration×fps — so the appended clip's source
+    range lands on the real concat boundary."""
+    info = _ffprobe_json(path)
+    v = next((s for s in info.get("streams", []) if s.get("codec_type") == "video"), {})
+    nb = v.get("nb_frames")
+    if nb and str(nb).isdigit() and int(nb) > 0:
+        return int(nb)
+    # Exact decoded count (slower, but _source clips are short).
+    try:
+        out = subprocess.check_output([
+            "ffprobe", "-v", "quiet", "-select_streams", "v:0",
+            "-count_frames", "-show_entries", "stream=nb_read_frames",
+            "-of", "default=nokey=1:noprint_wrappers=1", path,
+        ], stderr=subprocess.DEVNULL).decode().strip()
+        if out.isdigit() and int(out) > 0:
+            return int(out)
+    except (subprocess.CalledProcessError, OSError):
+        pass
+    dur = _probe_media(path)["duration"]
+    return max(1, round(dur * (fps or 30.0)))
+
+
+def _clip_caption_origin(output_dir: str, clip_index: int):
+    """(captionsOriginFrame, source fps) for a clip, read from its framing.json.
+    captionsOriginFrame is the padded-source frame that the clip's absolute start
+    maps to — the anchor caption ms are measured against."""
+    origin, fps = 0, 30.0
+    matches = glob.glob(os.path.join(output_dir, f"*_clip_{clip_index + 1}.framing.json"))
+    if matches:
+        try:
+            with open(matches[0]) as f:
+                framing = json.load(f)
+            origin = framing.get("captionsOriginFrame", framing.get("clipInFrame", 0)) or 0
+            fps = (framing.get("source") or {}).get("fps") or 30.0
+        except (OSError, json.JSONDecodeError):
+            pass
+    return int(origin), float(fps)
+
+
+def _extension_caption_words(ext: dict, transcript: dict, captions_origin: int, src_fps: float):
+    """Caption words for one appended section, timed in the SAME ms axis the
+    editor uses (relative to captionsOriginFrame). An extension's audio sits at
+    padded-source frame `frameOffset`, so a transcript word at absolute time t
+    (start_sec ≤ t < end_sec) lands at frame `frameOffset + (t - start_sec)*fps`;
+    inverting the editor's frame↔ms formula gives its startMs/endMs, so the word
+    highlights exactly when it is spoken in the appended footage."""
+    start_sec = float(ext.get("start_sec", 0.0))
+    end_sec = float(ext.get("end_sec", 0.0))
+    frame_offset = int(ext.get("frameOffset", 0))
+    words = []
+    for segment in transcript.get("segments", []):
+        for w in segment.get("words", []):
+            if w["end"] > start_sec and w["start"] < end_sec:
+                fs = frame_offset + round((w["start"] - start_sec) * src_fps)
+                fe = frame_offset + round((w["end"] - start_sec) * src_fps)
+                cap = {
+                    "text": w.get("word", "").strip(),
+                    "startMs": int((fs - captions_origin) / src_fps * 1000),
+                    "endMs": int((fe - captions_origin) / src_fps * 1000),
+                }
+                if w.get("language"):
+                    cap["language"] = w["language"]
+                words.append(cap)
+    return words
+
+
+class ExtendClipRequest(BaseModel):
+    start_sec: float
+    end_sec: float
+
+
+EXTEND_MAX_SECONDS = 120.0
+
+
+@app.get("/api/source-transcript/{job_id}")
+async def get_source_transcript(job_id: str):
+    """Full-video transcript (segments with word-level, ABSOLUTE-second timings)
+    plus the original duration and whether original.mp4 is available — powers the
+    Extend-a-clip picker."""
+    if not _safe_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job id")
+    output_dir = os.path.join(OUTPUT_DIR, job_id)
+    json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
+    if not json_files:
+        raise HTTPException(status_code=404, detail="Metadata not found")
+    with open(json_files[0]) as f:
+        data = json.load(f)
+    transcript = data.get("transcript")
+    if not transcript:
+        raise HTTPException(status_code=400, detail="Transcript not found in metadata")
+
+    original_path = os.path.join(output_dir, "original.mp4")
+    has_original = os.path.exists(original_path)
+    duration = 0.0
+    if has_original:
+        duration = _probe_media(original_path)["duration"]
+    if not duration:
+        # Fall back to the last transcript word so the picker still renders a range
+        # even if the original probe is momentarily unavailable.
+        for segment in transcript.get("segments", []):
+            for w in segment.get("words", []):
+                duration = max(duration, float(w.get("end", 0.0)))
+
+    segments = []
+    for segment in transcript.get("segments", []):
+        words = [
+            {"text": w.get("word", "").strip(), "start": float(w["start"]), "end": float(w["end"])}
+            for w in segment.get("words", [])
+        ]
+        if words:
+            segments.append({
+                "start": words[0]["start"],
+                "end": words[-1]["end"],
+                "words": words,
+            })
+
+    return {
+        "hasOriginal": has_original,
+        "duration": duration,
+        "language": transcript.get("language", "en"),
+        "segments": segments,
+    }
+
+
+def _run_extend_task(task_id: str, job_id: str, clip_index: int, start_sec: float, end_sec: float):
+    """Cut [start_sec, end_sec) from original.mp4, re-encode it to match the
+    clip's editor source exactly, append it to the end of that _source.mp4, and
+    record the extension so captions/framing can reference the appended frames.
+    Runs in a BackgroundTask; updates extend_tasks[task_id]."""
+    def _fail(msg):
+        with extend_tasks_lock:
+            extend_tasks[task_id] = {"status": "error", "error": msg}
+
+    tmp_paths = []
+    try:
+        from ffmpeg_utils import video_codec_args  # matches how _source.mp4 was encoded
+
+        output_dir = os.path.join(OUTPUT_DIR, job_id)
+        original_path = os.path.join(output_dir, "original.mp4")
+        source_matches = glob.glob(os.path.join(output_dir, f"*_clip_{clip_index + 1}_source.mp4"))
+        if not source_matches:
+            return _fail("Editor source for this clip was not found.")
+        source_path = source_matches[0]
+
+        src = _probe_media(source_path)
+        width, height, fps = src["width"], src["height"], src["fps"]
+        if not width or not height:
+            return _fail("Could not read the clip source video parameters.")
+
+        old_frames = _probe_frame_count(source_path, fps)
+
+        # 1. Cut + re-encode the requested section to match the editor source.
+        seg_path = os.path.join(output_dir, f".extend_{task_id}_seg.mp4")
+        tmp_paths.append(seg_path)
+        vf = (
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}"
+        )
+        seg_cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(start_sec), "-to", str(end_sec),
+            "-i", original_path,
+            "-vf", vf,
+            *video_codec_args("intermediate", keyframe_interval=15),
+            "-c:a", "aac", "-ar", str(src["audio_rate"]), "-ac", str(src["audio_channels"]),
+            seg_path,
+        ]
+        res = subprocess.run(seg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if res.returncode != 0 or not os.path.exists(seg_path) or os.path.getsize(seg_path) == 0:
+            return _fail("Failed to cut the selected section from the original video.")
+
+        # 2. Concat the segment onto the end of the editor source.
+        list_path = os.path.join(output_dir, f".extend_{task_id}_list.txt")
+        tmp_paths.append(list_path)
+        with open(list_path, "w") as f:
+            f.write(f"file '{os.path.abspath(source_path)}'\n")
+            f.write(f"file '{os.path.abspath(seg_path)}'\n")
+        combined_path = os.path.join(output_dir, f".extend_{task_id}_out.mp4")
+        tmp_paths.append(combined_path)
+
+        def _concat(reencode):
+            cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path]
+            if reencode:
+                cmd += [*video_codec_args("intermediate", keyframe_interval=15), "-c:a", "aac"]
+            else:
+                cmd += ["-c", "copy"]
+            cmd.append(combined_path)
+            return subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+        cat = _concat(reencode=False)
+        if cat.returncode != 0 or not os.path.exists(combined_path) or os.path.getsize(combined_path) == 0:
+            cat = _concat(reencode=True)
+            if cat.returncode != 0 or not os.path.exists(combined_path) or os.path.getsize(combined_path) == 0:
+                return _fail("Failed to append the selected section to the clip.")
+
+        # 3. Swap the combined file in for the editor source, atomically.
+        os.replace(combined_path, source_path)
+        tmp_paths.remove(combined_path)
+        new_frames = _probe_frame_count(source_path, fps)
+        if new_frames <= old_frames:
+            return _fail("The extended source did not grow — nothing was added.")
+
+        # 4. Record the extension + build caption words for the appended range.
+        json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
+        origin, src_fps = _clip_caption_origin(output_dir, clip_index)
+        words = []
+        if json_files:
+            with open(json_files[0]) as f:
+                data = json.load(f)
+            transcript = data.get("transcript") or {}
+            ext_record = {
+                "start_sec": start_sec,
+                "end_sec": end_sec,
+                "frameOffset": old_frames,
+                "frames": new_frames - old_frames,
+            }
+            shorts = data.get("shorts", [])
+            if 0 <= clip_index < len(shorts):
+                shorts[clip_index].setdefault("extensions", []).append(ext_record)
+                tmp_meta = json_files[0] + ".tmp"
+                with open(tmp_meta, "w") as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp_meta, json_files[0])
+            words = _extension_caption_words(ext_record, transcript, origin, src_fps)
+
+        with extend_tasks_lock:
+            extend_tasks[task_id] = {
+                "status": "done",
+                "result": {
+                    "newDurationFrames": new_frames,
+                    "insertStart": old_frames,
+                    "insertEnd": new_frames,
+                    "words": words,
+                },
+            }
+    except Exception as e:  # noqa: BLE001 — surface any failure to the poller
+        _fail(f"Extend failed: {e}")
+    finally:
+        for p in tmp_paths:
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+            except OSError:
+                pass
+
+
+@app.post("/api/clips/{job_id}/{clip_index}/extend")
+async def extend_clip(job_id: str, clip_index: int, req: ExtendClipRequest, background_tasks: BackgroundTasks):
+    """Kick off appending a section [start_sec, end_sec) of the full original
+    video onto the end of this clip's editor source. Returns a task_id to poll."""
+    if not _safe_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job id")
+    output_dir = os.path.join(OUTPUT_DIR, job_id)
+    original_path = os.path.join(output_dir, "original.mp4")
+    if not os.path.exists(original_path):
+        raise HTTPException(
+            status_code=409,
+            detail="Original video not available for this project — process the video again to enable Extend.",
+        )
+    start_sec, end_sec = float(req.start_sec), float(req.end_sec)
+    duration = _probe_media(original_path)["duration"] or 0.0
+    if not (0 <= start_sec < end_sec):
+        raise HTTPException(status_code=422, detail="start_sec must be >= 0 and less than end_sec")
+    if duration and end_sec > duration + 0.5:
+        raise HTTPException(status_code=422, detail="Selected range extends past the end of the video")
+    if end_sec - start_sec > EXTEND_MAX_SECONDS:
+        raise HTTPException(status_code=422, detail=f"Selection is too long (max {int(EXTEND_MAX_SECONDS)}s)")
+    if not glob.glob(os.path.join(output_dir, f"*_clip_{clip_index + 1}_source.mp4")):
+        raise HTTPException(status_code=404, detail="Editor source for this clip was not found")
+
+    task_id = str(uuid.uuid4())
+    with extend_tasks_lock:
+        extend_tasks[task_id] = {"status": "pending"}
+    background_tasks.add_task(_run_extend_task, task_id, job_id, clip_index, start_sec, end_sec)
+    return {"task_id": task_id}
+
+
+@app.get("/api/clips/{job_id}/{clip_index}/extend/{task_id}")
+async def extend_clip_status(job_id: str, clip_index: int, task_id: str):
+    with extend_tasks_lock:
+        task = extend_tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Extend task not found")
+    return task
+
+
 @app.get("/api/clip/{job_id}/{clip_index}/transcript")
 async def get_clip_transcript(job_id: str, clip_index: int):
     """Return word-level captions for a specific clip, formatted for Remotion."""
@@ -887,6 +1228,16 @@ async def get_clip_transcript(job_id: str, clip_index: int):
                 if word_info.get('language'):
                     cap["language"] = word_info['language']
                 captions.append(cap)
+
+    # Append caption words for any sections the user pulled in via "Extend a clip".
+    # These live at the END of the padded _source.mp4, so their timings can't be
+    # derived from the clip window above — they're recomputed from the recorded
+    # extension frame offsets so a full editor reload keeps captions on the beat.
+    extensions = clip_data.get('extensions') or []
+    if extensions:
+        origin, src_fps = _clip_caption_origin(output_dir, clip_index)
+        for ext in extensions:
+            captions.extend(_extension_caption_words(ext, transcript, origin, src_fps))
 
     duration_sec = clip_end - clip_start
 
