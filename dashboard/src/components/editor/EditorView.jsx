@@ -321,7 +321,12 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     const playerRef = useRef(null);
 
     const framingUrl = clip.framing_url ? getApiUrl(clip.framing_url) : null;
-    const sourceUrl = clip.source_url ? getApiUrl(clip.source_url) : null;
+    // Bumped after an Extend rewrites _source.mp4 on disk, so the player drops
+    // its cached copy of the old (shorter) file and can seek into the new frames.
+    const [sourceVersion, setSourceVersion] = useState(0);
+    const sourceUrl = clip.source_url
+        ? getApiUrl(clip.source_url) + (sourceVersion ? `?v=${sourceVersion}` : '')
+        : null;
 
     useEffect(() => {
         if (!framingUrl) {
@@ -607,6 +612,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                 const task = await st.json();
                 if (task.status === 'done') {
                     const { newDurationFrames, insertStart, insertEnd, words } = task.result;
+                    setSourceVersion(Date.now());
                     dispatch({
                         type: 'EXTEND_SOURCE',
                         newDurationFrames,
