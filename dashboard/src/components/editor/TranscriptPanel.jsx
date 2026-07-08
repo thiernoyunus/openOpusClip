@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { Clock, FileText, Scissors, Smile, Wand2, X } from 'lucide-react';
+import { Clock, FileText, Scissors, Smile, Wand2, X, Plus, Loader2 } from 'lucide-react';
 import { EDITOR_FPS } from './EditorCanvas';
 import { wordSourceToOutput, sourceToOutputAll } from '@remotion-src/lib/edl';
 import { detectFillerCuts, detectPauseCuts, visibleTranscriptPauses } from './speechCleanup';
@@ -71,7 +71,7 @@ const PauseChip = React.memo(function PauseChip({ pause, selected, isCut, onPaus
  * content (splits the owning clip(s) and drops the middle). Removed words
  * render struck through; use Undo to bring them back.
  */
-export default function TranscriptPanel({ captions, framing, playerRef, onEditWord, dispatch }) {
+export default function TranscriptPanel({ captions, framing, playerRef, onEditWord, dispatch, onOpenExtend, extending }) {
     const [currentMs, setCurrentMs] = useState(0);
     const [editingIndex, setEditingIndex] = useState(null);
     const [draft, setDraft] = useState('');
@@ -354,20 +354,40 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
             <div className="px-4 pt-3 pb-2 shrink-0 relative">
                 <div className="flex items-center gap-1.5 text-xs text-muted">
                     <FileText size={12} /> Transcript
-                    <button
-                        onClick={() => setCleanupOpen((v) => !v)}
-                        disabled={captions.length === 0}
-                        title="Auto-remove filler words and pauses"
-                        className={`ml-auto flex items-center gap-1 px-2 py-1 rounded bg-surface2 border border-edge text-[11px] transition-colors ${
-                            captions.length === 0
-                                ? 'opacity-40 cursor-not-allowed'
-                                : cleanupOpen
-                                  ? 'text-fg border-white/30'
-                                  : 'text-muted hover:text-fg hover:bg-white/5'
-                        }`}
-                    >
-                        <Wand2 size={12} /> Speech cleanup
-                    </button>
+                    <div className="ml-auto flex items-center gap-1.5">
+                        {onOpenExtend && (
+                            extending ? (
+                                <span
+                                    title="Adding a section from the original video"
+                                    className="flex items-center gap-1 px-2 py-1 rounded bg-viral/15 border border-viral/40 text-[11px] text-viral animate-pulse"
+                                >
+                                    <Loader2 size={12} className="animate-spin" /> Adding section…
+                                </span>
+                            ) : (
+                                <button
+                                    onClick={onOpenExtend}
+                                    title="Pull a section of the original video into this short"
+                                    className="flex items-center gap-1 px-2 py-1 rounded bg-surface2 border border-edge text-[11px] text-muted hover:text-fg hover:bg-white/5 transition-colors"
+                                >
+                                    <Plus size={12} /> Extend a clip
+                                </button>
+                            )
+                        )}
+                        <button
+                            onClick={() => setCleanupOpen((v) => !v)}
+                            disabled={captions.length === 0}
+                            title="Auto-remove filler words and pauses"
+                            className={`flex items-center gap-1 px-2 py-1 rounded bg-surface2 border border-edge text-[11px] transition-colors ${
+                                captions.length === 0
+                                    ? 'opacity-40 cursor-not-allowed'
+                                    : cleanupOpen
+                                      ? 'text-fg border-white/30'
+                                      : 'text-muted hover:text-fg hover:bg-white/5'
+                            }`}
+                        >
+                            <Wand2 size={12} /> Speech cleanup
+                        </button>
+                    </div>
                 </div>
                 {cleanupOpen && (
                     <div className="absolute right-4 top-full mt-1 z-30 w-56 bg-surface2 border border-edge rounded-lg shadow-lg p-3 text-xs">
