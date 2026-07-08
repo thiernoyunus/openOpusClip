@@ -1,15 +1,51 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { Play, Pause, SkipBack, Scissors, Trash2, Copy, ZoomIn, ZoomOut, Plus } from 'lucide-react';
+import { Play, Pause, SkipBack, Scissors, Trash2, Copy, ZoomIn, ZoomOut, Plus, Type, Clapperboard, Music } from 'lucide-react';
 import { EDITOR_FPS } from './EditorCanvas';
 import { useFilmstrip, useWaveform } from './useMediaStrips';
-import { placedClips, outputToSource, clipAtOutputFrame } from '@remotion-src/lib/edl';
+import { placedClips, outputToSource, clipAtOutputFrame, sourceRangeToOutputWindows } from '@remotion-src/lib/edl';
 
 const FILM_COUNT = 48; // global thumbnails sampled across the source, sliced per clip
 const WAVE_BUCKETS = 480;
 const MIN_CLIP_LEN = 2; // source frames — mirrors the reducer
+const MIN_ITEM_LEN = 2; // source frames — min length for a text/b-roll block
 const MIN_PPS = 12;
 const MAX_PPS = 320;
+const MIN_TL_HEIGHT = 140;
+const MAX_TL_HEIGHT = 420;
 const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three', four: 'Four', screenshare: 'Screen', gameplay: 'Gameplay' };
+
+const clampHeight = (h) => Math.max(MIN_TL_HEIGHT, Math.min(MAX_TL_HEIGHT, h));
+
+/**
+ * Apply an in-progress drag to one source-anchored track item (text overlay /
+ * b-roll), returning its patched { startFrame, endFrame } in SOURCE frames. The
+ * dragged output delta is converted back to source via outputToSource at the
+ * item's first output window, so the block follows the cursor on the OUTPUT axis
+ * while staying anchored to content. Mirrors the clamp math used at commit.
+ */
+function itemDragPatch(framing, item, drag, fps) {
+    const wins = sourceRangeToOutputWindows(framing, item.startFrame, item.endFrame, fps);
+    if (wins.length === 0) return { startFrame: item.startFrame, endFrame: item.endFrame };
+    const w = wins[0];
+    const d = drag.deltaOut || 0;
+    const dur = framing.source.durationFrames;
+    if (drag.kind === 'item-trim') {
+        if (drag.edge === 'in') {
+            let ns = outputToSource(framing, Math.max(0, w.outStart + d), fps);
+            ns = Math.max(0, Math.min(ns, item.endFrame - MIN_ITEM_LEN));
+            return { startFrame: ns, endFrame: item.endFrame };
+        }
+        let ne = outputToSource(framing, Math.max(0, w.outEnd + d), fps);
+        ne = Math.min(dur, Math.max(ne, item.startFrame + MIN_ITEM_LEN));
+        return { startFrame: item.startFrame, endFrame: ne };
+    }
+    // item-move: shift both edges by the same source delta, preserving length.
+    const len = item.endFrame - item.startFrame;
+    const nsStart = outputToSource(framing, Math.max(0, w.outStart + d), fps);
+    let start = item.startFrame + (nsStart - w.srcStart);
+    start = Math.max(0, Math.min(start, dur - len));
+    return { startFrame: start, endFrame: start + len };
+}
 
 const fmt = (frames) => {
     const totalSec = frames / EDITOR_FPS;
@@ -135,18 +171,89 @@ const ClipBlock = React.memo(function ClipBlock({
 });
 
 /**
+ * One source-anchored item (text overlay / b-roll) on a compact lane. Positioned
+ * on the OUTPUT axis via one of its output windows. The FIRST window carries the
+ * drag/trim handles; later windows are 50%-opacity echoes (no interaction).
+ */
+const LaneBlock = React.memo(function LaneBlock({
+    lane, itemId, label, Icon, colorClass, left, width, echo, selected, dragging,
+    onBodyDown, onTrimDown,
+}) {
+    return (
+        <div
+            onPointerDown={echo ? undefined : (e) => onBodyDown(lane, itemId, e)}
+            style={{ left, width }}
+            title={label}
+            className={`absolute top-0 bottom-0 rounded border flex items-center px-1.5 text-[10px] overflow-hidden group ${colorClass} ${
+                echo ? 'opacity-50 pointer-events-none' : 'cursor-grab active:cursor-grabbing'
+            } ${selected ? 'ring-1 ring-viral border-viral' : ''} ${dragging ? 'opacity-80 z-30' : 'z-10'}`}
+        >
+            {Icon && <Icon size={10} className="mr-1 shrink-0 pointer-events-none" />}
+            <span className="truncate pointer-events-none">{label}</span>
+            {!echo && ['in', 'out'].map((edge) => (
+                <div
+                    key={edge}
+                    onPointerDown={(e) => onTrimDown(lane, itemId, edge, e)}
+                    className={`absolute top-0 bottom-0 ${edge === 'in' ? 'left-0' : 'right-0'} w-1.5 cursor-ew-resize hover:bg-white/40`}
+                    title={edge === 'in' ? 'Trim start' : 'Trim end'}
+                />
+            ))}
+        </div>
+    );
+});
+
+/**
+ * The playhead line + head. Subscribes to the player's frameupdate event itself
+ * and owns the "keep in view" auto-scroll, so per-frame playback updates
+ * re-render ONLY this component — never the lanes/panels tree.
+ */
+const Playhead = React.memo(function Playhead({ playerRef, pxPerFrame, trackRef }) {
+    const [frame, setFrame] = useState(0);
+    useEffect(() => {
+        const p = playerRef.current;
+        if (!p) return undefined;
+        const onF = (e) => setFrame(e.detail.frame);
+        p.addEventListener('frameupdate', onF);
+        return () => p.removeEventListener('frameupdate', onF);
+    }, [playerRef]);
+
+    // Keep the playhead in view during playback / seeks.
+    useEffect(() => {
+        const el = trackRef.current;
+        if (!el) return;
+        const x = frame * pxPerFrame;
+        if (x < el.scrollLeft + 40) el.scrollLeft = Math.max(0, x - 40);
+        else if (x > el.scrollLeft + el.clientWidth - 40) el.scrollLeft = x - el.clientWidth + 40;
+    }, [frame, pxPerFrame, trackRef]);
+
+    return (
+        <div className="absolute top-0 bottom-0 w-px bg-fg pointer-events-none z-40" style={{ left: frame * pxPerFrame }}>
+            <div className="absolute -top-0.5 -left-[3px] w-[7px] h-[7px] rounded-full bg-fg" />
+        </div>
+    );
+});
+
+/**
  * Output-axis NLE timeline: the main track is the ordered clip list laid
  * end-to-end (playback order). Clips can be selected, split, trimmed, reordered
- * (drag), duplicated and deleted, with zoom + horizontal scroll. The playhead,
- * ruler and seeking all live on the OUTPUT timeline.
+ * (drag), duplicated and deleted, with zoom + horizontal scroll. Compact lanes
+ * above (text, b-roll) and below (audio) show the source-anchored tracks. The
+ * playhead, ruler and seeking all live on the OUTPUT timeline.
  */
-export default function EditorTimeline({ framing, playerRef, selectedIds, onSelect, dispatch, sourceUrl }) {
-    const [outFrame, setOutFrame] = useState(0);
+export default function EditorTimeline({ framing, playerRef, selectedIds, onSelect, dispatch, sourceUrl, onSelectTrackItem }) {
+    const [outFrame, setOutFrame] = useState(0); // throttled — time display + split enablement only
     const [playing, setPlaying] = useState(false);
     const [pxPerSec, setPxPerSec] = useState(60);
     const [drag, setDrag] = useState(null);
+    const [selectedItem, setSelectedItem] = useState(null); // { lane, id } — highlights a lane block
+    const [timelineHeight, setTimelineHeight] = useState(() => {
+        const v = Number(localStorage.getItem('editorTimelineHeight'));
+        return clampHeight(Number.isFinite(v) && v ? v : 200);
+    });
     const trackRef = useRef(null);
     const dragRef = useRef(null);
+    const resizeRef = useRef(null);
+    const outTickRef = useRef(0);
 
     const fps = EDITOR_FPS;
     const srcFps = framing.source.fps;
@@ -163,13 +270,21 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
     const totalOut = useMemo(() => placed.reduce((a, p) => a + p.outDuration, 0) || 1, [placed]);
     const trackWidth = totalOut * pxPerFrame;
 
-    // Player sync
+    // Player sync. The precise per-frame playhead + auto-scroll live in the
+    // <Playhead> child (its own subscription) so playback doesn't re-render the
+    // lanes. Here we only keep a THROTTLED outFrame (~10/s) for the time readout
+    // and the split-enabled check — coarse is fine and memoized lanes bail out.
     useEffect(() => {
         const p = playerRef.current;
         if (!p) return undefined;
-        const onF = (e) => setOutFrame(e.detail.frame);
+        const onF = (e) => {
+            const now = performance.now();
+            if (now - outTickRef.current < 100) return;
+            outTickRef.current = now;
+            setOutFrame(e.detail.frame);
+        };
         const onPlay = () => setPlaying(true);
-        const onPause = () => setPlaying(false);
+        const onPause = () => { setPlaying(false); setOutFrame(p.getCurrentFrame()); };
         p.addEventListener('frameupdate', onF);
         p.addEventListener('play', onPlay);
         p.addEventListener('pause', onPause);
@@ -179,15 +294,6 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
             p.removeEventListener('pause', onPause);
         };
     }, [playerRef]);
-
-    // Keep the playhead in view during playback / seeks
-    useEffect(() => {
-        const el = trackRef.current;
-        if (!el) return;
-        const x = outFrame * pxPerFrame;
-        if (x < el.scrollLeft + 40) el.scrollLeft = Math.max(0, x - 40);
-        else if (x > el.scrollLeft + el.clientWidth - 40) el.scrollLeft = x - el.clientWidth + 40;
-    }, [outFrame, pxPerFrame]);
 
     const seekToOut = useCallback((out) => {
         const p = playerRef.current;
@@ -218,10 +324,13 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
         && srcAtPlayhead - playClip.clip.sourceStart >= MIN_CLIP_LEN
         && playClip.clip.sourceEnd - srcAtPlayhead >= MIN_CLIP_LEN;
     const handleSplit = useCallback(() => {
-        const pc = clipAtOutputFrame(framing, outFrame, fps);
+        // Read the live player frame (not the throttled state) so the split lands
+        // exactly at the playhead.
+        const f = Math.round(playerRef.current?.getCurrentFrame() ?? outFrame);
+        const pc = clipAtOutputFrame(framing, f, fps);
         if (!pc) return;
-        dispatch({ type: 'SPLIT_CLIP', clipId: pc.clip.id, sourceFrame: outputToSource(framing, outFrame, fps) });
-    }, [framing, outFrame, fps, dispatch]);
+        dispatch({ type: 'SPLIT_CLIP', clipId: pc.clip.id, sourceFrame: outputToSource(framing, f, fps) });
+    }, [framing, outFrame, fps, dispatch, playerRef]);
 
     const selectedId = selectedIds[0] ?? null;
     const canDelete = selectedId && framing.clips.length > 1;
@@ -275,11 +384,44 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
         try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
     }, [seekToOut, outFrameAtClientX]);
 
+    // --- Lane item drag (text / b-roll) ---
+    const onItemBodyDown = useCallback((lane, itemId, e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        const nd = { kind: 'item-pending', lane, itemId, startX: e.clientX, deltaOut: 0 };
+        dragRef.current = nd;
+        setDrag(nd);
+        try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
+    }, []);
+
+    const onItemTrimDown = useCallback((lane, itemId, edge, e) => {
+        e.stopPropagation();
+        if (e.button !== 0) return;
+        const nd = { kind: 'item-trim', lane, itemId, edge, startX: e.clientX, deltaOut: 0 };
+        dragRef.current = nd;
+        setDrag(nd);
+        try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
+    }, []);
+
     const onPointerMove = useCallback((e) => {
         const d = dragRef.current;
         if (!d) return;
         if (d.kind === 'scrub') {
             seekToOut(outFrameAtClientX(e.clientX));
+            return;
+        }
+        if (d.kind === 'item-pending' || d.kind === 'item-move') {
+            const dxi = e.clientX - d.startX;
+            if (d.kind === 'item-pending' && Math.abs(dxi) < 4) return;
+            const nd = { ...d, kind: 'item-move', deltaOut: Math.round(dxi / pxPerFrame) };
+            dragRef.current = nd;
+            setDrag(nd);
+            return;
+        }
+        if (d.kind === 'item-trim') {
+            const nd = { ...d, deltaOut: Math.round((e.clientX - d.startX) / pxPerFrame) };
+            dragRef.current = nd;
+            setDrag(nd);
             return;
         }
         const dx = e.clientX - d.startX;
@@ -306,6 +448,23 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
         dragRef.current = null;
         setDrag(null);
         if (!d) return;
+        if (d.kind === 'item-move' || d.kind === 'item-trim') {
+            const list = d.lane === 'text' ? framing.textOverlays : framing.broll;
+            const item = (list || []).find((x) => x.id === d.itemId);
+            if (item) {
+                const patch = itemDragPatch(framing, item, d, fps);
+                if (patch.startFrame !== item.startFrame || patch.endFrame !== item.endFrame) {
+                    dispatch({ type: d.lane === 'text' ? 'UPDATE_TEXT_OVERLAY' : 'UPDATE_BROLL', id: d.itemId, patch });
+                }
+            }
+            return;
+        }
+        if (d.kind === 'item-pending') {
+            // never moved → treat as a click: select the block + open its panel
+            setSelectedItem({ lane: d.lane, id: d.itemId });
+            onSelectTrackItem?.(d.lane, d.itemId);
+            return;
+        }
         if (d.kind === 'trim') {
             const clip = framing.clips.find((c) => c.id === d.id);
             if (clip && d.deltaSrc) {
@@ -317,22 +476,76 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
             dispatch({ type: 'MOVE_CLIP', id: d.id, toIndex: d.toIndex });
         } else if (d.kind === 'pending') {
             // never moved → treat as a click: select + seek to the clip start
+            setSelectedItem(null);
             onSelect(d.id, e.shiftKey || e.metaKey || e.ctrlKey);
             const p = placedClips(framing, fps).find((pp) => pp.clip.id === d.id);
             if (p) seekToOut(p.outStart);
         }
-    }, [framing, fps, dispatch, onSelect, seekToOut]);
+    }, [framing, fps, dispatch, onSelect, seekToOut, onSelectTrackItem]);
+
+    // --- Resizable timeline height (drag handle above the track) ---
+    const onResizeDown = useCallback((e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        resizeRef.current = { startY: e.clientY, startH: timelineHeight, latest: timelineHeight };
+        try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
+    }, [timelineHeight]);
+
+    const onResizeMove = useCallback((e) => {
+        const r = resizeRef.current;
+        if (!r) return;
+        const h = clampHeight(r.startH + (r.startY - e.clientY)); // drag up = taller
+        r.latest = h;
+        setTimelineHeight(h);
+    }, []);
+
+    const onResizeUp = useCallback(() => {
+        const r = resizeRef.current;
+        if (!r) return;
+        resizeRef.current = null;
+        try { localStorage.setItem('editorTimelineHeight', String(r.latest)); } catch { /* ignore */ }
+    }, []);
 
     // Ruler ticks (seconds)
     const secStep = pxPerSec >= 120 ? 1 : pxPerSec >= 48 ? 2 : 5;
     const ticks = [];
     for (let s = 0; s * fps <= totalOut; s += secStep) ticks.push(s);
 
-    const playheadX = outFrame * pxPerFrame;
     const draggingId = drag && (drag.kind === 'move' || drag.kind === 'trim') ? drag.id : null;
 
+    // Source-anchored track items placed on the output axis. The item being
+    // dragged uses its patched frames so the block follows the cursor live.
+    const textItems = framing.textOverlays || [];
+    const brollItems = framing.broll || [];
+    const patchedFrames = (item) =>
+        drag && drag.itemId === item.id && (drag.kind === 'item-move' || drag.kind === 'item-trim')
+            ? itemDragPatch(framing, item, drag, fps)
+            : item;
+    const laneWindows = (items) =>
+        items.flatMap((item) => {
+            const eff = patchedFrames(item);
+            return sourceRangeToOutputWindows(framing, eff.startFrame, eff.endFrame, fps).map((w, wi) => ({ item, w, wi }));
+        });
+    const textWindows = laneWindows(textItems);
+    const brollWindows = laneWindows(brollItems);
+    const transitionsOn = !!(framing.transitions?.cutCrossfade || framing.transitions?.cutStyle);
+    const musicLabel = framing.music ? decodeURIComponent(framing.music.url.split('/').pop() || 'Music') : null;
+
     return (
-        <div className="border-t border-edge bg-surface px-3 py-2 select-none">
+        <div className="border-t border-edge bg-surface select-none">
+            {/* Resize handle — drag up/down to change the timeline height */}
+            <div
+                onPointerDown={onResizeDown}
+                onPointerMove={onResizeMove}
+                onPointerUp={onResizeUp}
+                onPointerCancel={onResizeUp}
+                title="Drag to resize timeline"
+                className="h-1.5 w-full cursor-ns-resize flex items-center justify-center group"
+            >
+                <div className="w-10 h-[3px] rounded-full bg-edge group-hover:bg-white/40 transition-colors" />
+            </div>
+
+            <div className="px-3 pb-2 pt-0.5">
             {/* Transport */}
             <div className="flex items-center gap-2.5 mb-2">
                 <button onClick={() => seekToOut(0)} className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors" aria-label="Back to start">
@@ -363,10 +576,11 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                 </div>
             </div>
 
-            {/* Scrollable track */}
+            {/* Scrollable track (both axes: horizontal timeline, vertical lanes) */}
             <div
                 ref={trackRef}
-                className="relative overflow-x-auto overflow-y-hidden custom-scrollbar rounded-lg border border-edge bg-canvas"
+                style={{ height: timelineHeight }}
+                className="relative overflow-auto custom-scrollbar rounded-lg border border-edge bg-canvas"
                 onPointerMove={onPointerMove}
                 onPointerUp={endDrag}
                 onPointerLeave={endDrag}
@@ -380,6 +594,52 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                             </span>
                         ))}
                     </div>
+
+                    {/* Text lane (only when non-empty) */}
+                    {textWindows.length > 0 && (
+                        <div className="relative h-[22px] mt-1">
+                            {textWindows.map(({ item, w, wi }) => (
+                                <LaneBlock
+                                    key={`${item.id}-${wi}`}
+                                    lane="text"
+                                    itemId={item.id}
+                                    label={item.text || 'Text'}
+                                    Icon={Type}
+                                    colorClass="bg-emerald-500/20 border-emerald-500/40 text-emerald-100"
+                                    left={w.outStart * pxPerFrame}
+                                    width={Math.max(10, (w.outEnd - w.outStart) * pxPerFrame)}
+                                    echo={wi !== 0}
+                                    selected={selectedItem?.lane === 'text' && selectedItem.id === item.id}
+                                    dragging={drag?.itemId === item.id}
+                                    onBodyDown={onItemBodyDown}
+                                    onTrimDown={onItemTrimDown}
+                                />
+                            ))}
+                        </div>
+                    )}
+
+                    {/* B-roll lane (only when non-empty) */}
+                    {brollWindows.length > 0 && (
+                        <div className="relative h-[22px] mt-1">
+                            {brollWindows.map(({ item, w, wi }) => (
+                                <LaneBlock
+                                    key={`${item.id}-${wi}`}
+                                    lane="broll"
+                                    itemId={item.id}
+                                    label="B-roll"
+                                    Icon={Clapperboard}
+                                    colorClass="bg-purple-500/20 border-purple-500/40 text-purple-100"
+                                    left={w.outStart * pxPerFrame}
+                                    width={Math.max(10, (w.outEnd - w.outStart) * pxPerFrame)}
+                                    echo={wi !== 0}
+                                    selected={selectedItem?.lane === 'broll' && selectedItem.id === item.id}
+                                    dragging={drag?.itemId === item.id}
+                                    onBodyDown={onItemBodyDown}
+                                    onTrimDown={onItemTrimDown}
+                                />
+                            ))}
+                        </div>
+                    )}
 
                     {/* Clip lane */}
                     <div className="relative h-16 mt-1 mb-1">
@@ -401,6 +661,17 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                             />
                         ))}
 
+                        {/* Transition markers at internal clip boundaries (global config → edit in Transitions tab) */}
+                        {transitionsOn && placed.slice(1).map((p) => (
+                            <button
+                                key={`tr-${p.clip.id}`}
+                                onPointerDown={(e) => { e.stopPropagation(); onSelectTrackItem?.('transitions', null); }}
+                                style={{ left: p.outStart * pxPerFrame }}
+                                title="Transition — edit in the Transitions tab"
+                                className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rotate-45 bg-amber-400/80 border border-amber-300 hover:bg-amber-300 z-20"
+                            />
+                        ))}
+
                         {/* Add-clip at the end (duplicates the last clip) */}
                         <button
                             onPointerDown={(e) => e.stopPropagation()}
@@ -413,15 +684,34 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                         </button>
                     </div>
 
-                    {/* Playhead (spans ruler + lane) */}
-                    <div className="absolute top-0 bottom-0 w-px bg-fg pointer-events-none z-40" style={{ left: playheadX }}>
-                        <div className="absolute -top-0.5 -left-[3px] w-[7px] h-[7px] rounded-full bg-fg" />
-                    </div>
+                    {/* Audio lane (only when music is set) */}
+                    {framing.music && (
+                        <div className="relative h-[22px] mt-1 mb-1">
+                            {/* ponytail: music is one global looped track with no start/end, so the
+                                block spans the whole output and isn't draggable — per-track timing
+                                lands with the audio[] schema in a later PR. */}
+                            <div
+                                onPointerDown={(e) => { e.stopPropagation(); setSelectedItem({ lane: 'audio', id: 'music' }); onSelectTrackItem?.('audio', null); }}
+                                style={{ width: Math.max(10, trackWidth) }}
+                                title={musicLabel}
+                                className={`absolute top-0 bottom-0 left-0 rounded border flex items-center px-1.5 text-[10px] overflow-hidden cursor-pointer bg-zinc-600/30 border-zinc-500/40 text-zinc-200 ${
+                                    selectedItem?.lane === 'audio' ? 'ring-1 ring-viral border-viral' : ''
+                                }`}
+                            >
+                                <Music size={10} className="mr-1 shrink-0 pointer-events-none" />
+                                <span className="truncate pointer-events-none">{musicLabel}</span>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Playhead (spans ruler + all lanes; owns its own frame subscription) */}
+                    <Playhead playerRef={playerRef} pxPerFrame={pxPerFrame} trackRef={trackRef} />
                 </div>
             </div>
 
             <div className="mt-1 text-[10px] text-zinc-600">
                 click a clip to select · drag to reorder · drag edges to trim · ✂ splits at the playhead
+            </div>
             </div>
         </div>
     );
