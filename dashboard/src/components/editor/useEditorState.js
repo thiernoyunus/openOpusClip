@@ -291,6 +291,13 @@ export const editorReducer = (state, action) => {
                 ...state.framing,
                 broll: state.framing.broll.filter((b) => b.id !== action.id),
             });
+        case 'UPDATE_BROLL':
+            return withHistory({
+                ...state.framing,
+                broll: state.framing.broll.map((b) =>
+                    b.id === action.id ? { ...b, ...action.patch } : b
+                ),
+            });
         case 'TRACK_PERSON': {
             // Tracker click: in multi-panel layouts, reassign the clicked
             // panel; otherwise (fill/fit/manual) become a fill that follows
