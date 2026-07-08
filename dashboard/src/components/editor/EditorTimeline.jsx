@@ -247,8 +247,12 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
     const [drag, setDrag] = useState(null);
     const [selectedItem, setSelectedItem] = useState(null); // { lane, id } — highlights a lane block
     const [timelineHeight, setTimelineHeight] = useState(() => {
-        const v = Number(localStorage.getItem('editorTimelineHeight'));
-        return clampHeight(Number.isFinite(v) && v ? v : 200);
+        try {
+            const v = Number(localStorage.getItem('editorTimelineHeight'));
+            return clampHeight(Number.isFinite(v) && v ? v : 200);
+        } catch {
+            return 200; // localStorage can throw in strict-privacy / sandboxed contexts
+        }
     });
     const trackRef = useRef(null);
     const dragRef = useRef(null);
@@ -278,8 +282,10 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
         const p = playerRef.current;
         if (!p) return undefined;
         const onF = (e) => {
+            // Throttle only during playback; when paused (manual scrub/seek) let
+            // every update through so the time display + split stay exact.
             const now = performance.now();
-            if (now - outTickRef.current < 100) return;
+            if (p.isPlaying?.() && now - outTickRef.current < 100) return;
             outTickRef.current = now;
             setOutFrame(e.detail.frame);
         };
@@ -529,7 +535,7 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
     const textWindows = laneWindows(textItems);
     const brollWindows = laneWindows(brollItems);
     const transitionsOn = !!(framing.transitions?.cutCrossfade || framing.transitions?.cutStyle);
-    const musicLabel = framing.music ? decodeURIComponent(framing.music.url.split('/').pop() || 'Music') : null;
+    const musicLabel = framing.music?.url ? decodeURIComponent(framing.music.url.split('/').pop() || 'Music') : null;
 
     return (
         <div className="border-t border-edge bg-surface select-none">
@@ -684,8 +690,8 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                         </button>
                     </div>
 
-                    {/* Audio lane (only when music is set) */}
-                    {framing.music && (
+                    {/* Audio lane (only when music with a source is set) */}
+                    {musicLabel && (
                         <div className="relative h-[22px] mt-1 mb-1">
                             {/* ponytail: music is one global looped track with no start/end, so the
                                 block spans the whole output and isn't draggable — per-track timing
