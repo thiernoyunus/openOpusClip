@@ -424,6 +424,15 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         }
     }, [panelOpen, activeTab]);
 
+    // Timeline lane click: open the right-rail panel that owns that track. The
+    // panels don't expose per-item focus, so switching the tab is the sync.
+    const handleSelectTrackItem = useCallback((kind) => {
+        const tab = { text: 'text', broll: 'broll', audio: 'audio', transitions: 'transitions' }[kind];
+        if (!tab) return;
+        setActiveTab(tab);
+        setPanelOpen(true);
+    }, []);
+
     const saveFraming = useCallback(async () => {
         const res = await fetch(getApiUrl(`/api/clips/${jobId}/${index}/framing`), {
             method: 'PUT',
@@ -702,6 +711,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                         playerRef={playerRef}
                         selectedIds={state.selectedIds}
                         onSelect={(id, multi) => dispatch({ type: 'SELECT', id, multi })}
+                        onSelectTrackItem={handleSelectTrackItem}
                         dispatch={dispatch}
                         sourceUrl={sourceUrl}
                     />
