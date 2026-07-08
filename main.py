@@ -778,6 +778,42 @@ def sanitize_filename(filename):
     return filename[:100]
 
 
+def retain_or_cleanup_original(input_video, output_dir, is_url, keep_flag):
+    """Keep the FULL source video as output/<job>/original.mp4 so the web
+    editor's "Extend a clip" can later pull an arbitrary section of it into a
+    short. Gated by env OPENSHORTS_KEEP_ORIGINAL (default ON; set to '0' for the
+    old delete-on-finish behavior).
+
+    URL downloads live in output_dir and are ours to consume, so we MOVE them.
+    Local uploads belong to the caller (and get their own TTL cleanup), so we
+    hard-link (cheap, same filesystem) and fall back to a copy across devices.
+    On any failure we fall back to the legacy cleanup so a job never leaves a
+    stray full-size download behind.
+    """
+    keep_for_editor = os.environ.get("OPENSHORTS_KEEP_ORIGINAL", "1") != "0"
+    if keep_for_editor and input_video and os.path.exists(input_video):
+        dest = os.path.join(output_dir, "original.mp4")
+        try:
+            if os.path.abspath(input_video) != os.path.abspath(dest):
+                if is_url:
+                    shutil.move(input_video, dest)
+                else:
+                    if os.path.exists(dest):
+                        os.remove(dest)
+                    try:
+                        os.link(input_video, dest)  # cheap when same filesystem
+                    except OSError:
+                        shutil.copyfile(input_video, dest)
+            print(f"🗄️  Retained original for editor Extend: {dest}")
+            return
+        except OSError as e:
+            print(f"⚠️  Could not retain original ({e}); falling back to cleanup.")
+    # Retention disabled or failed → legacy behavior (only URL downloads are ours to delete).
+    if is_url and not keep_flag and input_video and os.path.exists(input_video):
+        os.remove(input_video)
+        print("🗑️  Cleaned up downloaded video.")
+
+
 def download_youtube_video(url, output_dir="."):
     """
     Downloads a YouTube video using yt-dlp.
@@ -2351,10 +2387,8 @@ if __name__ == '__main__':
             print("🛑 Stopping job. Not converting the whole video as a fallback.")
             sys.exit(2)
 
-        # Clean up downloaded original if requested.
-        if args.url and not args.keep_original and os.path.exists(input_video):
-            os.remove(input_video)
-            print("🗑️  Cleaned up downloaded video.")
+        # Retain the full original (or clean it up) for the editor's Extend feature.
+        retain_or_cleanup_original(input_video, output_dir, bool(args.url), args.keep_original)
 
         total_time = time.time() - script_start_time
         print(f"\n⏱️  Total execution time: {total_time:.2f}s")
@@ -2495,10 +2529,8 @@ if __name__ == '__main__':
             if success:
                 print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
 
-    # Clean up original if requested
-    if args.url and not args.keep_original and os.path.exists(input_video):
-        os.remove(input_video)
-        print(f"🗑️  Cleaned up downloaded video.")
+    # Retain the full original (or clean it up) for the editor's Extend feature.
+    retain_or_cleanup_original(input_video, output_dir, bool(args.url), args.keep_original)
 
     total_time = time.time() - script_start_time
     print(f"\n⏱️  Total execution time: {total_time:.2f}s")
