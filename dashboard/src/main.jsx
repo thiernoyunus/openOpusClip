@@ -6,6 +6,7 @@ import Landing from './Landing.jsx'
 import Legal from './Legal.jsx'
 import TrailerPage from './TrailerPage.jsx'
 import EditorView from './components/editor/EditorView.jsx'
+import ResultCard from './components/ResultCard.jsx'
 
 const buildDevTranscript = (items) => {
   let t = 0;
@@ -74,6 +75,39 @@ const EDITOR_DEV_FIXTURES = {
   },
 };
 
+// Dev harness: open /?cardDev=1 to mount a single results-grid clip card
+// against the local fixture, with the transcript API stubbed — lets you work
+// on the card preview (default captions, detail modal) without processing a
+// job. Pairs with ?editorDev=1 below.
+let transcriptFetchStubbed = false;
+function stubTranscriptFetch() {
+  if (transcriptFetchStubbed) return;
+  transcriptFetchStubbed = true;
+  const realFetch = window.fetch.bind(window);
+  window.fetch = (url, ...rest) =>
+    typeof url === 'string' && url.includes('/api/clip/')
+      ? Promise.resolve(new Response(
+          JSON.stringify({ captions: TEST_TRANSCRIPT, durationSec: 45 }),
+          { headers: { 'Content-Type': 'application/json' } }
+        ))
+      : realFetch(url, ...rest);
+}
+
+function CardDevHarness() {
+  const [openIndex, setOpenIndex] = useState(null);
+  const clip = {
+    ...EDITOR_DEV_FIXTURES.static,
+    video_url: EDITOR_DEV_FIXTURES.static.source_url,
+    start: 0,
+    end: 45,
+  };
+  return (
+    <div style={{ width: 280, margin: '40px auto' }}>
+      <ResultCard clip={clip} index={0} jobId="dev" openIndex={openIndex} setOpenIndex={setOpenIndex} />
+    </div>
+  );
+}
+
 /** Loads a real processed clip from the status API and opens the editor on it. */
 function EditorJobLoader({ jobId, clipIndex, onClose }) {
   const [clip, setClip] = useState(null);
@@ -127,6 +161,11 @@ function Root() {
         onClose={() => window.location.assign(window.location.pathname)}
       />
     );
+  }
+  // Card preview dev harness: /?cardDev=1 (see CardDevHarness above)
+  if (params.get('cardDev')) {
+    stubTranscriptFetch();
+    return <CardDevHarness />;
   }
   // Open the editor on a real processed clip: /?editorJob=<jobId>&clip=<index>
   const editorJob = params.get('editorJob');

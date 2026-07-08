@@ -92,7 +92,8 @@ function DragDropZone({ label, accept, onFile, file, onClear, icon: Icon }) {
   );
 }
 
-export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUserId }) {
+export default function ThumbnailStudio({ geminiApiKey, zernioKey, socialAccounts = [] }) {
+  const youtubeAccount = socialAccounts.find((a) => a.platform === 'youtube');
   // Step management
   const [step, setStep] = useState(0);
   const [mode, setMode] = useState(null); // 'video' or 'manual'
@@ -366,7 +367,7 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
 
   // --- Publish to YouTube ---
   const handlePublish = async () => {
-    if (!uploadPostKey || !uploadUserId) return alert('Please configure your Upload-Post API key and user in Settings first.');
+    if (!zernioKey || !youtubeAccount) return alert('Please configure your Zernio API key and connect a YouTube account in Settings first.');
     const finalTitle = selectedTitle || manualTitle;
     if (!finalTitle) return alert('No title selected.');
     if (!selectedThumbnail) return alert('Please select a thumbnail first.');
@@ -380,8 +381,8 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
       formData.append('title', finalTitle);
       formData.append('description', description);
       formData.append('thumbnail_url', selectedThumbnail);
-      formData.append('api_key', uploadPostKey);
-      formData.append('user_id', uploadUserId);
+      formData.append('api_key', zernioKey);
+      formData.append('account_id', youtubeAccount.id);
 
       // Submit the publish job — returns immediately with a publish_id
       const res = await fetch(getApiUrl('/api/thumbnail/publish'), {
@@ -1058,14 +1059,14 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
               </div>
 
               {/* Publish Button */}
-              {(!uploadPostKey || !uploadUserId) ? (
+              {(!zernioKey || !youtubeAccount) ? (
                 <div className="glass-panel p-6 space-y-3">
                   <div className="flex items-center gap-2 text-amber-400">
                     <AlertCircle size={16} />
-                    <span className="text-sm font-medium">Upload-Post Not Configured</span>
+                    <span className="text-sm font-medium">Zernio Not Configured</span>
                   </div>
                   <p className="text-xs text-zinc-500">
-                    To publish directly to YouTube, configure your Upload-Post API key and connect a profile in Settings.
+                    To publish directly to YouTube, add your Zernio API key and connect a YouTube account in Settings.
                   </p>
                   <button
                     onClick={() => { }}

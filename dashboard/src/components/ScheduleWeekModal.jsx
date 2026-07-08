@@ -64,14 +64,11 @@ function detectTimezone() {
     }
 }
 
-export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, uploadPostKey, uploadUserId }) {
+export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zernioKey, socialAccounts = [], onViewCalendar }) {
     const [time, setTime] = useState('12:00');
     const [timezone, setTimezone] = useState(detectTimezone);
-    const [platforms, setPlatforms] = useState({
-        tiktok: true,
-        instagram: true,
-        youtube: true
-    });
+    // Account selection: every connected account defaults to ON until unticked
+    const [accountToggles, setAccountToggles] = useState({});
     const [startOffset, setStartOffset] = useState(1);
 
     const schedule = useMemo(() => {
@@ -101,11 +98,11 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, uploa
 
     if (!isOpen) return null;
 
-    const selectedPlatforms = Object.keys(platforms).filter(k => platforms[k]);
+    const selectedAccounts = socialAccounts.filter((a) => accountToggles[a.id] ?? true);
 
     const handleScheduleAll = async () => {
-        if (!uploadPostKey || !uploadUserId) return;
-        if (selectedPlatforms.length === 0) return;
+        if (!zernioKey) return;
+        if (selectedAccounts.length === 0) return;
 
         setScheduling(true);
         setDone(false);
@@ -117,16 +114,15 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, uploa
             const { clip, index, date } = schedule[i];
 
             // Build local datetime string: "2026-04-06T12:00:00"
-            // Upload-Post accepts this + timezone IANA parameter
+            // Zernio interprets it in the IANA timezone sent alongside
             const pad = (n) => String(n).padStart(2, '0');
             const scheduledDate = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${time}:00`;
 
             const payload = {
                 job_id: jobId,
                 clip_index: index,
-                api_key: uploadPostKey,
-                user_id: uploadUserId,
-                platforms: selectedPlatforms,
+                api_key: zernioKey,
+                accounts: selectedAccounts.map((a) => ({ accountId: a.id, platform: a.platform })),
                 title: clip.video_title_for_youtube_short || 'Viral Short',
                 description: clip.video_description_for_instagram || clip.video_description_for_tiktok || '',
                 scheduled_date: scheduledDate,
@@ -182,10 +178,10 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, uploa
                     </div>
                 </div>
 
-                {!uploadPostKey && (
+                {!zernioKey && (
                     <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/20 text-yellow-200 text-xs rounded-lg flex items-start gap-2">
                         <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                        <div>Configura tu API Key de Upload-Post en Settings primero.</div>
+                        <div>Configura tu API Key de Zernio en Settings primero.</div>
                     </div>
                 )}
 
@@ -290,32 +286,34 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, uploa
                     ))}
                 </div>
 
-                {/* Platforms */}
+                {/* Accounts */}
                 <div className="mb-5">
-                    <label className="block text-xs font-bold text-zinc-400 mb-2">Plataformas</label>
-                    <div className="flex gap-2">
-                        <button
-                            onClick={() => setPlatforms(p => ({ ...p, tiktok: !p.tiktok }))}
-                            disabled={scheduling}
-                            className={`flex-1 flex items-center justify-center gap-2 p-2.5 rounded-lg text-xs font-bold border transition-all ${platforms.tiktok ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400' : 'bg-white/5 border-white/5 text-zinc-500'}`}
-                        >
-                            <Video size={14} /> TikTok
-                        </button>
-                        <button
-                            onClick={() => setPlatforms(p => ({ ...p, instagram: !p.instagram }))}
-                            disabled={scheduling}
-                            className={`flex-1 flex items-center justify-center gap-2 p-2.5 rounded-lg text-xs font-bold border transition-all ${platforms.instagram ? 'bg-pink-500/10 border-pink-500/30 text-pink-400' : 'bg-white/5 border-white/5 text-zinc-500'}`}
-                        >
-                            <Instagram size={14} /> Instagram
-                        </button>
-                        <button
-                            onClick={() => setPlatforms(p => ({ ...p, youtube: !p.youtube }))}
-                            disabled={scheduling}
-                            className={`flex-1 flex items-center justify-center gap-2 p-2.5 rounded-lg text-xs font-bold border transition-all ${platforms.youtube ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-white/5 border-white/5 text-zinc-500'}`}
-                        >
-                            <Youtube size={14} /> YouTube
-                        </button>
-                    </div>
+                    <label className="block text-xs font-bold text-zinc-400 mb-2">Cuentas</label>
+                    {socialAccounts.length === 0 ? (
+                        <p className="text-xs text-zinc-500 p-3 bg-white/5 rounded-lg border border-white/5">
+                            No hay cuentas conectadas. Conéctalas en Settings → Social Integration.
+                        </p>
+                    ) : (
+                        <div className="flex flex-wrap gap-2">
+                            {socialAccounts.map((acc) => {
+                                const on = accountToggles[acc.id] ?? true;
+                                return (
+                                    <button
+                                        key={acc.id}
+                                        onClick={() => setAccountToggles(t => ({ ...t, [acc.id]: !on }))}
+                                        disabled={scheduling}
+                                        className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs font-bold border transition-all ${on ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' : 'bg-white/5 border-white/5 text-zinc-500'}`}
+                                    >
+                                        {acc.platform === 'tiktok' ? <Video size={14} className="text-cyan-400" /> :
+                                         acc.platform === 'instagram' ? <Instagram size={14} className="text-pink-400" /> :
+                                         acc.platform === 'youtube' ? <Youtube size={14} className="text-red-400" /> :
+                                         <Globe size={14} />}
+                                        {acc.displayName || acc.username}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
 
                 {/* Progress bar */}
@@ -355,7 +353,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, uploa
                     {!done ? (
                         <button
                             onClick={handleScheduleAll}
-                            disabled={scheduling || !uploadPostKey || selectedPlatforms.length === 0}
+                            disabled={scheduling || !zernioKey || selectedAccounts.length === 0}
                             className="flex-1 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-400 hover:to-indigo-500 text-white rounded-xl font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                         >
                             {scheduling ? (
@@ -371,15 +369,13 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, uploa
                             )}
                         </button>
                     ) : (
-                        <a
-                            href="https://app.upload-post.com/calendar"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex-1 py-3 bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-400 hover:to-purple-500 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 no-underline"
+                        <button
+                            onClick={() => { onClose(); onViewCalendar && onViewCalendar(); }}
+                            className="flex-1 py-3 bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-400 hover:to-purple-500 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2"
                         >
                             <ExternalLink size={16} />
                             Ver Calendario
-                        </a>
+                        </button>
                     )}
                 </div>
             </div>

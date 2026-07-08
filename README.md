@@ -96,7 +96,7 @@ The screenshot above shows the new layout controls. A clip can use Fill, Fit, Sp
 - **Layout tools**: choose Fill, Fit, Split, Three, Four, Screenshare, or Gameplay framing.
 - **Captions, text, audio, b-roll, and effects**: polish the clip before exporting.
 - **Remotion export service**: render edited clips from the same data used in preview.
-- **Social workflow**: publish or schedule clips through Upload-Post when configured.
+- **Social workflow**: publish or schedule clips through Zernio when configured, with a built-in calendar and per-account analytics.
 
 ## Why This Matters
 
@@ -149,13 +149,15 @@ Complete free AI YouTube toolkit: thumbnails, titles, descriptions, and direct p
 - Interactive refinement chat for titles
 - AI thumbnail generation with custom face + background
 - Auto descriptions with chapter timestamps from Whisper transcript
-- Direct YouTube publishing via Upload-Post
+- Direct YouTube publishing via Zernio
 
 ### Social Auto-Publishing
 - **One-click posting** to TikTok, Instagram Reels, and YouTube Shorts simultaneously
 - **Schedule uploads** for any date and time — plan your content calendar and let OpenShorts publish automatically
 - **Multi-platform distribution** — publish to all your social networks at once from a single interface
-- Upload-Post integration with async uploads
+- **Content calendar** — see every scheduled post in-app, reschedule or delete with a click
+- **Account analytics** — views, likes, comments, shares, and engagement per connected account
+- Zernio integration (15+ platforms supported)
 
 ### Infrastructure
 - S3 cloud backup for generated clips
@@ -206,10 +208,10 @@ OpenShorts is free. You only pay for the AI APIs you use — and most have gener
 |---------|-----------|-----------|----------|
 | **Google Gemini** | Free trial with generous limits | < $0.01 per 10-min video | Viral moment detection, titles, thumbnails, descriptions |
 | **ElevenLabs** | Free tier available | Pay-per-use | Voice dubbing |
-| **Upload-Post** | **10 free uploads/month** to all networks (no credit card) | Pay-per-use | Auto-publishing to TikTok, Instagram, YouTube |
+| **Zernio** | Free tier available | Pay-per-use | Publishing, scheduling & analytics for TikTok, Instagram, YouTube and more |
 | **AWS S3** | Optional | ~$0.023/GB | Cloud backup for clips |
 
-**Bottom line:** You can clip videos for practically free with Gemini, and publish 10 videos/month to all social networks at zero cost with Upload-Post.
+**Bottom line:** You can clip videos for practically free with Gemini, and publish or schedule to all your social networks through Zernio.
 
 ---
 
@@ -219,7 +221,7 @@ OpenShorts is free. You only pay for the AI APIs you use — and most have gener
 - **For Docker:** Docker & Docker Compose
 - **Google Gemini API Key** ([Free — get it here](https://aistudio.google.com/app/apikey)) — required for all AI features
 - **ElevenLabs API Key** ([Free tier](https://elevenlabs.io)) — optional, required only for voice dubbing
-- **Upload-Post API Key** ([free tier](https://upload-post.com)) — optional, required only for direct social posting
+- **Zernio API Key** ([zernio.com](https://zernio.com)) — optional, required only for social posting, scheduling & analytics
 
 ---
 
@@ -247,7 +249,7 @@ cp .env.example .env
 # Edit .env if you want S3 backup or YouTube cookies
 ```
 
-API keys for Gemini, ElevenLabs, and Upload-Post are entered in the app Settings screen. The Clip Generator only needs a Gemini key. Upload-Post is not required unless you want to publish directly to TikTok, Instagram, or YouTube.
+API keys for Gemini, ElevenLabs, and Zernio are entered in the app Settings screen. The Clip Generator only needs a Gemini key. Zernio is not required unless you want to publish, schedule, or track posts on TikTok, Instagram, YouTube, and other platforms.
 
 ### 4. Launch locally
 ```bash
@@ -290,7 +292,7 @@ Docker also serves the dashboard at **`http://localhost:5175/#app`**.
 5. **Extract** — FFmpeg precise clip cutting
 6. **Reframe** — AI vertical cropping with subject tracking
 7. **Effects** — Subtitles, hooks, AI video effects
-8. **Publish** — S3 backup + Upload-Post social distribution
+8. **Publish** — S3 backup + Zernio social distribution
 
 ## Tech Stack
 
@@ -300,7 +302,7 @@ Docker also serves the dashboard at **`http://localhost:5175/#app`**.
 | Frontend | React 18, Vite 4, Tailwind CSS 3.4 |
 | AI APIs | Google Gemini, ElevenLabs |
 | Infrastructure | Docker + Docker Compose, AWS S3 |
-| Publishing | Upload-Post API (TikTok, Instagram, YouTube) |
+| Publishing | Zernio API (TikTok, Instagram, YouTube + 12 more) |
 
 ---
 
@@ -320,7 +322,7 @@ Docker also serves the dashboard at **`http://localhost:5175/#app`**.
 |-----|------------|
 | `GEMINI_API_KEY` | Google Gemini — required |
 | `ELEVENLABS_API_KEY` | ElevenLabs — optional, required for voice dubbing |
-| `UPLOAD_POST_API_KEY` | Upload-Post — optional, required only for social posting |
+| `ZERNIO_API_KEY` | Zernio — optional, required only for social posting, scheduling & analytics |
 
 ---
 
@@ -335,13 +337,13 @@ Docker also serves the dashboard at **`http://localhost:5175/#app`**.
 
 ---
 
-## Social Media Setup (Upload-Post)
+## Social Media Setup (Zernio)
 
-1. **Register**: [app.upload-post.com/login](https://app.upload-post.com/login)
-2. **Create Profile**: Go to [Manage Users](https://app.upload-post.com/manage-users)
-3. **Connect Accounts**: Link TikTok, Instagram, and/or YouTube
-4. **Get API Key**: Navigate to [API Keys](https://app.upload-post.com/api-keys)
-5. **Use in OpenShorts**: Paste the key in Settings
+1. **Register**: [zernio.com](https://zernio.com) and generate an API key
+2. **Use in OpenShorts**: Paste the key in Settings → Social Integration
+3. **Connect Accounts**: Click a platform button (TikTok, Instagram, YouTube, X, and more) — a Zernio window opens to authorize it
+4. **Publish & schedule**: Use the Share button on any clip, or "Schedule week" for a batch
+5. **Track**: Open the Calendar tab for scheduled posts and per-account analytics
 
 ---
 

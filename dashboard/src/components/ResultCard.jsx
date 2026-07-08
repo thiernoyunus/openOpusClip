@@ -4,7 +4,9 @@ import { getApiUrl } from '../config';
 import SubtitleModal from './SubtitleModal';
 import HookModal from './HookModal';
 import TranslateModal from './TranslateModal';
+import RemotionPreview from './RemotionPreview';
 import { renderInBrowser } from '../lib/renderInBrowser';
+import { defaultSubtitleConfig, loadDefaultCaptionStyle } from './editor/useEditorState';
 
 const fmtTime = (s) => {
     s = Math.max(0, Math.floor(s || 0));
@@ -38,7 +40,7 @@ const ScoreBadge = ({ score, lg, box }) => {
 
 const BREAKDOWN_LABELS = { hook: 'Hook', flow: 'Flow', value: 'Value', trend: 'Trend' };
 
-export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, uploadPostKey, uploadUserId, geminiApiKey, elevenLabsKey, onPlay, onPause, openIndex, setOpenIndex, totalClips, onEdit }) {
+export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], geminiApiKey, elevenLabsKey, onPlay, onPause, openIndex, setOpenIndex, totalClips, onEdit }) {
     const isOpen = openIndex === index;
     const [showModal, setShowModal] = useState(false);
     const [showSubtitleModal, setShowSubtitleModal] = useState(false);
@@ -48,11 +50,9 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     const originalVideoUrl = getApiUrl(clip.video_url); // Never changes — used for Remotion previews
     const [currentVideoUrl, setCurrentVideoUrl] = useState(originalVideoUrl);
 
-    const [platforms, setPlatforms] = useState({
-        tiktok: true,
-        instagram: true,
-        youtube: true
-    });
+    // Account selection: default every connected account to ON until the user unticks it
+    const [accountToggles, setAccountToggles] = useState({});
+    const selectedAccounts = socialAccounts.filter((a) => accountToggles[a.id] ?? true);
     const [postTitle, setPostTitle] = useState("");
     const [postDescription, setPostDescription] = useState("");
     const [isScheduling, setIsScheduling] = useState(false);
@@ -74,6 +74,29 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     // Accumulate Remotion layers across operations
     const [activeLayers, setActiveLayers] = useState({ subtitles: null, hook: null, effects: null });
 
+    // Caption config saved in the editor for this clip (position/style/on-off),
+    // loaded from the clip's framing. null = clip has no framing / not loaded.
+    const [framingCaptions, setFramingCaptions] = useState(null);
+
+    // Default captions in the preview (Opus-style): overlay the same caption
+    // engine the editor/export use, so the user sees captions WITHOUT opening
+    // the editor. Only on an untouched clip (any applied edit is already baked
+    // into currentVideoUrl).
+    const previewSubtitles = React.useMemo(() => {
+        if (captions.length === 0) return null;
+        if (currentVideoUrl !== originalVideoUrl) return null;
+        // Prefer what the user set in the editor: keep its position/style but use
+        // the clip-relative caption timings from the transcript endpoint.
+        if (framingCaptions) {
+            if (framingCaptions.subtitles) return { ...framingCaptions.subtitles, captions };
+            // Captions were explicitly turned off in the editor → show none.
+            if (framingCaptions.captionsInitialized) return null;
+        }
+        // Untouched clip → fall back to the user's default caption style, if on.
+        if (loadDefaultCaptionStyle()?.enabled !== true) return null;
+        return defaultSubtitleConfig(captions);
+    }, [captions, currentVideoUrl, originalVideoUrl, framingCaptions]);
+
     // Fetch clip duration from transcript endpoint
     useEffect(() => {
         if (!jobId || index === undefined) return;
@@ -85,6 +108,25 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             })
             .catch(() => {});
     }, [jobId, index]);
+
+    // Load the clip's saved framing so the preview mirrors editor caption edits
+    // (position/style, or captions turned off). Only the caption bits are used.
+    useEffect(() => {
+        if (!clip.framing_url) { setFramingCaptions(null); return; }
+        let alive = true;
+        setFramingCaptions(null); // drop the previous clip's config so it can't flash
+        fetch(getApiUrl(clip.framing_url))
+            .then(res => res.ok ? res.json() : null)
+            .then(f => {
+                if (!alive || !f) return;
+                setFramingCaptions({
+                    subtitles: f.subtitles ?? null,
+                    captionsInitialized: f.captionsInitialized ?? false,
+                });
+            })
+            .catch(() => {});
+        return () => { alive = false; };
+    }, [clip.framing_url]);
 
     // Initialize/Reset form when modal opens
     useEffect(() => {
@@ -352,14 +394,13 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     };
 
     const handlePost = async () => {
-        if (!uploadPostKey || !uploadUserId) {
-            setPostResult({ success: false, msg: "Missing API Key or User ID." });
+        if (!zernioKey) {
+            setPostResult({ success: false, msg: "Missing Zernio API Key." });
             return;
         }
 
-        const selectedPlatforms = Object.keys(platforms).filter(k => platforms[k]);
-        if (selectedPlatforms.length === 0) {
-            setPostResult({ success: false, msg: "Select at least one platform." });
+        if (selectedAccounts.length === 0) {
+            setPostResult({ success: false, msg: "Select at least one account." });
             return;
         }
 
@@ -375,9 +416,8 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             const payload = {
                 job_id: jobId,
                 clip_index: index,
-                api_key: uploadPostKey,
-                user_id: uploadUserId,
-                platforms: selectedPlatforms,
+                api_key: zernioKey,
+                accounts: selectedAccounts.map((a) => ({ accountId: a.id, platform: a.platform })),
                 title: postTitle,
                 description: postDescription
             };
@@ -467,6 +507,17 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     className="relative aspect-[9/16] rounded-xl overflow-hidden bg-black border border-edge cursor-pointer"
                     onClick={() => { if (!playing) setOpenIndex(index); }}
                 >
+                    {playing && previewSubtitles ? (
+                        <RemotionPreview
+                            videoUrl={originalVideoUrl}
+                            durationInSeconds={clipDuration}
+                            subtitles={previewSubtitles}
+                            loop={false}
+                            onPlay={(t) => onPlay && onPlay(clip.start + t)}
+                            onPause={() => onPause && onPause()}
+                            onEnded={() => setPlaying(false)}
+                        />
+                    ) : (
                     <video
                         ref={videoRef}
                         src={currentVideoUrl}
@@ -478,6 +529,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                         onPause={() => onPause && onPause()}
                         onEnded={() => { setPlaying(false); if (videoRef.current) videoRef.current.currentTime = 0; }}
                     />
+                    )}
                     <span className="absolute top-2 left-2 bg-black/65 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">Clip {index + 1}</span>
                     <span className="absolute top-2 right-2 bg-black/65 text-white text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums">{fmtTime(durSec)}</span>
                     {hasScore && <div className="absolute bottom-2 left-2"><ScoreBadge score={viralityScore} box /></div>}
@@ -485,7 +537,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     {!playing && (
                         <div className="absolute inset-0 flex items-center justify-center bg-black/10 group-hover:bg-black/25 transition-colors pointer-events-none">
                             <button
-                                onClick={(e) => { e.stopPropagation(); setPlaying(true); videoRef.current && videoRef.current.play(); }}
+                                onClick={(e) => { e.stopPropagation(); setPlaying(true); if (!previewSubtitles) videoRef.current && videoRef.current.play(); }}
                                 className="w-12 h-12 rounded-full bg-black/55 backdrop-blur flex items-center justify-center text-white pointer-events-auto hover:bg-black/75 active:scale-95 transition-all"
                                 aria-label="Play clip"
                             >
@@ -530,7 +582,17 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     <div className="bg-surface border border-edge rounded-2xl w-full max-w-4xl max-h-[88vh] overflow-hidden flex shadow-2xl" onClick={(e) => e.stopPropagation()}>
                         {/* Preview */}
                         <div className="w-[clamp(200px,26vw,280px)] shrink-0 bg-black relative">
-                            <video src={currentVideoUrl} controls autoPlay playsInline className="w-full h-full object-cover aspect-[9/16]" />
+                            {previewSubtitles ? (
+                                <RemotionPreview
+                                    videoUrl={originalVideoUrl}
+                                    durationInSeconds={clipDuration}
+                                    subtitles={previewSubtitles}
+                                    className="aspect-[9/16]"
+                                    loop={false}
+                                />
+                            ) : (
+                                <video src={currentVideoUrl} controls autoPlay playsInline className="w-full h-full object-cover aspect-[9/16]" />
+                            )}
                             <span className="absolute top-3 right-3 bg-black/65 text-white text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums">{fmtTime(durSec)}</span>
                         </div>
 
@@ -610,10 +672,10 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
                         <h3 className="text-lg font-bold text-white mb-4">Post / Schedule</h3>
 
-                        {!uploadPostKey && (
+                        {!zernioKey && (
                             <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/20 text-yellow-200 text-xs rounded-lg flex items-start gap-2">
                                 <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                                <div>Configure API Key in Settings first.</div>
+                                <div>Configure your Zernio API Key in Settings first.</div>
                             </div>
                         )}
 
@@ -669,23 +731,35 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                 )}
                             </div>
 
-                            {/* Platforms */}
+                            {/* Accounts */}
                             <div>
-                                <label className="block text-xs font-bold text-zinc-400 mb-2">Select Platforms</label>
-                                <div className="grid grid-cols-1 gap-2">
-                                    <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors border border-white/5">
-                                        <input type="checkbox" checked={platforms.tiktok} onChange={e => setPlatforms({ ...platforms, tiktok: e.target.checked })} className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary" />
-                                        <div className="flex items-center gap-2 text-sm text-white"><Video size={16} className="text-cyan-400" /> TikTok</div>
-                                    </label>
-                                    <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors border border-white/5">
-                                        <input type="checkbox" checked={platforms.instagram} onChange={e => setPlatforms({ ...platforms, instagram: e.target.checked })} className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary" />
-                                        <div className="flex items-center gap-2 text-sm text-white"><Instagram size={16} className="text-pink-400" /> Instagram</div>
-                                    </label>
-                                    <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors border border-white/5">
-                                        <input type="checkbox" checked={platforms.youtube} onChange={e => setPlatforms({ ...platforms, youtube: e.target.checked })} className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary" />
-                                        <div className="flex items-center gap-2 text-sm text-white"><Youtube size={16} className="text-red-400" /> YouTube Shorts</div>
-                                    </label>
-                                </div>
+                                <label className="block text-xs font-bold text-zinc-400 mb-2">Select Accounts</label>
+                                {socialAccounts.length === 0 ? (
+                                    <p className="text-xs text-zinc-500 p-3 bg-white/5 rounded-lg border border-white/5">
+                                        No social accounts connected yet. Connect them in Settings → Social Integration.
+                                    </p>
+                                ) : (
+                                    <div className="grid grid-cols-1 gap-2">
+                                        {socialAccounts.map((acc) => (
+                                            <label key={acc.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors border border-white/5">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={accountToggles[acc.id] ?? true}
+                                                    onChange={(e) => setAccountToggles({ ...accountToggles, [acc.id]: e.target.checked })}
+                                                    className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary"
+                                                />
+                                                <div className="flex items-center gap-2 text-sm text-white">
+                                                    {acc.platform === 'tiktok' ? <Video size={16} className="text-cyan-400" /> :
+                                                     acc.platform === 'instagram' ? <Instagram size={16} className="text-pink-400" /> :
+                                                     acc.platform === 'youtube' ? <Youtube size={16} className="text-red-400" /> :
+                                                     <Share2 size={16} className="text-zinc-400" />}
+                                                    {acc.displayName || acc.username}
+                                                    <span className="text-xs text-zinc-500 capitalize">{acc.platform}</span>
+                                                </div>
+                                            </label>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         </div>
 
@@ -698,7 +772,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
                         <button
                             onClick={handlePost}
-                            disabled={posting || !uploadPostKey}
+                            disabled={posting || !zernioKey}
                             className="w-full py-3 bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-white font-bold transition-all flex items-center justify-center gap-2"
                         >
                             {posting ? <><Loader2 size={16} className="animate-spin" /> {isScheduling ? 'Scheduling...' : 'Publishing...'}</> : <><Share2 size={16} /> {isScheduling ? 'Schedule Post' : 'Publish Now'}</>}

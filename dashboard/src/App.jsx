@@ -5,6 +5,7 @@ import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
 import ThumbnailStudio from './components/ThumbnailStudio';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
+import SocialCalendar from './components/SocialCalendar';
 import ProcessingModal from './components/ProcessingModal';
 import EditorView from './components/editor/EditorView';
 import { getProjects, addProject, updateProject, removeProject, phaseFromLogs, titleFromPayload, thumbFromPayload, coverFromString, fetchVideoTitle, captureVideoFrame, isTrailerProject } from './lib/projectHistory';
@@ -56,72 +57,6 @@ const TikTokIcon = ({ size = 16, className = "" }) => (
   </svg>
 );
 
-const UserProfileSelector = ({ profiles, selectedUserId, onSelect }) => {
-  const [isOpen, setIsOpen] = useState(false);
-
-  if (!profiles || profiles.length === 0) return null;
-
-  const selectedProfile = profiles.find(p => p.username === selectedUserId) || profiles[0];
-
-  return (
-    <div className="relative z-50">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center justify-between bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-300 hover:bg-white/5 transition-colors min-w-[180px]"
-      >
-        <span className="flex items-center gap-2">
-          <div className="w-5 h-5 rounded-full bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center text-[10px] font-bold text-white">
-            {selectedProfile?.username?.substring(0, 1).toUpperCase() || "U"}
-          </div>
-          <span className="font-medium text-white truncate max-w-[100px]">{selectedProfile?.username || "Select User"}</span>
-        </span>
-        <ChevronDown size={14} className={`text-zinc-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
-
-      {isOpen && (
-        <div className="absolute top-full mt-2 right-0 w-64 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl overflow-hidden">
-          <div className="max-h-60 overflow-y-auto custom-scrollbar">
-            {profiles.map((profile) => (
-              <button
-                key={profile.username}
-                onClick={() => {
-                  onSelect(profile.username);
-                  setIsOpen(false);
-                }}
-                className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors text-left group border-b border-white/5 last:border-0"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 to-purple-500/20 flex items-center justify-center text-xs font-bold text-white border border-white/10 shrink-0">
-                    {profile.username.substring(0, 2).toUpperCase()}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-zinc-200 group-hover:text-white transition-colors truncate">
-                      {profile.username}
-                    </div>
-                    <div className="flex gap-2 mt-0.5">
-                      {/* Status indicators */}
-                      <div className={`flex items-center gap-1 text-[10px] ${profile.connected.includes('tiktok') ? 'text-zinc-300' : 'text-zinc-600'}`}>
-                        <TikTokIcon size={10} />
-                      </div>
-                      <div className={`flex items-center gap-1 text-[10px] ${profile.connected.includes('instagram') ? 'text-pink-400' : 'text-zinc-600'}`}>
-                        <Instagram size={10} />
-                      </div>
-                      <div className={`flex items-center gap-1 text-[10px] ${profile.connected.includes('youtube') ? 'text-red-400' : 'text-zinc-600'}`}>
-                        <Youtube size={10} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                {selectedUserId === profile.username && <Check size={14} className="text-primary shrink-0" />}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
 const SESSION_KEY = 'openshorts_session';
 const LEGACY_SESSION_KEY = 'openshorts_session_v1';
 const SESSION_MAX_AGE = 3600000; // 1 hour (matches server job retention)
@@ -156,9 +91,9 @@ const pollJob = async (jobId) => {
 
 function App() {
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
-  // Social API State - Load encrypted or plain
-  const [uploadPostKey, setUploadPostKey] = useState(() => {
-    const stored = localStorage.getItem('uploadPostKey_v3');
+  // Social API State (Zernio) - Load encrypted or plain
+  const [zernioKey, setZernioKey] = useState(() => {
+    const stored = localStorage.getItem('zernioKey_v1');
     if (stored) return decrypt(stored);
     return '';
   });
@@ -175,8 +110,7 @@ function App() {
     return '';
   });
 
-  const [uploadUserId, setUploadUserId] = useState(() => localStorage.getItem('uploadUserId') || '');
-  const [userProfiles, setUserProfiles] = useState([]); // List of {username, connected: []}
+  const [socialAccounts, setSocialAccounts] = useState([]); // [{id, platform, username, displayName}]
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, processing, complete, error
@@ -305,13 +239,10 @@ function App() {
   }, [apiKey]);
 
   useEffect(() => {
-    if (uploadPostKey) {
-      localStorage.setItem('uploadPostKey_v3', encrypt(uploadPostKey));
+    if (zernioKey) {
+      localStorage.setItem('zernioKey_v1', encrypt(zernioKey));
     }
-    if (uploadUserId) {
-      localStorage.setItem('uploadUserId', uploadUserId);
-    }
-  }, [uploadPostKey, uploadUserId]);
+  }, [zernioKey]);
 
   useEffect(() => {
     if (elevenLabsKey) {
@@ -328,10 +259,13 @@ function App() {
   }, [sonioxKey]);
 
   useEffect(() => {
-    if (uploadPostKey && userProfiles.length === 0) {
-      fetchUserProfiles();
+    // Refetch on every key change so a swapped key never leaves stale account IDs.
+    if (zernioKey) {
+      fetchSocialAccounts();
+    } else {
+      setSocialAccounts([]);
     }
-  }, [uploadPostKey]);
+  }, [zernioKey]);
 
   useEffect(() => {
     if (status === 'processing' && jobId) {
@@ -441,28 +375,32 @@ function App() {
   }, [processingJobIds, jobId]);
 
 
-  const fetchUserProfiles = async () => {
-    if (!uploadPostKey) return;
+  const fetchSocialAccounts = async () => {
+    if (!zernioKey) return;
     try {
-      const res = await fetch(getApiUrl('/api/social/user'), {
-        headers: { 'X-Upload-Post-Key': uploadPostKey }
+      const res = await fetch(getApiUrl('/api/social/accounts'), {
+        headers: { 'X-Zernio-Key': zernioKey }
       });
       if (!res.ok) throw new Error("Failed to fetch");
       const data = await res.json();
-      if (data.profiles && data.profiles.length > 0) {
-        setUserProfiles(data.profiles);
-        const selectedProfileExists = data.profiles.some((profile) => profile.username === uploadUserId);
-        if (!selectedProfileExists) {
-          setUploadUserId(data.profiles[0].username);
-        }
-      } else {
-        console.warn("No Upload-Post profiles found for this API key.");
-        setUserProfiles([]);
-        setUploadUserId('');
-      }
+      setSocialAccounts(data.accounts || []);
     } catch (e) {
-      console.warn("Upload-Post profile fetch failed. Posting will stay disabled until the key is fixed.", e);
-      setUserProfiles([]);
+      console.warn("Zernio account fetch failed. Posting will stay disabled until the key is fixed.", e);
+      setSocialAccounts([]);
+    }
+  };
+
+  const connectSocialAccount = async (platform) => {
+    if (!zernioKey) return;
+    try {
+      const res = await fetch(getApiUrl(`/api/social/connect/${platform}`), {
+        headers: { 'X-Zernio-Key': zernioKey }
+      });
+      const data = await res.json();
+      if (!res.ok || !data.authUrl) throw new Error(data.detail || 'No auth URL returned');
+      window.open(data.authUrl, '_blank', 'noopener');
+    } catch (e) {
+      alert(`Could not start ${platform} connection: ${e.message}`);
     }
   };
 
@@ -684,6 +622,7 @@ function App() {
         <RailItem icon={Film} label="Podcast Trailer" active={false} onClick={() => { window.location.hash = '#trailer'; }} />
         <RailItem icon={Bot} label="AI Agent" active={activeTab === 'ai-agent'} onClick={() => setActiveTab('ai-agent')} />
         <RailItem icon={Youtube} label="YouTube Studio" active={activeTab === 'thumbnails'} onClick={() => setActiveTab('thumbnails')} />
+        <RailItem icon={Calendar} label="Calendar" active={activeTab === 'calendar'} onClick={() => setActiveTab('calendar')} />
       </nav>
 
       <div className="flex flex-col gap-1.5 w-full">
@@ -814,12 +753,15 @@ function App() {
           </div>
 
           <div className="flex items-center gap-4">
-            {userProfiles.length > 0 && (
-              <UserProfileSelector
-                profiles={userProfiles}
-                selectedUserId={uploadUserId}
-                onSelect={setUploadUserId}
-              />
+            {socialAccounts.length > 0 && (
+              <button
+                onClick={() => setActiveTab('calendar')}
+                className="flex items-center gap-2 bg-surface border border-white/10 rounded-lg px-3 py-2 text-xs text-zinc-300 hover:bg-white/5 transition-colors"
+                title="View connected accounts & calendar"
+              >
+                <Users size={14} className="text-primary" />
+                {socialAccounts.length} account{socialAccounts.length === 1 ? '' : 's'} connected
+              </button>
             )}
 
             {!apiKey && (
@@ -843,7 +785,7 @@ function App() {
               <div>
                 <span className="font-semibold">Gemini API key required.</span>{' '}
                 <span className="text-amber-200/80">
-                  Set your Gemini API key to generate clips. Upload-Post is only needed for social publishing.
+                  Set your Gemini API key to generate clips. Zernio is only needed for social publishing.
                 </span>
               </div>
             </div>
@@ -890,39 +832,66 @@ function App() {
                   <span className="text-[10px] bg-zinc-500/10 border border-white/10 px-2 py-0.5 rounded text-zinc-400 uppercase tracking-wider">Optional</span>
                 </div>
                 <p className="text-xs text-zinc-500 mb-6 leading-relaxed">
-                  Add an <strong>Upload-Post</strong> key only if you want to publish clips to TikTok, Instagram Reels, or YouTube Shorts directly from OpenShorts.
+                  Add a <strong>Zernio</strong> key only if you want to publish or schedule clips to TikTok, Instagram Reels, YouTube Shorts and more directly from OpenShorts.
                   Clip generation works without it.
                 </p>
                 <div className="space-y-4">
-                  <label className="block text-sm text-zinc-400">Upload-Post API Key</label>
+                  <label className="block text-sm text-zinc-400">Zernio API Key</label>
                   <div className="flex gap-2">
                     <input
                       type="password"
-                      value={uploadPostKey}
-                      onChange={(e) => setUploadPostKey(e.target.value)}
+                      value={zernioKey}
+                      onChange={(e) => setZernioKey(e.target.value)}
                       className="input-field"
-                      placeholder="ey..."
+                      placeholder="zern_..."
                     />
-                    <button onClick={fetchUserProfiles} className="btn-primary py-2 px-4 text-sm">
+                    <button onClick={fetchSocialAccounts} className="btn-primary py-2 px-4 text-sm">
                       Connect
                     </button>
                   </div>
-                  <p className="text-xs text-zinc-500 leading-relaxed">
-                    Connect your Upload-Post account to enable one-click publishing.
-                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <a href="https://app.upload-post.com/login" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
-                        <span className="text-zinc-400 font-medium">1. Login</span>
-                        <span className="text-[10px] text-zinc-600">Register account</span>
-                      </a>
-                      <a href="https://app.upload-post.com/manage-users" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
-                        <span className="text-zinc-400 font-medium">2. Profiles</span>
-                        <span className="text-[10px] text-zinc-600">Create & Connect</span>
-                      </a>
-                      <a href="https://app.upload-post.com/api-keys" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
-                        <span className="text-zinc-400 font-medium">3. API Key</span>
-                        <span className="text-[10px] text-zinc-600">Generate key</span>
-                      </a>
+
+                  {zernioKey && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-zinc-400">Connected accounts</span>
+                        <button onClick={fetchSocialAccounts} className="text-xs text-zinc-500 hover:text-white transition-colors flex items-center gap-1">
+                          <RotateCcw size={11} /> Refresh
+                        </button>
+                      </div>
+                      {socialAccounts.length === 0 ? (
+                        <p className="text-xs text-zinc-600">No accounts connected yet. Use the buttons below — a Zernio window opens to authorize the platform, then hit Refresh.</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {socialAccounts.map((acc) => (
+                            <div key={acc.id} className="flex items-center gap-2.5 p-2 border border-white/5 rounded-lg text-xs">
+                              {acc.platform === 'tiktok' ? <TikTokIcon size={13} className="text-zinc-300" /> :
+                               acc.platform === 'instagram' ? <Instagram size={13} className="text-pink-400" /> :
+                               acc.platform === 'youtube' ? <Youtube size={13} className="text-red-400" /> :
+                               <Globe size={13} className="text-zinc-400" />}
+                              <span className="text-zinc-200 font-medium">{acc.displayName || acc.username}</span>
+                              <span className="text-zinc-600 capitalize">{acc.platform}</span>
+                              {acc.isActive && <Check size={12} className="text-green-400 ml-auto" />}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                        {/* Pinterest omitted: Zernio needs a per-post board id we don't collect yet */}
+                        {['tiktok', 'instagram', 'youtube', 'facebook', 'twitter', 'linkedin', 'threads'].map((p) => (
+                          <button
+                            key={p}
+                            onClick={() => connectSocialAccount(p)}
+                            className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors text-[11px] text-zinc-400 capitalize"
+                          >
+                            + {p === 'twitter' ? 'X / Twitter' : p}
+                          </button>
+                        ))}
+                      </div>
                     </div>
+                  )}
+
+                  <p className="text-xs text-zinc-500 leading-relaxed">
+                    Get your key at <a href="https://zernio.com" target="_blank" rel="noopener noreferrer" className="text-primary underline">zernio.com</a>.
                     <br />
                     <span className="text-zinc-600 italic">
                       Keys are only stored in your browser. They are sent to the backend only to process your request, never stored server-side.
@@ -1095,7 +1064,7 @@ function App() {
                     </div>
                     <h3 className="font-semibold text-white">3. You validate, it ships</h3>
                     <p className="text-xs text-zinc-400 leading-relaxed">
-                      Approve the candidates you like and the skill auto-publishes them to TikTok, Reels and YouTube Shorts via Upload-Post.
+                      Approve the candidates you like and the skill auto-publishes them to TikTok, Reels and YouTube Shorts via Zernio.
                     </p>
                   </div>
                 </div>
@@ -1156,7 +1125,16 @@ function App() {
 
           {/* View: Thumbnails */}
           {activeTab === 'thumbnails' && (
-            <ThumbnailStudio geminiApiKey={apiKey} uploadPostKey={uploadPostKey} uploadUserId={uploadUserId} />
+            <ThumbnailStudio geminiApiKey={apiKey} zernioKey={zernioKey} socialAccounts={socialAccounts} />
+          )}
+
+          {/* View: Social Calendar & Analytics */}
+          {activeTab === 'calendar' && (
+            <SocialCalendar
+              zernioKey={zernioKey}
+              accounts={socialAccounts}
+              onGoToSettings={() => setActiveTab('settings')}
+            />
           )}
 
           {/* View: Dashboard homepage (idle / processing / error) — Opus-style */}
@@ -1274,8 +1252,8 @@ function App() {
                         prevIndex={pos > 0 ? arr[pos - 1].i : null}
                         nextIndex={pos < arr.length - 1 ? arr[pos + 1].i : null}
                         jobId={jobId}
-                        uploadPostKey={uploadPostKey}
-                        uploadUserId={uploadUserId}
+                        zernioKey={zernioKey}
+                        socialAccounts={socialAccounts}
                         geminiApiKey={apiKey}
                         elevenLabsKey={elevenLabsKey}
                         onPlay={(time) => handleClipPlay(time)}
@@ -1306,7 +1284,7 @@ function App() {
           <div className="bg-[#18181b] border border-white/10 rounded-2xl p-6 max-w-md w-full mx-4 space-y-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-lg font-bold text-white">Gemini API Key Required</h2>
             <p className="text-sm text-zinc-400">
-              OpenShorts needs a <strong className="text-zinc-200">Gemini</strong> API key to generate clips. Upload-Post is optional and only used for direct social publishing.
+              OpenShorts needs a <strong className="text-zinc-200">Gemini</strong> API key to generate clips. Zernio is optional and only used for social publishing & scheduling.
             </p>
 
             {/* Gemini block */}
@@ -1337,30 +1315,28 @@ function App() {
               )}
             </div>
 
-            {/* Upload-Post block */}
-            <div className={`rounded-lg p-4 space-y-2 border ${!uploadPostKey ? 'bg-violet-500/5 border-violet-500/30' : 'bg-white/5 border-white/10 opacity-70'}`}>
+            {/* Zernio block */}
+            <div className={`rounded-lg p-4 space-y-2 border ${!zernioKey ? 'bg-violet-500/5 border-violet-500/30' : 'bg-white/5 border-white/10 opacity-70'}`}>
               <p className="text-xs font-semibold text-zinc-200 flex items-center gap-2">
-                {uploadPostKey ? <Check size={12} className="text-green-400" /> : <AlertTriangle size={12} className="text-amber-400" />}
-                Upload-Post API Key <span className="text-zinc-500">— optional</span>{uploadPostKey && <span className="text-green-400">— set</span>}
+                {zernioKey ? <Check size={12} className="text-green-400" /> : <AlertTriangle size={12} className="text-amber-400" />}
+                Zernio API Key <span className="text-zinc-500">— optional</span>{zernioKey && <span className="text-green-400">— set</span>}
               </p>
-              {!uploadPostKey && (
+              {!zernioKey && (
                 <>
                   <p className="text-xs text-zinc-400">
-                    Only needed to publish your clips to TikTok, Instagram Reels, and YouTube Shorts from this app.
+                    Only needed to publish or schedule your clips to TikTok, Instagram Reels, YouTube Shorts and more from this app.
                   </p>
                   <ol className="text-xs text-zinc-400 space-y-1 list-decimal list-inside">
-                    <li>Register at <a href="https://app.upload-post.com/login" target="_blank" rel="noopener noreferrer" className="text-violet-400 underline">app.upload-post.com</a></li>
-                    <li>Connect your TikTok, Instagram, or YouTube accounts</li>
-                    <li>Go to <a href="https://app.upload-post.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-violet-400 underline">API Keys</a> and generate one</li>
-                    <li>Paste it below</li>
+                    <li>Register at <a href="https://zernio.com" target="_blank" rel="noopener noreferrer" className="text-violet-400 underline">zernio.com</a> and generate an API key</li>
+                    <li>Paste it below, then connect your social accounts in Settings</li>
                   </ol>
                   <input
                     type="text"
-                    placeholder="Paste your Upload-Post API key here..."
+                    placeholder="Paste your Zernio API key here..."
                     className="w-full bg-black/50 border border-white/20 rounded-lg px-4 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-violet-500"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && e.target.value.trim()) {
-                        setUploadPostKey(e.target.value.trim());
+                        setZernioKey(e.target.value.trim());
                       }
                     }}
                   />
@@ -1391,8 +1367,9 @@ function App() {
         onClose={() => setShowScheduleWeek(false)}
         clips={results?.clips || []}
         jobId={jobId}
-        uploadPostKey={uploadPostKey}
-        uploadUserId={uploadUserId}
+        zernioKey={zernioKey}
+        socialAccounts={socialAccounts}
+        onViewCalendar={() => setActiveTab('calendar')}
       />
 
       <ProcessingModal
