@@ -59,6 +59,12 @@ export default function ClipShowcase({ onLaunchApp }) {
   const cardRefs = useRef([]);
 
   useLayoutEffect(() => {
+    // Autoplay only when motion is welcome. Under prefers-reduced-motion the
+    // matchMedia branch below never runs (nothing would pause the loop), so we
+    // simply never start it — reduced-motion users see the static poster frame.
+    const allowMotion = window.matchMedia('(prefers-reduced-motion: no-preference)').matches;
+    if (allowMotion && videoRef.current) videoRef.current.play().catch(() => {});
+
     const ctx = gsap.context(() => {
       const mm = gsap.matchMedia();
       // Only pin + scrub at >=1024px when motion is welcome. Below that (phones AND
@@ -110,22 +116,24 @@ export default function ClipShowcase({ onLaunchApp }) {
 
   return (
     <section ref={stageRef} className="relative motion-safe:lg:h-[300vh]">
-      <div className="showcase-stage motion-safe:lg:sticky motion-safe:lg:top-0 motion-safe:lg:h-screen flex flex-col items-center justify-center px-6 py-16 overflow-hidden">
+      <div className="showcase-stage motion-safe:lg:sticky motion-safe:lg:top-0 motion-safe:lg:h-screen flex flex-col items-center justify-center px-6 py-16 motion-safe:lg:py-8 overflow-hidden">
         {/* dark radial stage glow */}
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(59,130,246,0.10),transparent_60%)]" />
 
         {/* source 16:9 video */}
-        <div ref={sourceRef} className="showcase-source relative w-full max-w-[680px] rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-2xl shadow-black/50">
+        {/* aspect-video keeps the 16:9 shape; on the pinned desktop layout the
+            source is sized by VIEWPORT HEIGHT (h-auto → h-[38vh] w-auto) so the
+            whole composition fits short 1366x768 / 1024x768 screens without the
+            h-screen stage clipping the settled cards/tagline. */}
+        <div ref={sourceRef} className="showcase-source relative w-full max-w-[680px] aspect-video motion-safe:lg:w-auto motion-safe:lg:max-w-none motion-safe:lg:h-[38vh] motion-safe:lg:max-h-[400px] rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-2xl shadow-black/50">
           <video
             ref={videoRef}
             className="w-full h-full object-cover"
-            style={{ aspectRatio: '16 / 9' }}
             src="/landing/source-loop.mp4"
             poster="/landing/source-poster.jpg"
             muted
             playsInline
             loop
-            autoPlay
             preload="metadata"
           />
         </div>
