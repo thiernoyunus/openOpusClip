@@ -34,6 +34,8 @@ dashboard/node_modules/
 *.mkv
 *.gif
 videos/
+# ...except landing-page hero assets, which the frontend build needs baked in
+!dashboard/public/landing/*.mp4
 
 # Model files (downloaded at build time)
 *.pt
