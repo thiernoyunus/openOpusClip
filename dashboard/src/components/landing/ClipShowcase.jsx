@@ -27,15 +27,14 @@ const PLATFORMS = [
   { Icon: XIcon, label: 'X', score: 80, bg: '#111111' },
 ];
 
-function ClipCard({ platform, poster, cardRef }) {
+// A single 9:16 clip card. `cardRef`/`badgeClass` let the desktop storyboard
+// grab the animated pieces; on mobile they're plain (marquee/grid) cards.
+function ClipCard({ platform, poster, cardRef, className = '' }) {
   const { Icon, label, score, bg } = platform;
   return (
     // Outer wrapper: NO overflow-hidden, so the platform circle can spill past
     // the top edge without being clipped. Media clipping lives on the inner div.
-    <div
-      ref={cardRef}
-      className="showcase-card relative w-[120px] sm:w-[140px] shrink-0"
-    >
+    <div ref={cardRef} className={`showcase-card relative w-[120px] sm:w-[140px] shrink-0 ${className}`}>
       <div
         className="rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-xl shadow-black/40 bg-surface"
         style={{ aspectRatio: '9 / 16' }}
@@ -58,149 +57,247 @@ function ClipCard({ platform, poster, cardRef }) {
   );
 }
 
+// The input-pill mock. Shared by desktop + mobile so the CTA is identical.
+function InputPill({ onLaunchApp, barRef, iconRef }) {
+  return (
+    <div ref={barRef} className="relative z-10">
+      <button
+        onClick={onLaunchApp}
+        className="showcase-cta relative flex items-center gap-3 bg-black/60 backdrop-blur border border-white/10 rounded-full pl-4 pr-2 py-2 hover:border-primary/40 transition-colors group overflow-hidden"
+      >
+        {/* shimmer sweep for the "processing" beat */}
+        <span className="showcase-shimmer pointer-events-none absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-white/15 to-transparent opacity-0" />
+        <Link2 ref={iconRef} size={16} className="text-zinc-500" />
+        <span className="text-sm text-zinc-400">Drop a long video and…</span>
+        <span className="flex items-center gap-1.5 bg-white text-black text-sm font-semibold rounded-full px-4 py-1.5 group-hover:bg-primary group-hover:text-white transition-colors">
+          Get clips <ArrowRight size={15} />
+        </span>
+      </button>
+    </div>
+  );
+}
+
 export default function ClipShowcase({ onLaunchApp }) {
   const rootRef = useRef(null);
+  const stageRef = useRef(null);
   const videoRef = useRef(null);
   const sourceRef = useRef(null);
   const barRef = useRef(null);
+  const iconRef = useRef(null);
+  const taglineRef = useRef(null);
   const cardRefs = useRef([]);
+  const marqueeRef = useRef(null);
+  const marqueeTrackRef = useRef(null);
 
   useLayoutEffect(() => {
     const ctx = gsap.context(() => {
       const mm = gsap.matchMedia();
 
-      // ── Motion path: self-running loop on desktop, video allowed everywhere ──
-      // Only build the timeline at >=1024px. Below that we keep it cheap and show
-      // the static final layout (CSS), but the video may still play if motion is ok.
-      mm.add(
-        {
-          isDesktop: '(min-width: 1024px)',
-          reduceMotion: '(prefers-reduced-motion: reduce)',
-        },
-        (context) => {
-          const { isDesktop, reduceMotion } = context.conditions;
+      // Move an element's center onto a target element's center. Measured at
+      // refresh (invalidateOnRefresh) so resize keeps the travel correct.
+      const centerDelta = (el, target) => {
+        const a = el.getBoundingClientRect();
+        const b = target.getBoundingClientRect();
+        return {
+          x: b.left + b.width / 2 - (a.left + a.width / 2),
+          y: b.top + b.height / 2 - (a.top + a.height / 2),
+        };
+      };
 
-          // Video: play only when motion is welcome. Reduced-motion → poster only.
-          if (!reduceMotion && videoRef.current) videoRef.current.play().catch(() => {});
+      // ── Desktop, motion welcome: pinned scroll-scrubbed storyboard ──────────
+      mm.add('(min-width: 1024px) and (prefers-reduced-motion: no-preference)', () => {
+        const cards = cardRefs.current.filter(Boolean);
+        const badges = stageRef.current.querySelectorAll('.showcase-badge');
+        const shimmer = stageRef.current.querySelector('.showcase-shimmer');
 
-          // No loop timeline for reduced-motion or non-desktop: render static final
-          // state (cards + badges already visible via base CSS — nothing to do).
-          if (reduceMotion || !isDesktop) return;
+        // Play the hero video only while the section is on screen. Separate,
+        // NON-pinning ScrollTrigger so it never fights the pinned timeline.
+        const v = videoRef.current;
+        if (v) v.play().catch(() => {});
+        ScrollTrigger.create({
+          trigger: rootRef.current,
+          start: 'top bottom',
+          end: 'bottom top',
+          onToggle: (self) => {
+            if (!v) return;
+            if (self.isActive) v.play().catch(() => {});
+            else v.pause();
+          },
+        });
 
-          const cards = cardRefs.current.filter(Boolean);
-          const badges = rootRef.current.querySelectorAll('.showcase-badge');
-          const shimmer = rootRef.current.querySelector('.showcase-shimmer');
-
-          // 1. One-time intro: source card + input bar drift in, then STAY PUT.
-          //    Kept outside the loop so the hero video never blinks on repeat.
-          gsap.fromTo(
-            [sourceRef.current, barRef.current],
-            { y: -30, opacity: 0 },
-            { y: 0, opacity: 1, ease: 'power3.out', duration: 0.6, stagger: 0.12 }
-          );
-
-          // Repeating cycle: shimmer -> clips deal out -> badges -> fade out.
-          const tl = gsap.timeline({ repeat: -1, repeatDelay: 1.2, delay: 0.7 });
-
-          // 2. Processing beat — shimmer sweeps the bar + a gentle button pulse.
-          tl.fromTo(
-            shimmer,
-            { xPercent: -120, opacity: 0.9 },
-            { xPercent: 120, ease: 'power1.inOut', duration: 1.0 },
-            0
-          );
-          tl.to('.showcase-cta', { scale: 1.05, duration: 0.35, yoyo: true, repeat: 1, ease: 'sine.inOut' }, 0.1);
-
-          // 3. Six clips deal out below, staggered + alternating tilt.
-          tl.fromTo(
-            cards,
-            { opacity: 0, scale: 0.7, y: 50 },
-            {
-              opacity: 1, scale: 1, y: 0,
-              rotate: (i) => (i % 2 === 0 ? -3 : 3),
-              ease: 'power3.out', duration: 0.5, stagger: 0.07,
-            },
-            0.9
-          );
-          // Then platform + score badges pop.
-          tl.fromTo(
-            badges,
-            { scale: 0, opacity: 0 },
-            { scale: 1, opacity: 1, ease: 'back.out(1.7)', duration: 0.35, stagger: 0.03 },
-            1.5
-          );
-
-          // 4. Hold, then clips + badges fade down/out quickly. Source stays put.
-          tl.to([cards, badges], {
-            opacity: 0, y: 30, duration: 0.4, ease: 'power1.in', stagger: 0.02,
-          }, '+=2');
-
-          // Pause the loop + video when offscreen; resume when visible.
-          ScrollTrigger.create({
+        const tl = gsap.timeline({
+          defaults: { ease: 'power2.inOut' },
+          scrollTrigger: {
             trigger: rootRef.current,
-            start: 'top bottom',
-            end: 'bottom top',
-            onToggle: (self) => {
-              const v = videoRef.current;
-              if (self.isActive) {
-                tl.play();
-                if (v) v.play().catch(() => {});
-              } else {
-                tl.pause();
-                if (v) v.pause();
-              }
-            },
-          });
-        }
-      );
+            start: 'top top',
+            end: '+=220%',
+            scrub: 0.8,
+            pin: stageRef.current, // pin the wrapper; animate its children only
+            invalidateOnRefresh: true,
+            // Sits above FeatureRail on the page → must refresh first (lower number).
+            refreshPriority: 0,
+          },
+        });
+
+        // a. Video card gets sucked INTO the pill's link icon (shrink + travel),
+        //    fading to 0 only at the very end of the trip. (0 → 0.35)
+        tl.to(sourceRef.current, {
+          x: () => centerDelta(sourceRef.current, iconRef.current).x,
+          y: () => centerDelta(sourceRef.current, iconRef.current).y,
+          scale: 0.18,
+          ease: 'power2.in',
+          duration: 0.35,
+        }, 0);
+        tl.to(sourceRef.current, { opacity: 0, ease: 'power1.in', duration: 0.09 }, 0.26);
+        // Pill reacts: nudges bigger and a shimmer sweeps it once (scroll-tied).
+        tl.to(barRef.current, { scale: 1.04, ease: 'power2.out', duration: 0.35 }, 0);
+        tl.fromTo(shimmer,
+          { xPercent: -130, opacity: 0 },
+          { xPercent: 130, opacity: 0.9, ease: 'power1.inOut', duration: 0.3 }, 0.05);
+        tl.to(shimmer, { opacity: 0, duration: 0.06 }, 0.32);
+
+        // b. Six clips fan OUT of the pill into their row. (0.35 → 0.75)
+        tl.fromTo(cards,
+          {
+            x: (i, el) => centerDelta(el, iconRef.current).x,
+            y: (i, el) => centerDelta(el, iconRef.current).y,
+            scale: 0.3,
+            opacity: 0,
+            rotate: 0,
+          },
+          {
+            x: 0,
+            y: 0,
+            scale: 1,
+            opacity: 1,
+            rotate: (i) => (i % 2 === 0 ? -3 : 3),
+            ease: 'power3.out',
+            duration: 0.4,
+            stagger: 0.06,
+          }, 0.35);
+        // Badges pop in the tail.
+        tl.fromTo(badges,
+          { scale: 0, opacity: 0 },
+          { scale: 1, opacity: 1, ease: 'back.out(1.7)', duration: 0.3, stagger: 0.03 }, 0.62);
+
+        // c. Settle + tagline. (0.78 → 1)
+        tl.fromTo(taglineRef.current,
+          { opacity: 0, y: 12 },
+          { opacity: 1, y: 0, ease: 'power2.out', duration: 0.22 }, 0.78);
+      });
+
+      // ── Small screens, motion welcome: scrollbar-free infinite marquee ──────
+      mm.add('(max-width: 1023px) and (prefers-reduced-motion: no-preference)', () => {
+        const track = marqueeTrackRef.current;
+        if (!track) return;
+        // Track holds two copies of the 6 cards; -50% loops seamlessly.
+        const loop = gsap.to(track, {
+          xPercent: -50,
+          ease: 'none',
+          duration: 22,
+          repeat: -1,
+        });
+
+        // Pause when the section is off screen.
+        const st = ScrollTrigger.create({
+          trigger: rootRef.current,
+          start: 'top bottom',
+          end: 'bottom top',
+          onToggle: (self) => (self.isActive ? loop.play() : loop.pause()),
+        });
+
+        // Pause while the user is touching the strip; resume on release.
+        const el = marqueeRef.current;
+        const pause = () => loop.pause();
+        const resume = () => { if (st.isActive) loop.play(); };
+        el.addEventListener('pointerdown', pause);
+        el.addEventListener('touchstart', pause, { passive: true });
+        window.addEventListener('pointerup', resume);
+        window.addEventListener('touchend', resume);
+        return () => {
+          el.removeEventListener('pointerdown', pause);
+          el.removeEventListener('touchstart', pause);
+          window.removeEventListener('pointerup', resume);
+          window.removeEventListener('touchend', resume);
+        };
+      });
     }, rootRef);
     return () => ctx.revert();
   }, []);
 
   return (
-    <section ref={rootRef} className="relative min-h-[80vh] flex flex-col items-center justify-center px-6 py-16 overflow-hidden">
-      {/* dark radial stage glow */}
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(59,130,246,0.10),transparent_60%)]" />
-
-      {/* source 16:9 video */}
-      <div ref={sourceRef} className="showcase-source relative w-full max-w-[560px] aspect-video rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-2xl shadow-black/50">
-        <video
-          ref={videoRef}
-          className="w-full h-full object-cover"
-          src="/landing/source-loop.mp4"
-          poster="/landing/source-poster.jpg"
-          muted
-          playsInline
-          loop
-          preload="metadata"
+    <section ref={rootRef} className="relative">
+      {/* ── Desktop storyboard stage (pinned + scrubbed). Static on reduced-motion. ── */}
+      <div
+        ref={stageRef}
+        className="hidden lg:flex relative min-h-screen flex-col items-center justify-center px-6 overflow-hidden"
+      >
+        {/* dark radial stage glow — subtle ScrollSmoother parallax */}
+        <div
+          data-speed="0.9"
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(59,130,246,0.10),transparent_60%)]"
         />
-      </div>
 
-      {/* input bar mock — the primary CTA */}
-      <div ref={barRef} className="relative z-10 mt-6">
-        <button
-          onClick={onLaunchApp}
-          className="showcase-cta relative flex items-center gap-3 bg-black/60 backdrop-blur border border-white/10 rounded-full pl-4 pr-2 py-2 hover:border-primary/40 transition-colors group overflow-hidden"
+        {/* source 16:9 video */}
+        <div
+          ref={sourceRef}
+          className="showcase-source relative w-full max-w-[560px] aspect-video rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-2xl shadow-black/50"
         >
-          {/* shimmer sweep for the "processing" beat */}
-          <span className="showcase-shimmer pointer-events-none absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-white/15 to-transparent opacity-0" />
-          <Link2 size={16} className="text-zinc-500" />
-          <span className="text-sm text-zinc-400">Drop a long video and…</span>
-          <span className="flex items-center gap-1.5 bg-white text-black text-sm font-semibold rounded-full px-4 py-1.5 group-hover:bg-primary group-hover:text-white transition-colors">
-            Get clips <ArrowRight size={15} />
-          </span>
-        </button>
+          <video
+            ref={videoRef}
+            className="w-full h-full object-cover"
+            src="/landing/source-loop.mp4"
+            poster="/landing/source-poster.jpg"
+            muted
+            playsInline
+            loop
+            preload="metadata"
+          />
+        </div>
+
+        {/* input bar mock — the primary CTA */}
+        <div className="mt-6">
+          <InputPill onLaunchApp={onLaunchApp} barRef={barRef} iconRef={iconRef} />
+        </div>
+
+        {/* generated 9:16 clips row */}
+        <div className="relative z-0 mt-10 flex flex-wrap items-start justify-center gap-4 max-w-5xl w-full">
+          {PLATFORMS.map((p, i) => (
+            <div key={p.label} className="pt-3">
+              <ClipCard
+                platform={p}
+                poster={`/landing/clip-${i + 1}.jpg`}
+                cardRef={(el) => (cardRefs.current[i] = el)}
+              />
+            </div>
+          ))}
+        </div>
+
+        {/* settle tagline */}
+        <p ref={taglineRef} className="mt-8 text-sm text-zinc-500">
+          One upload in, a whole feed of scored clips out.
+        </p>
       </div>
 
-      {/* generated 9:16 clips */}
-      <div className="relative z-0 mt-10 flex flex-nowrap lg:flex-wrap items-start justify-start lg:justify-center gap-3 sm:gap-4 max-w-5xl w-full overflow-x-auto lg:overflow-visible snap-x snap-mandatory pb-2 px-1">
+      {/* ── Small-screen marquee (motion) — no scrollbar, seamless loop ── */}
+      <div className="lg:hidden motion-reduce:hidden px-6 py-16 flex flex-col items-center gap-8 overflow-hidden">
+        <InputPill onLaunchApp={onLaunchApp} />
+        <div ref={marqueeRef} className="w-screen overflow-hidden">
+          <div ref={marqueeTrackRef} className="flex w-max gap-4 px-4">
+            {[...PLATFORMS, ...PLATFORMS].map((p, i) => (
+              <div key={`m-${i}`} className="pt-3" aria-hidden={i >= PLATFORMS.length ? 'true' : undefined}>
+                <ClipCard platform={p} poster={`/landing/clip-${(i % PLATFORMS.length) + 1}.jpg`} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Reduced-motion (any width <lg falls here too) — static 3×2 grid ── */}
+      <div className="hidden motion-reduce:grid lg:hidden grid-cols-3 gap-3 px-6 py-16 place-items-center justify-center max-w-md mx-auto">
         {PLATFORMS.map((p, i) => (
-          <div key={p.label} className="snap-center pt-3">
-            <ClipCard
-              platform={p}
-              poster={`/landing/clip-${i + 1}.jpg`}
-              cardRef={(el) => (cardRefs.current[i] = el)}
-            />
+          <div key={`g-${p.label}`} className="pt-3">
+            <ClipCard platform={p} poster={`/landing/clip-${i + 1}.jpg`} />
           </div>
         ))}
       </div>

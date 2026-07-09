@@ -2,9 +2,10 @@ import React, { useLayoutEffect, useRef } from 'react';
 import { Github, ArrowRight, ChevronDown, Upload, Sparkles, Send, Captions, Clapperboard, Languages, CalendarDays } from 'lucide-react';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import { ScrollSmoother } from 'gsap/ScrollSmoother';
 import ClipShowcase from './components/landing/ClipShowcase';
 
-gsap.registerPlugin(ScrollTrigger);
+gsap.registerPlugin(ScrollTrigger, ScrollSmoother);
 
 const FAQItem = ({ question, answer, isOpen, onClick }) => (
   <div className="border border-white/10 rounded-xl overflow-hidden">
@@ -154,6 +155,8 @@ function FeatureRail() {
             scrub: 1,
             pin: true,
             invalidateOnRefresh: true,
+            // Sits below ClipShowcase on the page → refreshes after it.
+            refreshPriority: 1,
           },
         });
       });
@@ -194,6 +197,38 @@ function FeatureRail() {
 
 export default function Landing({ onLaunchApp }) {
   const [openFaq, setOpenFaq] = React.useState(null);
+  const smootherRef = useRef(null);
+
+  // ScrollSmoother — the smooth-scroll "wow". Only on desktop with motion
+  // welcome; phones keep native scroll. Cleaned up via ctx.revert().
+  useLayoutEffect(() => {
+    const ctx = gsap.context(() => {
+      const mm = gsap.matchMedia();
+      mm.add('(min-width: 1024px) and (prefers-reduced-motion: no-preference)', () => {
+        smootherRef.current = ScrollSmoother.create({
+          smooth: 1.2,
+          effects: true,
+          normalizeScroll: true,
+        });
+        return () => {
+          smootherRef.current?.kill();
+          smootherRef.current = null;
+        };
+      });
+    });
+    return () => ctx.revert();
+  }, []);
+
+  // Nav / footer anchors. Never touch location.hash (the app's hash router in
+  // main.jsx would re-route). Route through ScrollSmoother when it exists,
+  // otherwise fall back to native scroll-into-view.
+  const scrollToSection = (e, id) => {
+    e.preventDefault();
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (smootherRef.current) smootherRef.current.scrollTo(el, true);
+    else el.scrollIntoView({ behavior: 'smooth' });
+  };
 
   const steps = [
     { icon: Upload, title: 'Upload', description: 'Drop a long video — a podcast, webinar, or livestream you own.' },
@@ -230,9 +265,9 @@ export default function Landing({ onLaunchApp }) {
             <span className="text-lg font-bold">OpenShorts</span>
           </div>
           <div className="hidden md:flex items-center gap-8 text-sm text-zinc-400">
-            <a href="#features" className="hover:text-white transition-colors">Features</a>
-            <a href="#how-it-works" className="hover:text-white transition-colors">How It Works</a>
-            <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
+            <a href="#features" onClick={(e) => scrollToSection(e, 'features')} className="hover:text-white transition-colors">Features</a>
+            <a href="#how-it-works" onClick={(e) => scrollToSection(e, 'how-it-works')} className="hover:text-white transition-colors">How It Works</a>
+            <a href="#faq" onClick={(e) => scrollToSection(e, 'faq')} className="hover:text-white transition-colors">FAQ</a>
           </div>
           <div className="flex items-center gap-3">
             <a
@@ -254,13 +289,17 @@ export default function Landing({ onLaunchApp }) {
         </div>
       </nav>
 
+      {/* ScrollSmoother wrapper — fixed <nav> stays OUTSIDE, above this. */}
+      <div id="smooth-wrapper">
+        <div id="smooth-content">
+
       {/* Hero */}
       <section className="pt-36 pb-8 px-6">
         <div className="max-w-4xl mx-auto text-center">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary mb-6">
+          <p data-speed="1.05" className="text-xs font-semibold uppercase tracking-[0.2em] text-primary mb-6">
             Free &amp; Open-Source AI Clip Generator
           </p>
-          <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.05] mb-6">
+          <h1 data-speed="1.05" className="text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.05] mb-6">
             One long video.
             <br />
             A week of viral clips.
@@ -367,12 +406,15 @@ export default function Landing({ onLaunchApp }) {
           </div>
           <div className="flex items-center gap-6 text-sm text-zinc-500">
             <a href="https://github.com/mutonby/openshorts" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">GitHub</a>
-            <a href="#features" className="hover:text-white transition-colors">Features</a>
-            <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
+            <a href="#features" onClick={(e) => scrollToSection(e, 'features')} className="hover:text-white transition-colors">Features</a>
+            <a href="#faq" onClick={(e) => scrollToSection(e, 'faq')} className="hover:text-white transition-colors">FAQ</a>
             <a href="#legal" className="hover:text-white transition-colors">Terms &amp; Privacy</a>
           </div>
         </div>
       </footer>
+
+        </div>
+      </div>
     </div>
   );
 }
