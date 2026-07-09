@@ -304,7 +304,7 @@ export default function Landing({ onLaunchApp }) {
             <br />
             A week of viral clips.
           </h1>
-          <p className="text-lg md:text-xl text-zinc-400 max-w-2xl mx-auto leading-relaxed">
+          <p className="hidden md:block text-lg md:text-xl text-zinc-400 max-w-2xl mx-auto leading-relaxed">
             OpenShorts turns long videos into scored, captioned vertical clips — free, on your own machine.
           </p>
         </div>

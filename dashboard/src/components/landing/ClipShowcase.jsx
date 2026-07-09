@@ -34,7 +34,7 @@ function ClipCard({ platform, poster, cardRef, className = '' }) {
   return (
     // Outer wrapper: NO overflow-hidden, so the platform circle can spill past
     // the top edge without being clipped. Media clipping lives on the inner div.
-    <div ref={cardRef} className={`showcase-card relative w-[120px] sm:w-[140px] shrink-0 ${className}`}>
+    <div ref={cardRef} className={`showcase-card relative w-[96px] sm:w-[120px] lg:w-[140px] shrink-0 ${className}`}>
       <div
         className="rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-xl shadow-black/40 bg-surface"
         style={{ aspectRatio: '9 / 16' }}
@@ -86,8 +86,6 @@ export default function ClipShowcase({ onLaunchApp }) {
   const iconRef = useRef(null);
   const taglineRef = useRef(null);
   const cardRefs = useRef([]);
-  const marqueeRef = useRef(null);
-  const marqueeTrackRef = useRef(null);
 
   useLayoutEffect(() => {
     const ctx = gsap.context(() => {
@@ -104,8 +102,11 @@ export default function ClipShowcase({ onLaunchApp }) {
         };
       };
 
-      // ── Desktop, motion welcome: pinned scroll-scrubbed storyboard ──────────
-      mm.add('(min-width: 1024px) and (prefers-reduced-motion: no-preference)', () => {
+      // ── Motion welcome (ALL widths): pinned scroll-scrubbed storyboard ──────
+      // Runs on mobile too — the per-card centerDelta() targets wherever each
+      // card sits in the responsive layout (3×2 grid on phones, 1 row on lg),
+      // so the same "video → bar → clips" effect plays at every width.
+      mm.add('(prefers-reduced-motion: no-preference)', () => {
         const cards = cardRefs.current.filter(Boolean);
         const badges = stageRef.current.querySelectorAll('.showcase-badge');
         const shimmer = stageRef.current.querySelector('.showcase-shimmer');
@@ -185,52 +186,16 @@ export default function ClipShowcase({ onLaunchApp }) {
           { opacity: 0, y: 12 },
           { opacity: 1, y: 0, ease: 'power2.out', duration: 0.22 }, 0.78);
       });
-
-      // ── Small screens, motion welcome: scrollbar-free infinite marquee ──────
-      mm.add('(max-width: 1023px) and (prefers-reduced-motion: no-preference)', () => {
-        const track = marqueeTrackRef.current;
-        if (!track) return;
-        // Track holds two copies of the 6 cards; -50% loops seamlessly.
-        const loop = gsap.to(track, {
-          xPercent: -50,
-          ease: 'none',
-          duration: 22,
-          repeat: -1,
-        });
-
-        // Pause when the section is off screen.
-        const st = ScrollTrigger.create({
-          trigger: rootRef.current,
-          start: 'top bottom',
-          end: 'bottom top',
-          onToggle: (self) => (self.isActive ? loop.play() : loop.pause()),
-        });
-
-        // Pause while the user is touching the strip; resume on release.
-        const el = marqueeRef.current;
-        const pause = () => loop.pause();
-        const resume = () => { if (st.isActive) loop.play(); };
-        el.addEventListener('pointerdown', pause);
-        el.addEventListener('touchstart', pause, { passive: true });
-        window.addEventListener('pointerup', resume);
-        window.addEventListener('touchend', resume);
-        return () => {
-          el.removeEventListener('pointerdown', pause);
-          el.removeEventListener('touchstart', pause);
-          window.removeEventListener('pointerup', resume);
-          window.removeEventListener('touchend', resume);
-        };
-      });
     }, rootRef);
     return () => ctx.revert();
   }, []);
 
   return (
-    <section ref={rootRef} className="relative">
-      {/* ── Desktop storyboard stage (pinned + scrubbed). Static on reduced-motion. ── */}
+    <section ref={rootRef} className="relative overflow-x-hidden">
+      {/* ── Storyboard stage (pinned + scrubbed) at ALL widths. Hidden for reduced-motion. ── */}
       <div
         ref={stageRef}
-        className="hidden lg:flex relative min-h-screen flex-col items-center justify-center px-6 overflow-hidden"
+        className="motion-reduce:hidden flex relative min-h-screen flex-col items-center justify-center px-6 overflow-hidden"
       >
         {/* dark radial stage glow — subtle ScrollSmoother parallax */}
         <div
@@ -241,7 +206,7 @@ export default function ClipShowcase({ onLaunchApp }) {
         {/* source 16:9 video */}
         <div
           ref={sourceRef}
-          className="showcase-source relative w-full max-w-[560px] aspect-video rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-2xl shadow-black/50"
+          className="showcase-source relative w-full max-w-[340px] sm:max-w-[480px] lg:max-w-[560px] aspect-video rounded-2xl overflow-hidden ring-1 ring-white/10 shadow-2xl shadow-black/50"
         >
           <video
             ref={videoRef}
@@ -260,8 +225,8 @@ export default function ClipShowcase({ onLaunchApp }) {
           <InputPill onLaunchApp={onLaunchApp} barRef={barRef} iconRef={iconRef} />
         </div>
 
-        {/* generated 9:16 clips row */}
-        <div className="relative z-0 mt-10 flex flex-wrap items-start justify-center gap-4 max-w-5xl w-full">
+        {/* generated 9:16 clips — 3×2 grid on phones, single row on desktop */}
+        <div className="relative z-0 mt-8 lg:mt-10 grid grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-4 place-items-center max-w-md lg:max-w-5xl w-full">
           {PLATFORMS.map((p, i) => (
             <div key={p.label} className="pt-3">
               <ClipCard
@@ -274,32 +239,21 @@ export default function ClipShowcase({ onLaunchApp }) {
         </div>
 
         {/* settle tagline */}
-        <p ref={taglineRef} className="mt-8 text-sm text-zinc-500">
+        <p ref={taglineRef} className="mt-8 text-sm text-zinc-500 text-center">
           One upload in, a whole feed of scored clips out.
         </p>
       </div>
 
-      {/* ── Small-screen marquee (motion) — no scrollbar, seamless loop ── */}
-      <div className="lg:hidden motion-reduce:hidden px-6 py-16 flex flex-col items-center gap-8 overflow-hidden">
+      {/* ── Reduced-motion fallback (any width) — static pill + 3×2 grid ── */}
+      <div className="hidden motion-reduce:flex flex-col items-center gap-8 px-6 py-16">
         <InputPill onLaunchApp={onLaunchApp} />
-        <div ref={marqueeRef} className="w-screen overflow-hidden">
-          <div ref={marqueeTrackRef} className="flex w-max gap-4 px-4">
-            {[...PLATFORMS, ...PLATFORMS].map((p, i) => (
-              <div key={`m-${i}`} className="pt-3" aria-hidden={i >= PLATFORMS.length ? 'true' : undefined}>
-                <ClipCard platform={p} poster={`/landing/clip-${(i % PLATFORMS.length) + 1}.jpg`} />
-              </div>
-            ))}
-          </div>
+        <div className="grid grid-cols-3 gap-3 place-items-center max-w-md mx-auto">
+          {PLATFORMS.map((p, i) => (
+            <div key={`g-${p.label}`} className="pt-3">
+              <ClipCard platform={p} poster={`/landing/clip-${i + 1}.jpg`} />
+            </div>
+          ))}
         </div>
-      </div>
-
-      {/* ── Reduced-motion (any width <lg falls here too) — static 3×2 grid ── */}
-      <div className="hidden motion-reduce:grid lg:hidden grid-cols-3 gap-3 px-6 py-16 place-items-center justify-center max-w-md mx-auto">
-        {PLATFORMS.map((p, i) => (
-          <div key={`g-${p.label}`} className="pt-3">
-            <ClipCard platform={p} poster={`/landing/clip-${i + 1}.jpg`} />
-          </div>
-        ))}
       </div>
     </section>
   );
