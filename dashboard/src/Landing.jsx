@@ -135,29 +135,24 @@ const PANELS = [
 
 function FeatureRail() {
   const rootRef = useRef(null);
-  const trackRef = useRef(null);
 
   useLayoutEffect(() => {
     const ctx = gsap.context(() => {
-      // Horizontal scroll only at >=1024px with motion welcome. Otherwise the
-      // panels stack vertically (base flex-col) — no pin, cheap on mobile.
+      // Vertically-stacked feature panels that reveal (fade + rise) as each
+      // scrolls into view. No pin — one pinned "theater" per page (the clip
+      // showcase) keeps ScrollSmoother happy; stacking a second pin here was
+      // what pushed these panels off-screen. `once` so they never re-hide.
       const mm = gsap.matchMedia();
-      mm.add('(min-width: 1024px) and (prefers-reduced-motion: no-preference)', () => {
-        const track = trackRef.current;
-        const amount = track.scrollWidth - window.innerWidth;
-        gsap.to(track, {
-          x: -amount,
-          ease: 'none',
-          scrollTrigger: {
-            trigger: rootRef.current,
-            start: 'top top',
-            end: () => '+=' + track.scrollWidth,
-            scrub: 1,
-            pin: true,
-            invalidateOnRefresh: true,
-            // Sits below ClipShowcase on the page → refreshes after it.
-            refreshPriority: 1,
-          },
+      mm.add('(prefers-reduced-motion: no-preference)', () => {
+        gsap.utils.toArray('.rail-panel').forEach((panel) => {
+          gsap.from(panel.querySelectorAll('.rail-reveal'), {
+            opacity: 0,
+            y: 40,
+            duration: 0.7,
+            ease: 'power3.out',
+            stagger: 0.12,
+            scrollTrigger: { trigger: panel, start: 'top 78%', once: true },
+          });
         });
       });
     }, rootRef);
@@ -165,32 +160,25 @@ function FeatureRail() {
   }, []);
 
   return (
-    <section id="features" ref={rootRef} className="relative lg:h-screen lg:overflow-hidden">
-      <div
-        ref={trackRef}
-        className="flex flex-col lg:flex-row lg:h-screen lg:flex-nowrap"
-      >
-        {PANELS.map(({ icon: Icon, eyebrow, title, body, Visual }) => (
-          <div
-            key={title}
-            className="flex-shrink-0 w-full lg:w-screen lg:h-screen flex items-center justify-center px-6 py-16 lg:py-0"
-          >
-            <div className="max-w-6xl w-full grid lg:grid-cols-2 gap-12 items-center">
-              <div className="flex justify-center order-first lg:order-none">
-                <Visual />
+    <section id="features" ref={rootRef} className="relative">
+      {PANELS.map(({ icon: Icon, eyebrow, title, body, Visual }, i) => (
+        <div key={title} className="rail-panel min-h-[70vh] flex items-center px-6 py-20">
+          <div className="max-w-6xl mx-auto w-full grid lg:grid-cols-2 gap-12 items-center">
+            {/* alternate visual left/right for an editorial rhythm */}
+            <div className={`rail-reveal flex justify-center ${i % 2 ? 'lg:order-last' : ''}`}>
+              <Visual />
+            </div>
+            <div className="rail-reveal max-w-md">
+              <div className="inline-flex items-center gap-2 text-primary text-xs font-semibold uppercase tracking-widest mb-4">
+                <Icon size={16} />
+                {eyebrow}
               </div>
-              <div className="max-w-md">
-                <div className="inline-flex items-center gap-2 text-primary text-xs font-semibold uppercase tracking-widest mb-4">
-                  <Icon size={16} />
-                  {eyebrow}
-                </div>
-                <h3 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">{title}</h3>
-                <p className="text-zinc-400 leading-relaxed">{body}</p>
-              </div>
+              <h3 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">{title}</h3>
+              <p className="text-zinc-400 leading-relaxed">{body}</p>
             </div>
           </div>
-        ))}
-      </div>
+        </div>
+      ))}
     </section>
   );
 }
