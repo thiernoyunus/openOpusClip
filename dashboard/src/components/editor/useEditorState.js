@@ -620,6 +620,9 @@ export function normalizeFraming(framing) {
         transitions: framing.transitions ?? { fadeIn: false, fadeOut: false, cutCrossfade: false },
         overlays,
         audio,
+        // Carry the legacy "duck the original audio under music" knob — nulling
+        // music above would otherwise silently snap source audio back to 100%.
+        sourceVolume: framing.sourceVolume ?? framing.music?.originalVolume ?? 1,
     };
 }
 

@@ -447,6 +447,12 @@ export interface FramingConfig {
   overlays?: OverlayItem[];
   /** Generic audio track (SFX + music); supersedes music. */
   audio?: AudioItem[];
+  /**
+   * Volume of the source video's own audio (0-1, default 1). Replaces the
+   * legacy music.originalVolume "ducking" knob, which the music -> audio[]
+   * migration would otherwise silently drop.
+   */
+  sourceVolume?: number;
 }
 
 // --- Main composition props ---
@@ -761,6 +767,7 @@ export const framingConfigSchema = z.object({
   broll: z.array(brollItemSchema).optional(),
   overlays: z.array(overlayItemSchema).optional(),
   audio: z.array(audioItemSchema).optional(),
+  sourceVolume: z.number().min(0).max(1).optional(),
 });
 
 export const shortVideoPropsSchema = z.object({

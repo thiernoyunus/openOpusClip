@@ -465,7 +465,9 @@ export const ReframedVideo: React.FC<{
 }> = ({ src, framing }) => {
   const { fps } = useVideoConfig();
   const ranges = placedRanges(framing, fps);
-  const originalVolume = framing.music ? framing.music.originalVolume : 1;
+  // sourceVolume is the v3 field; legacy configs that never passed through the
+  // editor still carry it on music.originalVolume.
+  const originalVolume = framing.sourceVolume ?? (framing.music ? framing.music.originalVolume : 1);
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
