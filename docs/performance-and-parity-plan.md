@@ -186,15 +186,32 @@ Generalize `EditorTimeline.jsx`:
 Acceptance: drag an SFX block along the audio lane, trim a b-roll block, both reflected
 in playback immediately; timeline stays smooth during playback.
 
-### B4. Panels + asset upload — M effort (parallel with B3)
-- SFX: extend `AudioPanel.jsx` with an SFX list (add/upload/volume/fade) writing `audio[]`.
-  Reuse the existing upload endpoint pattern (`/api/clips/{job}/{i}/audio`, AudioPanel.jsx:24);
-  add a generic asset upload endpoint in `app.py` accepting audio/image/video, saved next
-  to the clip.
-- B-roll panel (`BrollPanel.jsx`): support image results + user upload; expose position/size
+### B4. Panels + asset upload — M effort (needs B1+B2 merged; UPLOAD-FIRST per owner, modeled on OpusClip's panels 2026-07-10)
+Design reference: OpusClip's Media/B-Roll/Audio panels — the Upload button sits at the TOP
+of each panel; libraries (stock search etc.) come below it. Owner's asks:
+- **Own-asset upload is the headline feature**: users must be able to upload their own
+  b-roll (video AND images) and their own sound effects. Pexels stock search stays, but
+  demoted below Upload.
+- **No music library / streaming catalog** (owner preference — keep it halal). The existing
+  simple music upload stays as-is; do not build a browsing/licensing catalog.
+- Generic asset upload endpoint in `app.py` accepting audio/image/video, saved next to the
+  clip (reuse the `/api/clips/{job}/{i}/audio` pattern, AudioPanel.jsx:24). Validate type by
+  extension+content-type; reject anything else (trust boundary).
+- SFX: extend `AudioPanel.jsx` with an SFX list (upload/volume/fade/timing) writing `audio[]`.
+- B-roll panel (`BrollPanel.jsx` → overlays): upload first, image support, position/size
   presets (full / top-half PiP / corner PiP) mapping to x/y/w/h.
-- Music: add start-offset + fade controls (fields exist after B1).
-Acceptance: upload an mp3 SFX and a PNG overlay via the panels; both export correctly.
+- **Ship the deferred legacy migration here** (normalizeFraming MOVE of broll[]→overlays[],
+  music→audio[role=music], music.originalVolume→sourceVolume) in the SAME PR that flips the
+  panels to read/write the new fields — never audible-but-uneditable (see PR #61 review).
+Acceptance: upload an mp3 SFX and a PNG overlay via the panels; both play in preview and
+export correctly; a legacy project's music/b-roll stays fully editable after migration.
+
+### B4-future. AI b-roll generation (NOT now — owner-flagged idea)
+Generate b-roll images from a prompt with Gemini's image-generation model line ("Nano
+Banana 2" family). Caveat the owner already knows: image generation is NOT on the free
+Gemini key the app uses — it needs a separate paid-tier key, so Settings would grow a
+second, clearly-labeled key slot (e.g. "Gemini key for image generation (paid tier)").
+Park until B4 ships and the model/pricing is confirmed.
 
 ### B5. Editor preview performance — S effort
 Preview `Player` renders at full 1080×1920 (`EditorCanvas.jsx:60–65`). Add a draft-quality
