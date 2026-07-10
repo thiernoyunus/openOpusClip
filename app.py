@@ -1856,13 +1856,22 @@ async def upload_clip_asset(job_id: str, clip_index: int, file: UploadFile = Fil
     ct = (file.content_type or "").lower().split(";")[0].strip()
     if ct not in _ASSET_CT_GENERIC and not ct.startswith(_ASSET_CT_PREFIX[kind]):
         raise HTTPException(status_code=415, detail="Content type does not match file extension")
-    data = await file.read()
-    if len(data) > _ASSET_MAX_BYTES:
-        raise HTTPException(status_code=413, detail="Asset exceeds the 200MB limit")
     filename = f"clip_{clip_index}_asset_{uuid.uuid4().hex[:8]}{ext}"
     dest = os.path.join(output_dir, filename)
-    with open(dest, "wb") as out:
-        out.write(data)
+    # Stream to disk in chunks, enforcing the cap as we go — reading the whole
+    # body first would let an oversized upload exhaust memory before the check.
+    written = 0
+    try:
+        with open(dest, "wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                written += len(chunk)
+                if written > _ASSET_MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="Asset exceeds the 200MB limit")
+                out.write(chunk)
+    except HTTPException:
+        if os.path.exists(dest):
+            os.remove(dest)  # don't leave a truncated asset behind
+        raise
     return {"url": _video_url(job_id, filename), "kind": kind}
 
 class HookRequest(BaseModel):
