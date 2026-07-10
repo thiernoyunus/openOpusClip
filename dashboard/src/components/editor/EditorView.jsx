@@ -645,7 +645,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         clip.video_title_for_youtube_short || `Clip ${typeof index === 'number' ? index + 1 : ''}`;
 
     return (
-        <div className="fixed inset-0 z-[120] bg-background flex flex-col animate-[fadeIn_0.15s_ease-out]">
+        <div className="fixed inset-0 z-[120] bg-[#0a0a0c] flex flex-col animate-[fadeIn_0.15s_ease-out] text-zinc-100">
             <EditorTopBar
                 title={title}
                 dirty={state.dirty}
@@ -691,9 +691,9 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                             extending={extending}
                         />
 
-                        <div className="flex-1 min-w-0 bg-background flex min-h-0">
+                        <div className="flex-1 min-w-0 bg-[#0a0a0c] flex min-h-0">
                             <div data-editor-canvas-column className="flex-1 min-w-0 flex flex-col min-h-0">
-                                <div className="h-10 shrink-0 flex items-center justify-center">
+                                <div className="h-11 shrink-0 flex items-center justify-center border-b border-white/[0.04]">
                                     <EditorCanvasControls
                                         framing={framing}
                                         selectedIds={state.selectedIds}
@@ -704,8 +704,8 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                         playerRef={playerRef}
                                     />
                                 </div>
-                                <div className="relative flex-1 min-h-0 w-full p-4 pt-0">
-                                    <div data-editor-preview-shell className="absolute inset-x-4 top-0 bottom-4 flex items-center justify-center">
+                                <div className="relative flex-1 min-h-0 w-full p-5 pt-3">
+                                    <div data-editor-preview-shell className="absolute inset-x-5 top-2 bottom-4 flex items-center justify-center rounded-xl bg-black/40">
                                         <EditorCanvas
                                             ref={playerRef}
                                             sourceUrl={sourceUrl}
@@ -721,16 +721,17 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                             </div>
 
                             {panelOpen && (
-                                <div data-editor-tool-panel className="w-[360px] shrink-0 my-3 mr-3 rounded-md border border-edge bg-surface shadow-2xl flex flex-col min-h-0">
-                                    <div className="flex items-center justify-between h-10 pl-3 pr-1.5 border-b border-edge shrink-0">
-                                        <span className="text-xs font-medium text-fg">
+                                <div data-editor-tool-panel className="w-[340px] shrink-0 my-2 mr-2 rounded-xl border border-white/[0.07] bg-[#111114] shadow-2xl shadow-black/50 flex flex-col min-h-0">
+                                    <div className="flex items-center justify-between h-10 pl-3.5 pr-1.5 border-b border-white/[0.06] shrink-0">
+                                        <span className="text-xs font-semibold text-zinc-100 tracking-tight">
                                             {(TABS.find((t) => t.id === activeTab) || {}).label}
                                         </span>
                                         <button
+                                            type="button"
                                             onClick={() => setPanelOpen(false)}
                                             title="Collapse panel"
                                             aria-label="Collapse panel"
-                                            className="p-1 rounded-md text-muted hover:text-fg hover:bg-white/5 transition-colors"
+                                            className="p-1.5 rounded-lg text-zinc-500 hover:text-white hover:bg-white/5 transition-colors"
                                         >
                                             <ChevronRight size={15} />
                                         </button>

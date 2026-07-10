@@ -1872,6 +1872,11 @@ async def upload_clip_asset(job_id: str, clip_index: int, file: UploadFile = Fil
         if os.path.exists(dest):
             os.remove(dest)  # don't leave a truncated asset behind
         raise
+    except Exception:
+        # Disk full, disconnect, etc. — never leave a half-written asset.
+        if os.path.exists(dest):
+            os.remove(dest)
+        raise
     return {"url": _video_url(job_id, filename), "kind": kind}
 
 class HookRequest(BaseModel):

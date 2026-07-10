@@ -12,7 +12,6 @@ const POSITION_PRESETS = [
 ];
 
 // Pick a reasonable HD portrait video file from a Pexels video result.
-// Shared by manual insert and AI auto-insert so the picking logic lives once.
 const pickPexelsFile = (video) =>
     video.video_files.find((f) => f.quality === 'hd' && f.height >= f.width) ||
     video.video_files.find((f) => f.height >= f.width) ||
@@ -30,14 +29,24 @@ function probeVideoDuration(url) {
     });
 }
 
+async function readErrorMessage(res, fallback) {
+    try {
+        const data = await res.json();
+        if (data?.detail) {
+            return typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+        }
+    } catch {
+        /* ignore */
+    }
+    return fallback;
+}
+
 let _ovSeq = 0;
 const newOverlayId = () => `ov-${Date.now().toString(36)}-${(_ovSeq++).toString(36)}`;
 
 /**
  * Right-rail B-Roll tab (B4): upload your own b-roll video or images first,
- * placed on the overlays[] track (source-anchored, so they stay pinned to the
- * moment in the clip). Pexels stock search stays available below the upload.
- * Each overlay gets Full / Top-half / PiP-corner position presets.
+ * placed on the overlays[] track. Pexels stock search stays below upload.
  */
 function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame, captions = [] }) {
     const overlays = framing.overlays || [];
@@ -61,8 +70,10 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
         localStorage.setItem('pexels_key', v);
     };
 
-    const addOverlay = (kind, url, endFrame) => {
-        const start = getCurrentSourceFrame();
+    // Capture startFrame at call time so async uploads don't race the playhead.
+    const addOverlay = (kind, url, startFrame, endFrame) => {
+        const start = Math.max(0, Math.min(startFrame, Math.max(0, srcDuration - 1)));
+        const end = Math.max(start + 1, Math.min(endFrame, srcDuration));
         dispatch({
             type: 'ADD_OVERLAY',
             item: {
@@ -70,7 +81,7 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
                 kind,
                 url,
                 startFrame: start,
-                endFrame: Math.max(start + 1, Math.min(endFrame, srcDuration)),
+                endFrame: end,
                 anchor: 'source',
                 x: 0.5, y: 0.5, w: 1, h: 1,
                 volume: 0,
@@ -82,6 +93,11 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
     const onFile = async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
+        if (!jobId && jobId !== 0) {
+            setUploadError('No project open — open a clip in the editor first.');
+            if (e?.target) e.target.value = '';
+            return;
+        }
         if (atCap) {
             setUploadError(`Maximum ${MAX_OVERLAY} b-roll items reached.`);
             if (e?.target) e.target.value = '';
@@ -93,8 +109,11 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
             const body = new FormData();
             body.append('file', file);
             const res = await fetch(getApiUrl(`/api/clips/${jobId}/${clipIndex}/asset`), { method: 'POST', body });
-            if (!res.ok) throw new Error(`Upload failed (${res.status})`);
+            if (!res.ok) {
+                throw new Error(await readErrorMessage(res, `Upload failed (${res.status})`));
+            }
             const { url, kind } = await res.json();
+            // Read playhead AFTER the network work so the block lands where you are now.
             const start = getCurrentSourceFrame();
             let endFrame;
             if (kind === 'video') {
@@ -103,16 +122,15 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
             } else {
                 endFrame = start + Math.round(4 * srcFps); // images: default 4s on screen
             }
-            addOverlay(kind, url, endFrame);
+            addOverlay(kind, url, start, endFrame);
         } catch (err) {
-            setUploadError(err.message);
+            setUploadError(err.message || 'Upload failed');
         } finally {
             setUploading(false);
             if (e?.target) e.target.value = '';
         }
     };
 
-    // Fetch portrait stock videos for a keyword from Pexels (shared shape).
     const searchPexels = async (q, perPage = 12) => {
         const res = await fetch(
             `https://api.pexels.com/videos/search?query=${encodeURIComponent(q)}&orientation=portrait&per_page=${perPage}`,
@@ -144,11 +162,9 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
         }
         const file = pickPexelsFile(video);
         const start = getCurrentSourceFrame();
-        addOverlay('video', file.link, start + Math.round(4 * srcFps));
+        addOverlay('video', file.link, start, start + Math.round(4 * srcFps));
     };
 
-    // AI auto-placement: ask Gemini for contextual b-roll (keyword + timing),
-    // then turn each suggestion into a Pexels overlay inserted at its moment.
     const autoAdd = async () => {
         if (captions.length === 0 || !key || atCap) return;
         const geminiKey = localStorage.getItem('gemini_key');
@@ -164,16 +180,13 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
                 headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': geminiKey },
                 body: JSON.stringify({ words: captions.map((w) => ({ text: w.text, startMs: w.startMs })) }),
             });
-            if (!res.ok) throw new Error(`Suggestion failed (${res.status})`);
+            if (!res.ok) throw new Error(await readErrorMessage(res, `Suggestion failed (${res.status})`));
             const { suggestions = [] } = await res.json();
             if (suggestions.length === 0) {
                 setAiError('No b-roll suggestions for this clip');
                 return;
             }
 
-            // Suggestion startMs are anchored at the ORIGINAL clip start
-            // (captionsOriginFrame), converted to source frames and clamped to
-            // the source bounds. (Legacy clipIn/clipOut are gone post-v3.)
             const captionsOrigin = framing.captionsOriginFrame ?? 0;
             let added = overlays.length;
             let inserted = 0;
@@ -190,7 +203,7 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
                 try {
                     videos = await searchPexels(s.keyword, 5);
                 } catch {
-                    continue; // skip a keyword that fails to search; keep going
+                    continue;
                 }
                 if (!videos.length) continue;
                 const file = pickPexelsFile(videos[0]);
@@ -233,35 +246,37 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
             </h3>
 
             <button
+                type="button"
                 onClick={() => fileRef.current?.click()}
                 disabled={uploading || atCap}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-edge bg-surface2/50 text-fg text-xs font-medium hover:bg-white/5 disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-edge bg-surface2/60 text-fg text-xs font-medium hover:bg-white/5 disabled:opacity-50 shadow-sm"
             >
                 {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                 {uploading ? 'Uploading…' : 'Upload b-roll'}
             </button>
             <p className="text-[10px] text-muted mt-2">
-                Video or image, added at the playhead.{atCap && ' Maximum reached.'}
+                Your own video or image, added at the playhead.{atCap && ' Maximum reached.'}
             </p>
             {uploadError && <p className="text-[11px] text-red-400 mt-2">{uploadError}</p>}
 
             {overlays.length > 0 && (
                 <div className="mt-3 space-y-2">
                     {overlays.map((o) => (
-                        <div key={o.id} className="rounded-lg border border-edge bg-surface2/40 p-2.5 space-y-2">
+                        <div key={o.id} className="rounded-xl border border-edge bg-surface2/40 p-2.5 space-y-2">
                             <div className="flex items-center gap-2 text-[11px] text-fg">
                                 {o.kind === 'image' ? <ImageIcon size={12} /> : <Clapperboard size={12} />}
                                 <span className="flex-1 truncate text-muted">{fmt(o.startFrame)} → {fmt(o.endFrame)}</span>
-                                <button onClick={() => dispatch({ type: 'REMOVE_OVERLAY', id: o.id })} className="text-muted hover:text-red-400 p-0.5" aria-label="Remove b-roll">
+                                <button type="button" onClick={() => dispatch({ type: 'REMOVE_OVERLAY', id: o.id })} className="text-muted hover:text-red-400 p-0.5" aria-label="Remove b-roll">
                                     <Trash2 size={12} />
                                 </button>
                             </div>
                             <div className="flex gap-1">
                                 {POSITION_PRESETS.map((p) => (
                                     <button
+                                        type="button"
                                         key={p.id}
                                         onClick={() => dispatch({ type: 'UPDATE_OVERLAY', id: o.id, patch: { x: p.x, y: p.y, w: p.w, h: p.h } })}
-                                        className={`flex-1 rounded px-1.5 py-1 text-[10px] border ${presetActive(o, p) ? 'border-viral/40 bg-viral/10 text-viral' : 'border-edge bg-surface2/50 text-muted hover:bg-white/5'}`}
+                                        className={`flex-1 rounded-lg px-1.5 py-1 text-[10px] border ${presetActive(o, p) ? 'border-viral/40 bg-viral/10 text-viral' : 'border-edge bg-surface2/50 text-muted hover:bg-white/5'}`}
                                     >
                                         {p.label}
                                     </button>
@@ -278,7 +293,7 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
                     <>
                         <div className="flex items-start gap-1.5 text-[11px] text-muted mb-2">
                             <KeyRound size={12} className="mt-0.5 shrink-0" />
-                            Add a free Pexels API key to search stock video. Get one at pexels.com/api.
+                            Optional free Pexels key for stock video. Get one at pexels.com/api.
                         </div>
                         <input
                             type="password"
@@ -297,12 +312,13 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
                                 placeholder="Search stock video…"
                                 className="flex-1 min-w-0 bg-surface2 border border-edge rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-white/30"
                             />
-                            <button onClick={search} className="px-2.5 rounded-lg bg-surface2 border border-edge text-fg hover:bg-white/5">
+                            <button type="button" onClick={search} className="px-2.5 rounded-lg bg-surface2 border border-edge text-fg hover:bg-white/5">
                                 {loading ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
                             </button>
                         </div>
 
                         <button
+                            type="button"
                             onClick={autoAdd}
                             disabled={aiLoading || captions.length === 0 || atCap}
                             title={
@@ -327,6 +343,7 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
                         <div className="grid grid-cols-2 gap-1.5">
                             {results.map((v) => (
                                 <button
+                                    type="button"
                                     key={v.id}
                                     onClick={() => insert(v)}
                                     disabled={atCap}
@@ -348,6 +365,4 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
     );
 }
 
-// Memoized: re-renders only when its own props change, not on every editor
-// dispatch or tab switch (props from EditorView are stable).
 export default React.memo(BrollPanel);

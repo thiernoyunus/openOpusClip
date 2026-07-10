@@ -350,7 +350,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     const selCount = selRange ? selRange.hi - selRange.lo + 1 : 0;
 
     return (
-        <div className="w-[420px] shrink-0 border-r border-edge bg-[#050506] flex flex-col min-h-0">
+        <div className="w-[400px] shrink-0 border-r border-white/[0.06] bg-[#0c0c0e] flex flex-col min-h-0">
             <div className="px-4 pt-3 pb-2 shrink-0 relative">
                 <div className="flex items-center gap-1.5 text-xs text-muted">
                     <FileText size={12} /> Transcript

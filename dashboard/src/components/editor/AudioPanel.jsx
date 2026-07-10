@@ -48,7 +48,14 @@ function AudioPanel({ framing, jobId, clipIndex, dispatch, playerRef }) {
             const body = new FormData();
             body.append('file', file);
             const res = await fetch(getApiUrl(`/api/clips/${jobId}/${clipIndex}/asset`), { method: 'POST', body });
-            if (!res.ok) throw new Error(`Upload failed (${res.status})`);
+            if (!res.ok) {
+                let detail = `Upload failed (${res.status})`;
+                try {
+                    const data = await res.json();
+                    if (data?.detail) detail = typeof data.detail === 'string' ? data.detail : detail;
+                } catch { /* ignore */ }
+                throw new Error(detail);
+            }
             const { url } = await res.json();
             // Probe duration off the served file; fall back to 3s if metadata
             // can't be read (some containers omit it).
