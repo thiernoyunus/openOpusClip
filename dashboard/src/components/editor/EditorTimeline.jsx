@@ -50,16 +50,23 @@ function itemDragPatch(framing, item, drag, fps) {
 }
 
 /**
- * Apply an in-progress drag to one OUTPUT-anchored audio item, returning its
- * patched { startFrame, endFrame } in OUTPUT frames. Audio needs no source
- * mapping — the drag delta is already in output frames — so this is a small
- * direct clamp helper (simpler than itemDragPatch). Mirrors the commit math.
+ * Apply an in-progress drag to one OUTPUT-anchored item (audio block, or an
+ * overlay with anchor:'output'), returning its patched { startFrame, endFrame }
+ * in OUTPUT frames. No source mapping — the drag delta is already in output
+ * frames — so this is a small direct clamp helper (simpler than itemDragPatch).
+ * Mirrors the commit math. Left-trim outward is additionally clamped by how
+ * much trimmed-off content actually exists (trimBefore): you can only reveal
+ * audio that was previously trimmed away, not invent earlier content.
  */
 function audioDragPatch(item, drag, totalOut) {
     const d = drag.deltaOut || 0;
     if (drag.kind === 'item-trim') {
         if (drag.edge === 'in') {
-            const ns = Math.max(0, Math.min(item.startFrame + d, item.endFrame - MIN_AUDIO_LEN));
+            // Audio only: can't reveal content earlier than the file provides
+            // (trimBefore is all that's been trimmed off). Overlays (images /
+            // restarting video) have no content-start bound.
+            const contentStart = drag.lane === 'audio' ? item.startFrame - (item.trimBefore || 0) : 0;
+            const ns = Math.max(0, contentStart, Math.min(item.startFrame + d, item.endFrame - MIN_AUDIO_LEN));
             return { startFrame: ns, endFrame: item.endFrame };
         }
         const ne = Math.min(totalOut, Math.max(item.endFrame + d, item.startFrame + MIN_AUDIO_LEN));
@@ -548,7 +555,11 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
             } else {
                 const list = dd.lane === 'text' ? framing.textOverlays : dd.lane === 'overlay' ? framing.overlays : framing.broll;
                 const item = (list || []).find((x) => x.id === dd.itemId);
-                if (item) {
+                if (item && item.anchor === 'output') {
+                    // Output-anchored overlay: frames are already output frames.
+                    const p = audioDragPatch(item, { ...dd, deltaOut }, totalOut);
+                    edges = dd.kind === 'item-trim' ? [dd.edge === 'in' ? p.startFrame : p.endFrame] : [p.startFrame, p.endFrame];
+                } else if (item) {
                     const p = itemDragPatch(framing, item, { ...dd, deltaOut }, fps);
                     const wins = sourceRangeToOutputWindows(framing, p.startFrame, p.endFrame, fps);
                     if (wins.length) {
@@ -635,7 +646,11 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
             const list = d.lane === 'text' ? framing.textOverlays : d.lane === 'overlay' ? framing.overlays : framing.broll;
             const item = (list || []).find((x) => x.id === d.itemId);
             if (item) {
-                const patch = itemDragPatch(framing, item, d, fps);
+                // anchor:'output' overlays commit in output frames directly —
+                // running them through the source mapping would corrupt them.
+                const patch = item.anchor === 'output'
+                    ? audioDragPatch(item, d, totalOut)
+                    : itemDragPatch(framing, item, d, fps);
                 if (patch.startFrame !== item.startFrame || patch.endFrame !== item.endFrame) {
                     const type = d.lane === 'text' ? 'UPDATE_TEXT_OVERLAY' : d.lane === 'overlay' ? 'UPDATE_OVERLAY' : 'UPDATE_BROLL';
                     dispatch({ type, id: d.itemId, patch });
@@ -698,9 +713,13 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
         const onKey = (e) => {
             if (e.key !== 'Backspace' && e.key !== 'Delete') return;
             const t = e.target;
-            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
             if (!selectedItem) return;
-            if (selectedItem.lane === 'audio') {
+            // The legacy music strip selects as {lane:'audio', id:'music'} but
+            // lives on framing.music, not audio[] — dispatching REMOVE_AUDIO
+            // would no-op yet still push a wasted undo step. Panel-managed
+            // until B4.
+            if (selectedItem.lane === 'audio' && selectedItem.id !== 'music') {
                 e.preventDefault();
                 dispatch({ type: 'REMOVE_AUDIO', id: selectedItem.id });
                 setSelectedItem(null);
@@ -731,6 +750,15 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
             : item;
     const laneWindows = (items) =>
         items.flatMap((item) => {
+            // anchor:'output' items live directly on the output axis — no source
+            // mapping (and never echo). Their live drag uses the direct
+            // output-frame patch, same as audio blocks.
+            if (item.anchor === 'output') {
+                const eff = drag && drag.itemId === item.id && (drag.kind === 'item-move' || drag.kind === 'item-trim')
+                    ? audioDragPatch(item, drag, totalOut)
+                    : item;
+                return [{ item, w: { outStart: eff.startFrame, outEnd: eff.endFrame }, wi: 0 }];
+            }
             const eff = patchedFrames(item);
             return sourceRangeToOutputWindows(framing, eff.startFrame, eff.endFrame, fps).map((w, wi) => ({ item, w, wi }));
         });
