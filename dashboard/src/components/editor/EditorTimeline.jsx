@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { Play, Pause, SkipBack, Scissors, Trash2, Copy, ZoomIn, ZoomOut, Plus, Type, Clapperboard, Music } from 'lucide-react';
+import { Play, Pause, SkipBack, Scissors, Trash2, Copy, ZoomIn, ZoomOut, Plus, Type, Clapperboard, Music, Volume2, Image as ImageIcon } from 'lucide-react';
 import { EDITOR_FPS } from './EditorCanvas';
 import { useFilmstrip, useWaveform } from './useMediaStrips';
 import { placedClips, outputToSource, clipAtOutputFrame, sourceRangeToOutputWindows } from '@remotion-src/lib/edl';
@@ -8,6 +8,8 @@ const FILM_COUNT = 48; // global thumbnails sampled across the source, sliced pe
 const WAVE_BUCKETS = 480;
 const MIN_CLIP_LEN = 2; // source frames — mirrors the reducer
 const MIN_ITEM_LEN = 2; // source frames — min length for a text/b-roll block
+const MIN_AUDIO_LEN = 2; // OUTPUT frames — min length for an audio block
+const SNAP_PX = 8; // snap when a dragged edge is within this many pixels of a candidate
 const MIN_PPS = 12;
 const MAX_PPS = 320;
 const MIN_TL_HEIGHT = 140;
@@ -45,6 +47,81 @@ function itemDragPatch(framing, item, drag, fps) {
     let start = item.startFrame + (nsStart - w.srcStart);
     start = Math.max(0, Math.min(start, dur - len));
     return { startFrame: start, endFrame: start + len };
+}
+
+/**
+ * Apply an in-progress drag to one OUTPUT-anchored item (audio block, or an
+ * overlay with anchor:'output'), returning its patched { startFrame, endFrame }
+ * in OUTPUT frames. No source mapping — the drag delta is already in output
+ * frames — so this is a small direct clamp helper (simpler than itemDragPatch).
+ * Mirrors the commit math. Left-trim outward is additionally clamped by how
+ * much trimmed-off content actually exists (trimBefore): you can only reveal
+ * audio that was previously trimmed away, not invent earlier content.
+ */
+function audioDragPatch(item, drag, totalOut) {
+    const d = drag.deltaOut || 0;
+    if (drag.kind === 'item-trim') {
+        if (drag.edge === 'in') {
+            // Audio only: can't reveal content earlier than the file provides
+            // (trimBefore is all that's been trimmed off). Overlays (images /
+            // restarting video) have no content-start bound.
+            const contentStart = drag.lane === 'audio' ? item.startFrame - (item.trimBefore || 0) : 0;
+            const ns = Math.max(0, contentStart, Math.min(item.startFrame + d, item.endFrame - MIN_AUDIO_LEN));
+            return { startFrame: ns, endFrame: item.endFrame };
+        }
+        const ne = Math.min(totalOut, Math.max(item.endFrame + d, item.startFrame + MIN_AUDIO_LEN));
+        return { startFrame: item.startFrame, endFrame: ne };
+    }
+    // item-move: shift both edges, preserve length, clamp into [0, totalOut].
+    const len = item.endFrame - item.startFrame;
+    const start = Math.max(0, Math.min(item.startFrame + d, totalOut - len));
+    return { startFrame: start, endFrame: start + len };
+}
+
+/**
+ * Nearest snap candidate to any of the dragged edges, within SNAP_PX. Returns
+ * { gap, snapFrame } where gap (output frames) is what to add to the drag delta
+ * so the closest edge lands exactly on the candidate, or null if nothing snaps.
+ */
+function bestSnap(edgeFrames, candidates, pxPerFrame) {
+    let best = null;
+    for (const ef of edgeFrames) {
+        for (const c of candidates) {
+            const dpx = Math.abs(c - ef) * pxPerFrame;
+            if (dpx <= SNAP_PX && (!best || dpx < best.dpx)) {
+                best = { dpx, gap: c - ef, snapFrame: c };
+            }
+        }
+    }
+    return best;
+}
+
+/**
+ * Static snap targets for a drag, built ONCE at drag start (the playhead frame
+ * is added live on each move). Candidates: frame 0, end of timeline, every
+ * placed clip boundary, and every OTHER lane item's output-window edges.
+ */
+function buildSnapCandidates(framing, fps, excludeId) {
+    const placed = placedClips(framing, fps);
+    const totalOut = placed.reduce((a, p) => a + p.outDuration, 0);
+    const set = new Set([0, totalOut]);
+    for (const p of placed) {
+        set.add(p.outStart);
+        set.add(p.outStart + p.outDuration);
+    }
+    for (const item of [...(framing.textOverlays || []), ...(framing.broll || []), ...(framing.overlays || [])]) {
+        if (item.id === excludeId) continue;
+        for (const w of sourceRangeToOutputWindows(framing, item.startFrame, item.endFrame, fps)) {
+            set.add(w.outStart);
+            set.add(w.outEnd);
+        }
+    }
+    for (const a of (framing.audio || [])) {
+        if (a.id === excludeId) continue;
+        set.add(a.startFrame);
+        set.add(a.endFrame);
+    }
+    return [...set];
 }
 
 const fmt = (frames) => {
@@ -195,6 +272,51 @@ const LaneBlock = React.memo(function LaneBlock({
                     key={edge}
                     onPointerDown={(e) => onTrimDown(lane, itemId, edge, e)}
                     className={`absolute top-0 bottom-0 ${edge === 'in' ? 'left-0' : 'right-0'} w-1.5 cursor-ew-resize hover:bg-white/40`}
+                    title={edge === 'in' ? 'Trim start' : 'Trim end'}
+                />
+            ))}
+        </div>
+    );
+});
+
+/**
+ * One OUTPUT-anchored audio item (music / sfx) on the audio lane. Positioned
+ * directly from its output frames (no source-window mapping, no echoes). Body =
+ * move, edges = trim. When fadeInSec/fadeOutSec > 0 a subtle triangular gradient
+ * ramp is drawn inside the corresponding edge (pure CSS, no library).
+ */
+const AudioBlock = React.memo(function AudioBlock({
+    itemId, label, Icon, colorClass, left, width, fadeInPx, fadeOutPx, selected, dragging,
+    onBodyDown, onTrimDown,
+}) {
+    return (
+        <div
+            onPointerDown={(e) => onBodyDown('audio', itemId, e)}
+            style={{ left, width }}
+            title={label}
+            className={`absolute top-0 bottom-0 rounded border flex items-center px-1.5 text-[10px] overflow-hidden cursor-grab active:cursor-grabbing group ${colorClass} ${
+                selected ? 'ring-1 ring-viral border-viral' : ''
+            } ${dragging ? 'opacity-80 z-30' : 'z-10'}`}
+        >
+            {fadeInPx > 0 && (
+                <div
+                    className="absolute inset-y-0 left-0 pointer-events-none"
+                    style={{ width: fadeInPx, background: 'linear-gradient(to right bottom, transparent 50%, rgba(255,255,255,0.18) 50%)' }}
+                />
+            )}
+            {fadeOutPx > 0 && (
+                <div
+                    className="absolute inset-y-0 right-0 pointer-events-none"
+                    style={{ width: fadeOutPx, background: 'linear-gradient(to left bottom, transparent 50%, rgba(255,255,255,0.18) 50%)' }}
+                />
+            )}
+            {Icon && <Icon size={10} className="mr-1 shrink-0 pointer-events-none relative z-10" />}
+            <span className="truncate pointer-events-none relative z-10">{label}</span>
+            {['in', 'out'].map((edge) => (
+                <div
+                    key={edge}
+                    onPointerDown={(e) => onTrimDown('audio', itemId, edge, e)}
+                    className={`absolute top-0 bottom-0 ${edge === 'in' ? 'left-0' : 'right-0'} w-1.5 cursor-ew-resize hover:bg-white/40 z-20`}
                     title={edge === 'in' ? 'Trim start' : 'Trim end'}
                 />
             ))}
@@ -375,11 +497,11 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
     const onTrimDown = useCallback((id, edge, e) => {
         e.stopPropagation();
         if (e.button !== 0) return;
-        const nd = { kind: 'trim', id, edge, startX: e.clientX, deltaSrc: 0 };
+        const nd = { kind: 'trim', id, edge, startX: e.clientX, deltaSrc: 0, snapFrames: buildSnapCandidates(framing, fps, id), snapX: null };
         dragRef.current = nd;
         setDrag(nd);
         try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
-    }, []);
+    }, [framing, fps]);
 
     const rulerDown = useCallback((e) => {
         if (e.button !== 0) return;
@@ -394,20 +516,20 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
     const onItemBodyDown = useCallback((lane, itemId, e) => {
         if (e.button !== 0) return;
         e.stopPropagation();
-        const nd = { kind: 'item-pending', lane, itemId, startX: e.clientX, deltaOut: 0 };
+        const nd = { kind: 'item-pending', lane, itemId, startX: e.clientX, deltaOut: 0, snapFrames: buildSnapCandidates(framing, fps, itemId), snapX: null };
         dragRef.current = nd;
         setDrag(nd);
         try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
-    }, []);
+    }, [framing, fps]);
 
     const onItemTrimDown = useCallback((lane, itemId, edge, e) => {
         e.stopPropagation();
         if (e.button !== 0) return;
-        const nd = { kind: 'item-trim', lane, itemId, edge, startX: e.clientX, deltaOut: 0 };
+        const nd = { kind: 'item-trim', lane, itemId, edge, startX: e.clientX, deltaOut: 0, snapFrames: buildSnapCandidates(framing, fps, itemId), snapX: null };
         dragRef.current = nd;
         setDrag(nd);
         try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
-    }, []);
+    }, [framing, fps]);
 
     const onPointerMove = useCallback((e) => {
         const d = dragRef.current;
@@ -416,24 +538,73 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
             seekToOut(outFrameAtClientX(e.clientX));
             return;
         }
+        // Snap a lane-item drag (text / overlay / broll / audio). Hold Alt to
+        // disable. Edges are the block's live output-window edges; candidates are
+        // the static set stashed at drag start plus the CURRENT playhead frame.
+        const snapItem = (dd, deltaOut) => {
+            if (e.altKey || !dd.snapFrames) return { deltaOut, snapX: null };
+            const playhead = Math.round(playerRef.current?.getCurrentFrame() ?? 0);
+            const candidates = [...dd.snapFrames, playhead];
+            let edges = null;
+            if (dd.lane === 'audio') {
+                const item = (framing.audio || []).find((a) => a.id === dd.itemId);
+                if (item) {
+                    const p = audioDragPatch(item, { ...dd, deltaOut }, totalOut);
+                    edges = dd.kind === 'item-trim' ? [dd.edge === 'in' ? p.startFrame : p.endFrame] : [p.startFrame, p.endFrame];
+                }
+            } else {
+                const list = dd.lane === 'text' ? framing.textOverlays : dd.lane === 'overlay' ? framing.overlays : framing.broll;
+                const item = (list || []).find((x) => x.id === dd.itemId);
+                if (item && item.anchor === 'output') {
+                    // Output-anchored overlay: frames are already output frames.
+                    const p = audioDragPatch(item, { ...dd, deltaOut }, totalOut);
+                    edges = dd.kind === 'item-trim' ? [dd.edge === 'in' ? p.startFrame : p.endFrame] : [p.startFrame, p.endFrame];
+                } else if (item) {
+                    const p = itemDragPatch(framing, item, { ...dd, deltaOut }, fps);
+                    const wins = sourceRangeToOutputWindows(framing, p.startFrame, p.endFrame, fps);
+                    if (wins.length) {
+                        const a = wins[0].outStart;
+                        const b = wins[wins.length - 1].outEnd;
+                        edges = dd.kind === 'item-trim' ? [dd.edge === 'in' ? a : b] : [a, b];
+                    }
+                }
+            }
+            if (!edges) return { deltaOut, snapX: null };
+            const best = bestSnap(edges, candidates, pxPerFrame);
+            return best ? { deltaOut: deltaOut + best.gap, snapX: best.snapFrame * pxPerFrame } : { deltaOut, snapX: null };
+        };
+
         if (d.kind === 'item-pending' || d.kind === 'item-move') {
             const dxi = e.clientX - d.startX;
             if (d.kind === 'item-pending' && Math.abs(dxi) < 4) return;
-            const nd = { ...d, kind: 'item-move', deltaOut: Math.round(dxi / pxPerFrame) };
+            const snapped = snapItem(d, Math.round(dxi / pxPerFrame));
+            const nd = { ...d, kind: 'item-move', deltaOut: snapped.deltaOut, snapX: snapped.snapX };
             dragRef.current = nd;
             setDrag(nd);
             return;
         }
         if (d.kind === 'item-trim') {
-            const nd = { ...d, deltaOut: Math.round((e.clientX - d.startX) / pxPerFrame) };
+            const snapped = snapItem(d, Math.round((e.clientX - d.startX) / pxPerFrame));
+            const nd = { ...d, deltaOut: snapped.deltaOut, snapX: snapped.snapX };
             dragRef.current = nd;
             setDrag(nd);
             return;
         }
         const dx = e.clientX - d.startX;
         if (d.kind === 'trim') {
-            const deltaSrc = Math.round((dx / pxPerFrame) * (srcFps / fps));
-            const nd = { ...d, deltaSrc };
+            let deltaSrc = Math.round((dx / pxPerFrame) * (srcFps / fps));
+            let snapX = null;
+            if (!e.altKey && d.snapFrames) {
+                const liveClips = applyDrag(framing.clips, { kind: 'trim', id: d.id, edge: d.edge, deltaSrc }, totalSrc);
+                const lp = placedClips({ ...framing, clips: liveClips }, fps).find((p) => p.clip.id === d.id);
+                if (lp) {
+                    const edge = d.edge === 'in' ? lp.outStart : lp.outStart + lp.outDuration;
+                    const playhead = Math.round(playerRef.current?.getCurrentFrame() ?? 0);
+                    const best = bestSnap([edge], [...d.snapFrames, playhead], pxPerFrame);
+                    if (best) { deltaSrc += Math.round(best.gap * (srcFps / fps)); snapX = best.snapFrame * pxPerFrame; }
+                }
+            }
+            const nd = { ...d, deltaSrc, snapX };
             dragRef.current = nd;
             setDrag(nd);
         } else if (d.kind === 'pending' || d.kind === 'move') {
@@ -447,7 +618,7 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
             dragRef.current = nd;
             setDrag(nd);
         }
-    }, [pxPerFrame, srcFps, fps, framing, seekToOut, outFrameAtClientX]);
+    }, [pxPerFrame, srcFps, fps, framing, seekToOut, outFrameAtClientX, totalOut, totalSrc, playerRef]);
 
     const endDrag = useCallback((e) => {
         const d = dragRef.current;
@@ -455,20 +626,43 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
         setDrag(null);
         if (!d) return;
         if (d.kind === 'item-move' || d.kind === 'item-trim') {
-            const list = d.lane === 'text' ? framing.textOverlays : framing.broll;
+            if (d.lane === 'audio') {
+                // OUTPUT-anchored: direct patch in output frames. Trimming the LEFT
+                // edge also advances trimBefore by the same amount so the audio
+                // content stays put instead of sliding (CapCut behaviour).
+                const item = (framing.audio || []).find((a) => a.id === d.itemId);
+                if (item) {
+                    const p = audioDragPatch(item, d, totalOut);
+                    if (p.startFrame !== item.startFrame || p.endFrame !== item.endFrame) {
+                        const patch = { startFrame: p.startFrame, endFrame: p.endFrame };
+                        if (d.kind === 'item-trim' && d.edge === 'in') {
+                            patch.trimBefore = Math.max(0, (item.trimBefore || 0) + (p.startFrame - item.startFrame));
+                        }
+                        dispatch({ type: 'UPDATE_AUDIO', id: d.itemId, patch });
+                    }
+                }
+                return;
+            }
+            const list = d.lane === 'text' ? framing.textOverlays : d.lane === 'overlay' ? framing.overlays : framing.broll;
             const item = (list || []).find((x) => x.id === d.itemId);
             if (item) {
-                const patch = itemDragPatch(framing, item, d, fps);
+                // anchor:'output' overlays commit in output frames directly —
+                // running them through the source mapping would corrupt them.
+                const patch = item.anchor === 'output'
+                    ? audioDragPatch(item, d, totalOut)
+                    : itemDragPatch(framing, item, d, fps);
                 if (patch.startFrame !== item.startFrame || patch.endFrame !== item.endFrame) {
-                    dispatch({ type: d.lane === 'text' ? 'UPDATE_TEXT_OVERLAY' : 'UPDATE_BROLL', id: d.itemId, patch });
+                    const type = d.lane === 'text' ? 'UPDATE_TEXT_OVERLAY' : d.lane === 'overlay' ? 'UPDATE_OVERLAY' : 'UPDATE_BROLL';
+                    dispatch({ type, id: d.itemId, patch });
                 }
             }
             return;
         }
         if (d.kind === 'item-pending') {
-            // never moved → treat as a click: select the block + open its panel
+            // never moved → treat as a click: select the block + open its panel.
+            // Overlays edit through the B-roll panel (until B4 splits them out).
             setSelectedItem({ lane: d.lane, id: d.itemId });
-            onSelectTrackItem?.(d.lane, d.itemId);
+            onSelectTrackItem?.(d.lane === 'overlay' ? 'broll' : d.lane, d.itemId);
             return;
         }
         if (d.kind === 'trim') {
@@ -487,7 +681,7 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
             const p = placedClips(framing, fps).find((pp) => pp.clip.id === d.id);
             if (p) seekToOut(p.outStart);
         }
-    }, [framing, fps, dispatch, onSelect, seekToOut, onSelectTrackItem]);
+    }, [framing, fps, dispatch, onSelect, seekToOut, onSelectTrackItem, totalOut]);
 
     // --- Resizable timeline height (drag handle above the track) ---
     const onResizeDown = useCallback((e) => {
@@ -512,6 +706,33 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
         try { localStorage.setItem('editorTimelineHeight', String(r.latest)); } catch { /* ignore */ }
     }, []);
 
+    // --- Delete key: remove the selected audio / overlay block (new generic
+    // tracks only — legacy broll/text keep panel-only deletion). Ignored while
+    // typing in a field. ---
+    useEffect(() => {
+        const onKey = (e) => {
+            if (e.key !== 'Backspace' && e.key !== 'Delete') return;
+            const t = e.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+            if (!selectedItem) return;
+            // The legacy music strip selects as {lane:'audio', id:'music'} but
+            // lives on framing.music, not audio[] — dispatching REMOVE_AUDIO
+            // would no-op yet still push a wasted undo step. Panel-managed
+            // until B4.
+            if (selectedItem.lane === 'audio' && selectedItem.id !== 'music') {
+                e.preventDefault();
+                dispatch({ type: 'REMOVE_AUDIO', id: selectedItem.id });
+                setSelectedItem(null);
+            } else if (selectedItem.lane === 'overlay') {
+                e.preventDefault();
+                dispatch({ type: 'REMOVE_OVERLAY', id: selectedItem.id });
+                setSelectedItem(null);
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [selectedItem, dispatch]);
+
     // Ruler ticks (seconds)
     const secStep = pxPerSec >= 120 ? 1 : pxPerSec >= 48 ? 2 : 5;
     const ticks = [];
@@ -529,13 +750,47 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
             : item;
     const laneWindows = (items) =>
         items.flatMap((item) => {
+            // anchor:'output' items live directly on the output axis — no source
+            // mapping (and never echo). Their live drag uses the direct
+            // output-frame patch, same as audio blocks.
+            if (item.anchor === 'output') {
+                const eff = drag && drag.itemId === item.id && (drag.kind === 'item-move' || drag.kind === 'item-trim')
+                    ? audioDragPatch(item, drag, totalOut)
+                    : item;
+                return [{ item, w: { outStart: eff.startFrame, outEnd: eff.endFrame }, wi: 0 }];
+            }
             const eff = patchedFrames(item);
             return sourceRangeToOutputWindows(framing, eff.startFrame, eff.endFrame, fps).map((w, wi) => ({ item, w, wi }));
         });
+    const overlayItems = framing.overlays || [];
     const textWindows = laneWindows(textItems);
     const brollWindows = laneWindows(brollItems);
+    const overlayWindows = laneWindows(overlayItems);
     const transitionsOn = !!(framing.transitions?.cutCrossfade || framing.transitions?.cutStyle);
     const musicLabel = framing.music?.url ? decodeURIComponent(framing.music.url.split('/').pop() || 'Music') : null;
+
+    // OUTPUT-anchored audio blocks. The dragged item uses its patched frames so
+    // the block follows the cursor live (in output frames, no source mapping).
+    const audioItems = framing.audio || [];
+    const audioBlocks = audioItems.map((item) => {
+        const eff = drag && drag.itemId === item.id && drag.lane === 'audio' && (drag.kind === 'item-move' || drag.kind === 'item-trim')
+            ? audioDragPatch(item, drag, totalOut)
+            : item;
+        const name = item.url ? decodeURIComponent(item.url.split('/').pop() || '') : '';
+        return {
+            item,
+            left: eff.startFrame * pxPerFrame,
+            width: Math.max(10, (eff.endFrame - eff.startFrame) * pxPerFrame),
+            fadeInPx: Math.min((item.fadeInSec || 0) * fps * pxPerFrame, (eff.endFrame - eff.startFrame) * pxPerFrame),
+            fadeOutPx: Math.min((item.fadeOutSec || 0) * fps * pxPerFrame, (eff.endFrame - eff.startFrame) * pxPerFrame),
+            label: item.role === 'sfx' ? (name || 'SFX') : (name || 'Music'),
+            Icon: item.role === 'sfx' ? Volume2 : Music,
+            colorClass: item.role === 'sfx'
+                ? 'bg-sky-500/20 border-sky-500/40 text-sky-100'
+                : 'bg-cyan-500/20 border-cyan-500/40 text-cyan-100',
+        };
+    });
+    const showAudioEmpty = audioItems.length === 0 && !musicLabel;
 
     return (
         <div className="border-t border-edge bg-surface select-none">
@@ -647,6 +902,30 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                         </div>
                     )}
 
+                    {/* Overlays lane — image / b-roll video overlays (source-anchored,
+                        same drag/echo model as the legacy b-roll lane). Only when non-empty. */}
+                    {overlayWindows.length > 0 && (
+                        <div className="relative h-[22px] mt-1">
+                            {overlayWindows.map(({ item, w, wi }) => (
+                                <LaneBlock
+                                    key={`${item.id}-${wi}`}
+                                    lane="overlay"
+                                    itemId={item.id}
+                                    label={item.kind === 'image' ? 'Image' : 'B-roll'}
+                                    Icon={item.kind === 'image' ? ImageIcon : Clapperboard}
+                                    colorClass="bg-purple-500/20 border-purple-500/40 text-purple-100"
+                                    left={w.outStart * pxPerFrame}
+                                    width={Math.max(10, (w.outEnd - w.outStart) * pxPerFrame)}
+                                    echo={wi !== 0}
+                                    selected={selectedItem?.lane === 'overlay' && selectedItem.id === item.id}
+                                    dragging={drag?.itemId === item.id}
+                                    onBodyDown={onItemBodyDown}
+                                    onTrimDown={onItemTrimDown}
+                                />
+                            ))}
+                        </div>
+                    )}
+
                     {/* Clip lane */}
                     <div className="relative h-16 mt-1 mb-1">
                         {placed.map((p) => (
@@ -690,24 +969,68 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                         </button>
                     </div>
 
-                    {/* Audio lane (only when music with a source is set) */}
+                    {/* Audio lane v2 — one OUTPUT-anchored block per framing.audio[] item. */}
+                    {audioBlocks.length > 0 && (
+                        <div className="relative h-[22px] mt-1 mb-1">
+                            {audioBlocks.map((b) => (
+                                <AudioBlock
+                                    key={b.item.id}
+                                    itemId={b.item.id}
+                                    label={b.label}
+                                    Icon={b.Icon}
+                                    colorClass={b.colorClass}
+                                    left={b.left}
+                                    width={b.width}
+                                    fadeInPx={b.fadeInPx}
+                                    fadeOutPx={b.fadeOutPx}
+                                    selected={selectedItem?.lane === 'audio' && selectedItem.id === b.item.id}
+                                    dragging={drag?.itemId === b.item.id && drag?.lane === 'audio'}
+                                    onBodyDown={onItemBodyDown}
+                                    onTrimDown={onItemTrimDown}
+                                />
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Legacy static music strip — still written by the current AudioPanel
+                        (SET_MUSIC) until B4 rewires the panels onto audio[]. One global
+                        looped track spanning the whole output, click-to-open only. */}
                     {musicLabel && (
                         <div className="relative h-[22px] mt-1 mb-1">
-                            {/* ponytail: music is one global looped track with no start/end, so the
-                                block spans the whole output and isn't draggable — per-track timing
-                                lands with the audio[] schema in a later PR. */}
                             <div
                                 onPointerDown={(e) => { e.stopPropagation(); setSelectedItem({ lane: 'audio', id: 'music' }); onSelectTrackItem?.('audio', null); }}
                                 style={{ width: Math.max(10, trackWidth) }}
                                 title={musicLabel}
                                 className={`absolute top-0 bottom-0 left-0 rounded border flex items-center px-1.5 text-[10px] overflow-hidden cursor-pointer bg-zinc-600/30 border-zinc-500/40 text-zinc-200 ${
-                                    selectedItem?.lane === 'audio' ? 'ring-1 ring-viral border-viral' : ''
+                                    selectedItem?.lane === 'audio' && selectedItem.id === 'music' ? 'ring-1 ring-viral border-viral' : ''
                                 }`}
                             >
                                 <Music size={10} className="mr-1 shrink-0 pointer-events-none" />
                                 <span className="truncate pointer-events-none">{musicLabel}</span>
                             </div>
                         </div>
+                    )}
+
+                    {/* Empty-state affordance — CapCut's "+ Add audio" strip, shown only
+                        when there's nothing audio-ish (no audio[] items and no legacy music). */}
+                    {showAudioEmpty && (
+                        <div className="relative h-[22px] mt-1 mb-1">
+                            <button
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={() => onSelectTrackItem?.('audio', null)}
+                                style={{ width: Math.max(10, trackWidth) }}
+                                title="Add audio"
+                                className="absolute top-0 bottom-0 left-0 flex items-center justify-center rounded border border-dashed border-edge text-[10px] text-muted hover:text-fg hover:border-white/40 hover:bg-white/5"
+                            >
+                                <Music size={10} className="mr-1" /> Add audio
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Snap guide line — single vertical white line at the snapped edge,
+                        spanning the ruler through every lane. */}
+                    {drag?.snapX != null && (
+                        <div className="absolute top-0 bottom-0 w-px bg-white z-50 pointer-events-none" style={{ left: drag.snapX }} />
                     )}
 
                     {/* Playhead (spans ruler + all lanes; owns its own frame subscription) */}
