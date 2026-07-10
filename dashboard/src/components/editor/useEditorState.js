@@ -1,9 +1,14 @@
 import { useReducer } from 'react';
 import { cropForFace, smoothedFaceRect } from '@remotion-src/compositions/ReframedVideo';
-import { framingToClips } from '@remotion-src/lib/edl';
+import { framingToClips, outputDurationFrames } from '@remotion-src/lib/edl';
 
 const HISTORY_LIMIT = 50;
 const MIN_CLIP_LEN = 2; // frames — keeps every clip seekable / non-degenerate
+// Mirrors EditorCanvas.EDITOR_FPS (not imported here to avoid a circular
+// import: EditorCanvas -> TrackerOverlay -> useEditorState). Only used for the
+// one-time legacy music -> audio[] migration below, where an output-frame
+// duration is needed before a Player/fps is available.
+const EDITOR_FPS = 30;
 
 // Unique clip ids. A module counter disambiguates clips created in the same
 // tick (e.g. a multi-range cut that splits several clips at once).
@@ -337,6 +342,40 @@ export const editorReducer = (state, action) => {
                     b.id === action.id ? { ...b, ...action.patch } : b
                 ),
             });
+        case 'ADD_OVERLAY':
+            return withHistory({
+                ...state.framing,
+                overlays: [...(state.framing.overlays || []), action.item],
+            });
+        case 'REMOVE_OVERLAY':
+            return withHistory({
+                ...state.framing,
+                overlays: (state.framing.overlays || []).filter((o) => o.id !== action.id),
+            });
+        case 'UPDATE_OVERLAY':
+            return withHistory({
+                ...state.framing,
+                overlays: (state.framing.overlays || []).map((o) =>
+                    o.id === action.id ? { ...o, ...action.patch } : o
+                ),
+            });
+        case 'ADD_AUDIO':
+            return withHistory({
+                ...state.framing,
+                audio: [...(state.framing.audio || []), action.item],
+            });
+        case 'REMOVE_AUDIO':
+            return withHistory({
+                ...state.framing,
+                audio: (state.framing.audio || []).filter((a) => a.id !== action.id),
+            });
+        case 'UPDATE_AUDIO':
+            return withHistory({
+                ...state.framing,
+                audio: (state.framing.audio || []).map((a) =>
+                    a.id === action.id ? { ...a, ...action.patch } : a
+                ),
+            });
         case 'TRACK_PERSON': {
             // Tracker click: in multi-panel layouts, reassign the clicked
             // panel; otherwise (fill/fit/manual) become a fill that follows
@@ -514,6 +553,53 @@ export function normalizeFraming(framing) {
     const { segments, cuts, clipInFrame, clipOutFrame, ...rest } = framing;
     void segments; void cuts; void clipInFrame; void clipOutFrame;
 
+    // --- Legacy track migration: broll[] -> overlays[], music -> audio[].
+    // MOVE semantics (not copy) — the legacy field is cleared on the normalized
+    // object so nothing double-renders once the new generic tracks exist.
+    // Idempotent: once broll/music are cleared, re-running finds nothing left
+    // to migrate and returns the same overlays/audio it was given.
+    const migratedOverlays = (framing.broll ?? []).map((b) => ({
+        id: b.id,
+        kind: 'video',
+        url: b.url,
+        startFrame: b.startFrame,
+        endFrame: b.endFrame,
+        anchor: 'source',
+        x: 0.5,
+        y: 0.5,
+        w: 1,
+        h: 1,
+        volume: 0,
+        z: 0,
+    }));
+    const overlays = [...(framing.overlays ?? []), ...migratedOverlays];
+
+    const migratedAudio = [];
+    const legacyMusic = framing.music;
+    if (legacyMusic && legacyMusic.url) {
+        // Output-duration-anchored: music must span the whole (already
+        // migrated) clip track, computed the same way the rest of the editor
+        // derives total duration (EditorView.jsx uses outputDurationFrames the
+        // same way, against EDITOR_FPS).
+        const endFrame = Math.max(
+            1,
+            outputDurationFrames({ source: framing.source, clips }, EDITOR_FPS)
+        );
+        migratedAudio.push({
+            id: `audio-${newClipId()}`,
+            role: 'music',
+            url: legacyMusic.url,
+            startFrame: 0,
+            endFrame,
+            trimBefore: 0,
+            volume: legacyMusic.volume ?? 0.15,
+            loop: true,
+            fadeInSec: 0,
+            fadeOutSec: 0,
+        });
+    }
+    const audio = [...(framing.audio ?? []), ...migratedAudio];
+
     return {
         ...rest,
         version: 3,
@@ -528,9 +614,12 @@ export function normalizeFraming(framing) {
         // re-auto-enable a clip the user deliberately turned captions off on.
         captionsInitialized: framing.captionsInitialized ?? false,
         textOverlays: framing.textOverlays ?? [],
-        music: framing.music ?? null,
+        // Legacy single-track fields, cleared by the migration above.
+        music: null,
+        broll: [],
         transitions: framing.transitions ?? { fadeIn: false, fadeOut: false, cutCrossfade: false },
-        broll: framing.broll ?? [],
+        overlays,
+        audio,
     };
 }
 
