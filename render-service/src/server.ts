@@ -116,6 +116,17 @@ app.post("/render", (req, res) => {
               b && typeof b.url === "string" ? { ...b, url: resolveUrl(b.url) } : b
             )
           : props.framing.broll,
+        // Generic tracks (supersede music/broll) carry the same relative URLs.
+        overlays: Array.isArray(props.framing.overlays)
+          ? props.framing.overlays.map((o: { url?: unknown }) =>
+              o && typeof o.url === "string" ? { ...o, url: resolveUrl(o.url) } : o
+            )
+          : props.framing.overlays,
+        audio: Array.isArray(props.framing.audio)
+          ? props.framing.audio.map((a: { url?: unknown }) =>
+              a && typeof a.url === "string" ? { ...a, url: resolveUrl(a.url) } : a
+            )
+          : props.framing.audio,
       }
     : props.framing;
 

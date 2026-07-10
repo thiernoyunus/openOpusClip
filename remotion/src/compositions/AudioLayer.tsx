@@ -33,6 +33,10 @@ export const AudioLayer: React.FC<{ framing: FramingConfig }> = ({
               src={item.url}
               trimBefore={item.trimBefore ?? 0}
               loop={item.loop ?? false}
+              // "extend": the volume callback's frame keeps counting across loop
+              // iterations; the default "repeat" restarts it each loop, which
+              // would re-trigger fadeIn / fire fadeOut at every loop seam.
+              loopVolumeCurveBehavior="extend"
               volume={makeVolumeCallback(item, duration, fps)}
             />
           </Sequence>
