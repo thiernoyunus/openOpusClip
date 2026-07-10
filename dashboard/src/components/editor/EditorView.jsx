@@ -743,10 +743,10 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                             <TextPanel framing={framing} dispatch={dispatch} getCurrentSourceFrame={getCurrentSourceFrame} />
                                         )}
                                         {activeTab === 'audio' && (
-                                            <AudioPanel framing={framing} jobId={jobId} clipIndex={index} dispatch={dispatch} />
+                                            <AudioPanel framing={framing} jobId={jobId} clipIndex={index} dispatch={dispatch} playerRef={playerRef} />
                                         )}
                                         {activeTab === 'broll' && (
-                                            <BrollPanel framing={framing} dispatch={dispatch} getCurrentSourceFrame={getCurrentSourceFrame} captions={captions} />
+                                            <BrollPanel framing={framing} dispatch={dispatch} jobId={jobId} clipIndex={index} getCurrentSourceFrame={getCurrentSourceFrame} captions={captions} />
                                         )}
                                         {activeTab === 'transitions' && (
                                             <TransitionsPanel framing={framing} dispatch={dispatch} />

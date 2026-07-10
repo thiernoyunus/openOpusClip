@@ -285,10 +285,14 @@ const LaneBlock = React.memo(function LaneBlock({
  * move, edges = trim. When fadeInSec/fadeOutSec > 0 a subtle triangular gradient
  * ramp is drawn inside the corresponding edge (pure CSS, no library).
  */
+const AUDIO_WAVE_BUCKETS = 80;
+
 const AudioBlock = React.memo(function AudioBlock({
-    itemId, label, Icon, colorClass, left, width, fadeInPx, fadeOutPx, selected, dragging,
+    itemId, url, label, Icon, colorClass, left, width, fadeInPx, fadeOutPx, selected, dragging,
     onBodyDown, onTrimDown,
 }) {
+    // Mini waveform decoded from the audio file itself (same hook as ClipBlock).
+    const peaks = useWaveform(url, AUDIO_WAVE_BUCKETS);
     return (
         <div
             onPointerDown={(e) => onBodyDown('audio', itemId, e)}
@@ -298,6 +302,14 @@ const AudioBlock = React.memo(function AudioBlock({
                 selected ? 'ring-1 ring-viral border-viral' : ''
             } ${dragging ? 'opacity-80 z-30' : 'z-10'}`}
         >
+            {/* Waveform along the bottom, behind the label (1px bars). */}
+            {peaks && peaks.length > 0 && (
+                <div className="absolute left-0 right-0 bottom-0 h-2/3 flex items-end gap-px px-px pointer-events-none opacity-60">
+                    {peaks.map((v, i) => (
+                        <div key={i} className="flex-1 bg-current rounded-sm" style={{ height: `${Math.max(6, v * 100)}%` }} />
+                    ))}
+                </div>
+            )}
             {fadeInPx > 0 && (
                 <div
                     className="absolute inset-y-0 left-0 pointer-events-none"
@@ -715,11 +727,7 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
             const t = e.target;
             if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
             if (!selectedItem) return;
-            // The legacy music strip selects as {lane:'audio', id:'music'} but
-            // lives on framing.music, not audio[] — dispatching REMOVE_AUDIO
-            // would no-op yet still push a wasted undo step. Panel-managed
-            // until B4.
-            if (selectedItem.lane === 'audio' && selectedItem.id !== 'music') {
+            if (selectedItem.lane === 'audio') {
                 e.preventDefault();
                 dispatch({ type: 'REMOVE_AUDIO', id: selectedItem.id });
                 setSelectedItem(null);
@@ -767,7 +775,6 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
     const brollWindows = laneWindows(brollItems);
     const overlayWindows = laneWindows(overlayItems);
     const transitionsOn = !!(framing.transitions?.cutCrossfade || framing.transitions?.cutStyle);
-    const musicLabel = framing.music?.url ? decodeURIComponent(framing.music.url.split('/').pop() || 'Music') : null;
 
     // OUTPUT-anchored audio blocks. The dragged item uses its patched frames so
     // the block follows the cursor live (in output frames, no source mapping).
@@ -790,7 +797,7 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                 : 'bg-cyan-500/20 border-cyan-500/40 text-cyan-100',
         };
     });
-    const showAudioEmpty = audioItems.length === 0 && !musicLabel;
+    const showAudioEmpty = audioItems.length === 0;
 
     return (
         <div className="border-t border-edge bg-surface select-none">
@@ -976,6 +983,7 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                                 <AudioBlock
                                     key={b.item.id}
                                     itemId={b.item.id}
+                                    url={b.item.url}
                                     label={b.label}
                                     Icon={b.Icon}
                                     colorClass={b.colorClass}
@@ -992,27 +1000,8 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                         </div>
                     )}
 
-                    {/* Legacy static music strip — still written by the current AudioPanel
-                        (SET_MUSIC) until B4 rewires the panels onto audio[]. One global
-                        looped track spanning the whole output, click-to-open only. */}
-                    {musicLabel && (
-                        <div className="relative h-[22px] mt-1 mb-1">
-                            <div
-                                onPointerDown={(e) => { e.stopPropagation(); setSelectedItem({ lane: 'audio', id: 'music' }); onSelectTrackItem?.('audio', null); }}
-                                style={{ width: Math.max(10, trackWidth) }}
-                                title={musicLabel}
-                                className={`absolute top-0 bottom-0 left-0 rounded border flex items-center px-1.5 text-[10px] overflow-hidden cursor-pointer bg-zinc-600/30 border-zinc-500/40 text-zinc-200 ${
-                                    selectedItem?.lane === 'audio' && selectedItem.id === 'music' ? 'ring-1 ring-viral border-viral' : ''
-                                }`}
-                            >
-                                <Music size={10} className="mr-1 shrink-0 pointer-events-none" />
-                                <span className="truncate pointer-events-none">{musicLabel}</span>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Empty-state affordance — CapCut's "+ Add audio" strip, shown only
-                        when there's nothing audio-ish (no audio[] items and no legacy music). */}
+                    {/* Empty-state affordance — CapCut's "+ Add audio" strip, shown
+                        only when there are no audio[] items. */}
                     {showAudioEmpty && (
                         <div className="relative h-[22px] mt-1 mb-1">
                             <button

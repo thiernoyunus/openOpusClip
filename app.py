@@ -1825,6 +1825,46 @@ async def upload_clip_audio(job_id: str, clip_index: int, file: UploadFile = Fil
         out.write(await file.read())
     return {"url": _video_url(job_id, filename)}
 
+# Generic asset upload (B4): the editor's Audio and B-Roll panels post their own
+# uploaded sound effects, images, and video clips here. Extension -> kind is the
+# authority; the filename is NEVER used on disk (we mint our own), so a crafted
+# "../" name can't escape the job dir. Both extension AND content-type are
+# validated as a trust boundary.
+_ASSET_KIND_BY_EXT = {
+    ".mp3": "audio", ".m4a": "audio", ".wav": "audio", ".aac": "audio", ".ogg": "audio",
+    ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image", ".gif": "image",
+    ".mp4": "video", ".mov": "video", ".webm": "video",
+}
+_ASSET_CT_PREFIX = {"audio": "audio/", "image": "image/", "video": "video/"}
+# curl and some browsers send a generic/empty content-type; accept those, but
+# still reject a positively-wrong major type (e.g. a .mp3 sent as video/mp4).
+_ASSET_CT_GENERIC = {"", "application/octet-stream", "binary/octet-stream"}
+_ASSET_MAX_BYTES = 200 * 1024 * 1024  # 200 MB
+
+@app.post("/api/clips/{job_id}/{clip_index}/asset")
+async def upload_clip_asset(job_id: str, clip_index: int, file: UploadFile = File(...)):
+    """Store an uploaded b-roll/SFX asset (audio | image | video) in the job dir."""
+    if not all(c.isalnum() or c in "-_" for c in job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    output_dir = os.path.join(OUTPUT_DIR, job_id)
+    if not os.path.isdir(output_dir):
+        raise HTTPException(status_code=404, detail="Job not found")
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    kind = _ASSET_KIND_BY_EXT.get(ext)
+    if kind is None:
+        raise HTTPException(status_code=415, detail="Unsupported asset type")
+    ct = (file.content_type or "").lower().split(";")[0].strip()
+    if ct not in _ASSET_CT_GENERIC and not ct.startswith(_ASSET_CT_PREFIX[kind]):
+        raise HTTPException(status_code=415, detail="Content type does not match file extension")
+    data = await file.read()
+    if len(data) > _ASSET_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Asset exceeds the 200MB limit")
+    filename = f"clip_{clip_index}_asset_{uuid.uuid4().hex[:8]}{ext}"
+    dest = os.path.join(output_dir, filename)
+    with open(dest, "wb") as out:
+        out.write(data)
+    return {"url": _video_url(job_id, filename), "kind": kind}
+
 class HookRequest(BaseModel):
     job_id: str
     clip_index: int
