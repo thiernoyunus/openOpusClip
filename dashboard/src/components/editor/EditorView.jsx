@@ -165,17 +165,18 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
     );
 
     return (
-        <div ref={controlsRef} className="relative z-30 flex items-center justify-center gap-3 text-[11px] text-zinc-300">
+        <div ref={controlsRef} className="relative z-30 flex items-center justify-center gap-4 text-[12px] text-zinc-400">
             <div className="relative">
                 <button
+                    type="button"
                     onClick={() => { setAspectOpen((v) => !v); setLayoutOpen(false); setGlobalOpen(false); }}
-                    className="h-7 px-2 rounded-md hover:bg-white/5 flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viral/50"
+                    className="h-8 px-2.5 rounded-lg hover:bg-white/[0.05] flex items-center gap-1.5 text-zinc-300 focus-visible:outline-none"
                     aria-haspopup="menu"
                     aria-expanded={aspectOpen}
                 >
                     <AspectIcon width={outW} height={outH} />
-                    {currentAspect.label.match(/\d+:\d+/)?.[0] || '9:16'}
-                    <ChevronDown size={12} />
+                    <span className="tabular-nums">{currentAspect.label.match(/\d+:\d+/)?.[0] || '9:16'}</span>
+                    <ChevronDown size={12} className="opacity-60" />
                 </button>
                 {aspectOpen && (
                     <div className="absolute left-0 top-full mt-1 w-44 rounded-md border border-edge bg-surface2 shadow-xl py-1">
@@ -202,15 +203,16 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
 
             <div className="relative">
                 <button
+                    type="button"
                     onClick={() => { setLayoutOpen((v) => !v); setAspectOpen(false); setGlobalOpen(false); }}
-                    className="h-7 px-2 rounded-md hover:bg-white/5 flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viral/50"
+                    className="h-8 px-2.5 rounded-lg hover:bg-white/[0.05] flex items-center gap-1.5 text-zinc-300 focus-visible:outline-none"
                     aria-haspopup="menu"
                     aria-expanded={layoutOpen}
                 >
                     <MiniLayoutIcon layout={activeLayout} />
                     <span className="text-zinc-500">Layout:</span>
-                    <span>{LAYOUT_LABEL[activeLayout] || activeLayout}</span>
-                    <ChevronDown size={12} />
+                    <span className="text-zinc-200">{LAYOUT_LABEL[activeLayout] || activeLayout}</span>
+                    <ChevronDown size={12} className="opacity-60" />
                 </button>
                 {layoutOpen && (
                     <div className="absolute left-0 top-full mt-1 w-52 rounded-md border border-edge bg-surface2 shadow-xl py-1">
@@ -691,9 +693,9 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                             extending={extending}
                         />
 
-                        <div className="flex-1 min-w-0 bg-[#0a0a0c] flex min-h-0">
+                        <div className="flex-1 min-w-0 bg-[#0b0b0d] flex min-h-0">
                             <div data-editor-canvas-column className="flex-1 min-w-0 flex flex-col min-h-0">
-                                <div className="h-11 shrink-0 flex items-center justify-center border-b border-white/[0.04]">
+                                <div className="h-10 shrink-0 flex items-center justify-center">
                                     <EditorCanvasControls
                                         framing={framing}
                                         selectedIds={state.selectedIds}
@@ -704,8 +706,8 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                         playerRef={playerRef}
                                     />
                                 </div>
-                                <div className="relative flex-1 min-h-0 w-full p-5 pt-3">
-                                    <div data-editor-preview-shell className="absolute inset-x-5 top-2 bottom-4 flex items-center justify-center rounded-xl bg-black/40">
+                                <div className="relative flex-1 min-h-0 w-full px-6 pb-3 pt-1">
+                                    <div data-editor-preview-shell className="absolute inset-x-6 top-0 bottom-3 flex items-center justify-center">
                                         <EditorCanvas
                                             ref={playerRef}
                                             sourceUrl={sourceUrl}
@@ -721,9 +723,9 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                             </div>
 
                             {panelOpen && (
-                                <div data-editor-tool-panel className="w-[340px] shrink-0 my-2 mr-2 rounded-xl border border-white/[0.07] bg-[#111114] shadow-2xl shadow-black/50 flex flex-col min-h-0">
+                                <div data-editor-tool-panel className="w-[320px] shrink-0 my-2 mr-1.5 rounded-xl border border-white/[0.06] bg-[#121214] shadow-2xl shadow-black/60 flex flex-col min-h-0 overflow-hidden">
                                     <div className="flex items-center justify-between h-10 pl-3.5 pr-1.5 border-b border-white/[0.06] shrink-0">
-                                        <span className="text-xs font-semibold text-zinc-100 tracking-tight">
+                                        <span className="text-[12px] font-semibold text-zinc-100 tracking-tight">
                                             {(TABS.find((t) => t.id === activeTab) || {}).label}
                                         </span>
                                         <button

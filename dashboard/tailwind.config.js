@@ -7,13 +7,13 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Opus-style zinc dark palette (extracted from clip.opus.pro)
-        background: "#0e1015", // app background
-        canvas: "#09090b",     // deepest surface (editor canvas)
-        surface: "#18181b",    // cards / panels (zinc-900)
-        surface2: "#27272a",   // raised surface / secondary button (zinc-800)
-        edge: "#27272a",       // borders / dividers
-        fg: "#fafafa",         // primary text
+        // OpusClip pixel targets (sampled from product screenshots)
+        background: "#0b0b0d", // app / editor chrome
+        canvas: "#000000",     // deepest surface (preview + timeline)
+        surface: "#121214",    // cards / floating panels
+        surface2: "#1a1a1d",   // raised surface / secondary button
+        edge: "#222226",       // borders / dividers
+        fg: "#f4f4f5",         // primary text
         muted: "#9b9ea3",      // secondary text
         viral: "#3dd68c",      // keyword / positive green (use sparingly)
         // legacy accents (still used by not-yet-restyled tabs)

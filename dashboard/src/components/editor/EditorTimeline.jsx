@@ -1,5 +1,8 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Scissors, Trash2, Copy, ZoomIn, ZoomOut, Plus, Type, Clapperboard, Music, Volume2, Image as ImageIcon } from 'lucide-react';
+import {
+    Play, Pause, SkipBack, SkipForward, Scissors, Trash2, Copy, ZoomIn, ZoomOut, Plus,
+    Type, Clapperboard, Music, Volume2, Image as ImageIcon, Calendar, PanelBottomClose, Columns2,
+} from 'lucide-react';
 import { getApiUrl } from '../../config';
 import { EDITOR_FPS } from './EditorCanvas';
 import { useFilmstrip, useWaveform } from './useMediaStrips';
@@ -15,11 +18,21 @@ const MIN_PPS = 10;
 const MAX_PPS = 360;
 const MIN_TL_HEIGHT = 160;
 const MAX_TL_HEIGHT = 520;
-const DEFAULT_TL_HEIGHT = 280;
-const RAIL_W = 44; // left lane-label rail (OpusClip-style gutter)
+const DEFAULT_TL_HEIGHT = 240;
+// Left gutter for the filmstrip + button (Opus has no sticky Video/Audio text rails).
+const LEFT_GUTTER = 40;
+const RIGHT_PAD = 48;
 const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three', four: 'Four', screenshare: 'Screen', gameplay: 'Gameplay' };
 
 const clampHeight = (h) => Math.max(MIN_TL_HEIGHT, Math.min(MAX_TL_HEIGHT, h));
+
+/** Empty sticky gutter spacer (aligns lanes under the filmstrip + column). */
+const Gutter = () => (
+    <div
+        className="sticky left-0 z-30 shrink-0 bg-black"
+        style={{ width: LEFT_GUTTER }}
+    />
+);
 
 /** Resolve relative asset paths so waveform/filmstrip fetches work. */
 const mediaUrl = (url) => {
@@ -187,45 +200,42 @@ function applyDrag(clips, drag, totalSrc) {
  * (zoom, selection, a drag affecting this clip, or the thumbnails arriving).
  */
 const ClipBlock = React.memo(function ClipBlock({
-    clip, left, width, selected, dragging, thumbs, peaks, totalSrc,
+    clip, left, width, selected, dragging, thumbs, totalSrc, isFirst, isLast,
     onBodyDown, onTrimDown, onDuplicate, onDelete,
 }) {
     const s0 = clip.sourceStart / totalSrc;
     const s1 = clip.sourceEnd / totalSrc;
     const clipThumbs = useMemo(() => fracSlice(thumbs, s0, s1), [thumbs, s0, s1]);
-    const clipPeaks = useMemo(() => fracSlice(peaks, s0, s1), [peaks, s0, s1]);
+    const radius = `${isFirst ? '6px' : '0'} ${isLast ? '6px' : '0'} ${isLast ? '6px' : '0'} ${isFirst ? '6px' : '0'}`;
 
     return (
         <div
             onPointerDown={(e) => onBodyDown(clip.id, e)}
-            style={{ left, width }}
-            className={`absolute top-0 bottom-0 rounded-lg overflow-hidden border cursor-grab active:cursor-grabbing group shadow-sm ${
+            style={{ left, width, borderRadius: radius }}
+            className={`absolute top-0 bottom-0 overflow-hidden cursor-grab active:cursor-grabbing group ${
                 selected
-                    ? 'border-white/50 ring-1 ring-white/30 z-20'
-                    : 'border-white/10 hover:border-white/30 z-10'
-            } ${dragging ? 'opacity-85 z-30' : ''}`}
+                    ? 'ring-1 ring-white/55 z-20'
+                    : 'z-10'
+            } ${dragging ? 'opacity-90 z-30' : ''}`}
         >
-            {/* Filmstrip — OpusClip-style continuous thumb strip */}
-            <div className="absolute inset-0 flex bg-[#121214] pointer-events-none">
+            {/* Filmstrip — continuous thumb strip (waveform lives on its own lane below) */}
+            <div className="absolute inset-0 flex bg-[#141416] pointer-events-none">
                 {clipThumbs.length === 0 ? (
-                    <div className="w-full h-full bg-gradient-to-b from-zinc-800/80 to-zinc-900" />
+                    <div className="w-full h-full bg-gradient-to-b from-zinc-800/70 to-zinc-900" />
                 ) : (
                     clipThumbs.map((src, i) => (
                         <img key={i} src={src} alt="" draggable={false} className="h-full object-cover" style={{ width: `${100 / clipThumbs.length}%` }} />
                     ))
                 )}
             </div>
-            {/* Soft bottom scrim + mini waveform */}
-            <div className="absolute inset-x-0 bottom-0 h-7 bg-gradient-to-t from-black/75 to-transparent pointer-events-none" />
-            <div className="absolute left-0 right-0 bottom-0 h-4 flex items-end gap-px px-0.5 pointer-events-none">
-                {(clipPeaks || []).map((v, i) => (
-                    <div key={i} className="flex-1 bg-teal-300/55 rounded-[1px]" style={{ height: `${Math.max(10, v * 100)}%` }} />
-                ))}
-            </div>
-            {/* Layout pill — matches OpusClip “Fill” badges */}
-            <span className="absolute top-1 left-1.5 text-[9px] font-semibold px-1.5 py-0.5 rounded bg-black/65 text-white/90 pointer-events-none tracking-wide">
+            {/* OpusClip layout pills — small dark chips along the strip */}
+            <span className="absolute top-1.5 left-1.5 text-[9px] font-semibold px-2 py-[3px] rounded bg-black/75 text-white/90 pointer-events-none tracking-wide shadow-sm">
                 {LAYOUT_LABEL[clip.layout] || clip.layout}
             </span>
+            {/* Segment separator (flush multi-clip look) */}
+            {!isLast && (
+                <div className="absolute top-0 bottom-0 right-0 w-px bg-black/50 pointer-events-none z-10" />
+            )}
             <div className="absolute top-1 right-1 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
                     type="button"
@@ -246,7 +256,7 @@ const ClipBlock = React.memo(function ClipBlock({
                     <Trash2 size={11} />
                 </button>
             </div>
-            {/* Wide, obvious trim grips */}
+            {/* Wide trim grips */}
             {['in', 'out'].map((edge) => (
                 <div
                     key={edge}
@@ -314,19 +324,19 @@ const AudioBlock = React.memo(function AudioBlock({
             onPointerDown={(e) => onBodyDown('audio', itemId, e)}
             style={{ left, width }}
             title={`${label} — drag edges to cut / trim`}
-            className={`absolute top-0 bottom-0 rounded-md border overflow-hidden cursor-grab active:cursor-grabbing group shadow-sm ${colorClass} ${
+            className={`absolute top-0 bottom-0 rounded-full border overflow-hidden cursor-grab active:cursor-grabbing group ${colorClass} ${
                 selected ? 'ring-1 ring-white/40 border-white/50' : ''
             } ${dragging ? 'opacity-85 z-30' : 'z-10'}`}
         >
-            {/* Full-height waveform (OpusClip audio lane) */}
+            {/* Mini waveform inside audio pill */}
             {peaks && peaks.length > 0 ? (
-                <div className="absolute inset-0 flex items-center gap-px px-0.5 pointer-events-none opacity-80">
+                <div className="absolute inset-0 flex items-center gap-px px-2 pointer-events-none opacity-70">
                     {peaks.map((v, i) => (
-                        <div key={i} className="flex-1 bg-current/80 rounded-[0.5px]" style={{ height: `${Math.max(12, v * 88)}%` }} />
+                        <div key={i} className="flex-1 bg-current/70 rounded-[0.5px]" style={{ height: `${Math.max(10, v * 70)}%` }} />
                     ))}
                 </div>
             ) : (
-                <div className="absolute inset-0 opacity-30 bg-[repeating-linear-gradient(90deg,transparent,transparent_3px,currentColor_3px,currentColor_4px)] pointer-events-none" />
+                <div className="absolute inset-0 opacity-25 bg-[repeating-linear-gradient(90deg,transparent,transparent_3px,currentColor_3px,currentColor_4px)] pointer-events-none" />
             )}
             {fadeInPx > 0 && (
                 <div
@@ -373,11 +383,11 @@ const Playhead = React.memo(function Playhead({ playerRef, pxPerFrame, trackRef 
         return () => p.removeEventListener('frameupdate', onF);
     }, [playerRef]);
 
-    // Keep the playhead in view during playback / seeks.
+    // Keep the playhead in view during playback / seeks (account for left gutter).
     useEffect(() => {
         const el = trackRef.current;
         if (!el) return;
-        const x = RAIL_W + frame * pxPerFrame;
+        const x = LEFT_GUTTER + frame * pxPerFrame;
         if (x < el.scrollLeft + 56) el.scrollLeft = Math.max(0, x - 56);
         else if (x > el.scrollLeft + el.clientWidth - 56) el.scrollLeft = x - el.clientWidth + 56;
     }, [frame, pxPerFrame, trackRef]);
@@ -387,11 +397,9 @@ const Playhead = React.memo(function Playhead({ playerRef, pxPerFrame, trackRef 
             className="absolute top-0 bottom-0 pointer-events-none z-40"
             style={{ left: frame * pxPerFrame }}
         >
-            {/* OpusClip-style white needle + diamond head */}
-            <div className="absolute top-0 bottom-0 left-0 w-px bg-white shadow-[0_0_8px_rgba(255,255,255,0.45)]" />
-            <div className="absolute -top-0.5 left-1/2 -translate-x-1/2 flex flex-col items-center">
-                <div className="w-3 h-3 rounded-sm bg-white rotate-45 shadow-md border border-white/30" />
-            </div>
+            {/* OpusClip-style pure white needle + rounded capsule handle */}
+            <div className="absolute top-0 bottom-0 left-0 w-px bg-white shadow-[0_0_6px_rgba(255,255,255,0.35)]" />
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[7px] h-[11px] rounded-[3px] bg-white shadow-md" />
         </div>
     );
 });
@@ -409,6 +417,7 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
     const [pxPerSec, setPxPerSec] = useState(60);
     const [drag, setDrag] = useState(null);
     const [selectedItem, setSelectedItem] = useState(null); // { lane, id } — highlights a lane block
+    const [collapsed, setCollapsed] = useState(false);
     const [timelineHeight, setTimelineHeight] = useState(() => {
         try {
             const v = Number(localStorage.getItem('editorTimelineHeight'));
@@ -428,8 +437,10 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
     const pxPerFrame = pxPerSec / fps;
 
     // Global strips from the source video, sliced per clip by source fraction.
-    const thumbs = useFilmstrip(sourceUrl, FILM_COUNT);
-    const peaks = useWaveform(sourceUrl, WAVE_BUCKETS);
+    // Resolve relative API paths so fetch/decode works for filmstrip + waveform.
+    const resolvedSource = mediaUrl(sourceUrl);
+    const thumbs = useFilmstrip(resolvedSource, FILM_COUNT);
+    const peaks = useWaveform(resolvedSource, WAVE_BUCKETS);
 
     // Live layout: clips with any in-progress drag applied, placed end-to-end.
     const liveClips = useMemo(() => applyDrag(framing.clips, drag, totalSrc), [framing.clips, drag, totalSrc]);
@@ -482,8 +493,8 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
         const el = trackRef.current;
         if (!el) return 0;
         const rect = el.getBoundingClientRect();
-        // Content column starts after the sticky lane-label rail.
-        const x = clientX - rect.left + el.scrollLeft - RAIL_W;
+        // Content column starts after the left + gutter.
+        const x = clientX - rect.left + el.scrollLeft - LEFT_GUTTER;
         return Math.max(0, Math.min(Math.round(x / pxPerFrame), totalOut - 1));
     }, [pxPerFrame, totalOut]);
 
@@ -653,7 +664,7 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
             if (d.kind === 'pending' && Math.abs(dx) < 4) return;
             const el = trackRef.current;
             const rect = el.getBoundingClientRect();
-            const x = e.clientX - rect.left + el.scrollLeft - RAIL_W;
+            const x = e.clientX - rect.left + el.scrollLeft - LEFT_GUTTER;
             const real = placedClips(framing, fps).filter((p) => p.clip.id !== d.id);
             const toIndex = real.filter((p) => (p.outStart + p.outDuration / 2) * pxPerFrame < x).length;
             const nd = { ...d, kind: 'move', toIndex };
@@ -823,56 +834,86 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
             label: item.role === 'sfx' ? (name || 'SFX') : (name || 'Music'),
             Icon: item.role === 'sfx' ? Volume2 : Music,
             colorClass: item.role === 'sfx'
-                ? 'bg-sky-500/20 border-sky-500/40 text-sky-100'
-                : 'bg-cyan-500/20 border-cyan-500/40 text-cyan-100',
+                ? 'bg-sky-400/15 border-sky-400/30 text-sky-100'
+                : 'bg-zinc-600/35 border-zinc-400/25 text-zinc-100',
         };
     });
     const showAudioEmpty = audioItems.length === 0;
 
-    const laneLabel = (text) => (
-        <div
-            className="sticky left-0 z-30 flex items-center justify-center shrink-0 border-r border-white/[0.06] bg-[#0c0c0e]/95 text-[8px] font-semibold uppercase tracking-wider text-zinc-500"
-            style={{ width: RAIL_W }}
-        >
-            {text}
-        </div>
-    );
-
     return (
-        <div className="border-t border-white/[0.06] bg-[#0a0a0c] select-none">
-            {/* Resize handle */}
+        <div className="border-t border-white/[0.04] bg-black select-none">
+            {/* Subtle resize handle at very top */}
             <div
                 onPointerDown={onResizeDown}
                 onPointerMove={onResizeMove}
                 onPointerUp={onResizeUp}
                 onPointerCancel={onResizeUp}
                 title="Drag to resize timeline"
-                className="h-2 w-full cursor-ns-resize flex items-center justify-center group border-b border-white/[0.04]"
+                className="h-1.5 w-full cursor-ns-resize flex items-center justify-center group"
             >
-                <div className="w-11 h-1 rounded-full bg-white/15 group-hover:bg-white/40 group-hover:w-14 transition-all" />
+                <div className="w-10 h-0.5 rounded-full bg-white/10 group-hover:bg-white/30 group-hover:w-12 transition-all" />
             </div>
 
-            <div className="px-2 pb-2 pt-1.5">
-            {/* OpusClip-style transport bar */}
-            <div className="relative flex items-center gap-1.5 mb-2 min-h-[36px]">
+            {/* Full-width OpusClip transport toolbar */}
+            <div className="relative flex items-center gap-0.5 px-2 min-h-[36px] border-b border-white/[0.04]">
                 <div className="flex items-center gap-0.5 z-10">
-                    <button type="button" onClick={handleSplit} disabled={!canSplit} title="Split at playhead" className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${canSplit ? 'text-zinc-400 hover:text-white hover:bg-white/5' : 'text-zinc-700 cursor-not-allowed'}`}>
+                    <button
+                        type="button"
+                        title={collapsed ? 'Show timeline' : 'Hide timeline'}
+                        onClick={() => setCollapsed((v) => !v)}
+                        className="h-8 px-2 rounded-md flex items-center gap-1.5 text-[11px] text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+                        aria-label={collapsed ? 'Show timeline' : 'Hide timeline'}
+                        aria-pressed={collapsed}
+                    >
+                        <PanelBottomClose size={15} />
+                        <span className="hidden sm:inline">{collapsed ? 'Show timeline' : 'Hide timeline'}</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleSplit}
+                        disabled={!canSplit}
+                        title="Split at playhead"
+                        className={`w-8 h-8 rounded-md flex items-center justify-center transition-colors ${canSplit ? 'text-zinc-400 hover:text-white hover:bg-white/5' : 'text-zinc-700 cursor-not-allowed'}`}
+                    >
                         <Scissors size={15} />
                     </button>
-                    <button type="button" onClick={() => selectedId && handleDelete(selectedId)} disabled={!canDelete} title="Delete selected clip" className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${canDelete ? 'text-zinc-400 hover:text-red-400 hover:bg-white/5' : 'text-zinc-700 cursor-not-allowed'}`}>
+                    <button
+                        type="button"
+                        onClick={() => onSelectTrackItem?.('broll', null)}
+                        title="B-roll & overlays"
+                        className="w-8 h-8 rounded-md flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+                        aria-label="B-roll"
+                    >
+                        <Columns2 size={15} />
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => selectedId && handleDelete(selectedId)}
+                        disabled={!canDelete}
+                        title="Delete selected clip"
+                        className={`w-8 h-8 rounded-md flex items-center justify-center transition-colors ${canDelete ? 'text-zinc-400 hover:text-red-400 hover:bg-white/5' : 'text-zinc-700 cursor-not-allowed'}`}
+                    >
                         <Trash2 size={15} />
+                    </button>
+                    <button
+                        type="button"
+                        title="Calendar"
+                        className="w-8 h-8 rounded-md flex items-center justify-center text-zinc-500 hover:text-white hover:bg-white/5 transition-colors"
+                        aria-label="Calendar"
+                    >
+                        <Calendar size={15} />
                     </button>
                 </div>
 
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="flex items-center gap-1 pointer-events-auto">
-                        <button type="button" onClick={() => seekToOut(0)} className="w-8 h-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/5" aria-label="Back to start">
+                    <div className="flex items-center gap-0.5 pointer-events-auto">
+                        <button type="button" onClick={() => seekToOut(0)} className="w-8 h-8 rounded-md flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/5" aria-label="Back to start">
                             <SkipBack size={15} />
                         </button>
-                        <button type="button" onClick={togglePlay} className="w-9 h-9 rounded-full bg-white text-black flex items-center justify-center hover:bg-zinc-100 active:scale-95 transition-all shadow-lg shadow-black/40" aria-label={playing ? 'Pause' : 'Play'}>
-                            {playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} className="ml-0.5" fill="currentColor" />}
+                        <button type="button" onClick={togglePlay} className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center hover:bg-zinc-100 active:scale-95 transition-all" aria-label={playing ? 'Pause' : 'Play'}>
+                            {playing ? <Pause size={14} fill="currentColor" /> : <Play size={14} className="ml-0.5" fill="currentColor" />}
                         </button>
-                        <button type="button" onClick={() => seekToOut(Math.min(totalOut - 1, outFrame + Math.round(EDITOR_FPS)))} className="w-8 h-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/5" aria-label="Forward 1s">
+                        <button type="button" onClick={() => seekToOut(Math.min(totalOut - 1, outFrame + Math.round(EDITOR_FPS)))} className="w-8 h-8 rounded-md flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/5" aria-label="Forward 1s">
                             <SkipForward size={15} />
                         </button>
                         <span className="text-[12px] text-zinc-300 tabular-nums ml-2 font-medium tracking-tight">
@@ -881,44 +922,56 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                     </div>
                 </div>
 
-                <div className="ml-auto flex items-center gap-1.5 z-10">
-                    <button type="button" onClick={() => setPxPerSec((z) => Math.max(MIN_PPS, Math.round(z / 1.35)))} className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/5" aria-label="Zoom out">
+                <div className="ml-auto flex items-center gap-1 z-10">
+                    <button type="button" onClick={() => setPxPerSec((z) => Math.max(MIN_PPS, Math.round(z / 1.35)))} className="w-7 h-7 rounded-md flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/5" aria-label="Zoom out">
                         <ZoomOut size={14} />
                     </button>
-                    <input type="range" min={MIN_PPS} max={MAX_PPS} value={pxPerSec} onChange={(e) => setPxPerSec(Number(e.target.value))} className="w-28 accent-white h-1" aria-label="Timeline zoom" />
-                    <button type="button" onClick={() => setPxPerSec((z) => Math.min(MAX_PPS, Math.round(z * 1.35)))} className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/5" aria-label="Zoom in">
+                    <input type="range" min={MIN_PPS} max={MAX_PPS} value={pxPerSec} onChange={(e) => setPxPerSec(Number(e.target.value))} className="w-24 accent-white h-1" aria-label="Timeline zoom" />
+                    <button type="button" onClick={() => setPxPerSec((z) => Math.min(MAX_PPS, Math.round(z * 1.35)))} className="w-7 h-7 rounded-md flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/5" aria-label="Zoom in">
                         <ZoomIn size={14} />
                     </button>
                 </div>
             </div>
 
-            {/* Scrollable tracks */}
+            {/* Scrollable tracks — collapsible like OpusClip "Hide timeline" */}
             <div
                 ref={trackRef}
-                style={{ height: timelineHeight }}
-                className="relative overflow-auto custom-scrollbar rounded-xl border border-white/[0.06] bg-[#08080a]"
+                style={{ height: collapsed ? 0 : timelineHeight, opacity: collapsed ? 0 : 1 }}
+                className={`relative overflow-auto custom-scrollbar bg-black transition-[height,opacity] duration-200 ${collapsed ? 'pointer-events-none overflow-hidden' : ''}`}
                 onPointerMove={onPointerMove}
                 onPointerUp={endDrag}
                 onPointerLeave={endDrag}
             >
-                <div className="relative" style={{ width: Math.max(trackWidth + RAIL_W + 48, '100%'), minWidth: '100%' }}>
-                    {/* Ruler */}
-                    <div className="relative h-6 border-b border-white/[0.06] flex cursor-pointer" onPointerDown={rulerDown}>
-                        <div className="sticky left-0 z-30 shrink-0 border-r border-white/[0.06] bg-[#0c0c0e]" style={{ width: RAIL_W }} />
-                        <div className="relative flex-1" style={{ width: trackWidth, minWidth: trackWidth }}>
+                <div className="relative" style={{ width: Math.max(trackWidth + LEFT_GUTTER + RIGHT_PAD, '100%'), minWidth: '100%' }}>
+                    {/* Ruler with subtle dots + second markers */}
+                    <div className="relative h-5 flex cursor-pointer" onPointerDown={rulerDown}>
+                        <Gutter />
+                        <div className="relative shrink-0" style={{ width: trackWidth, minWidth: trackWidth }}>
+                            {/* Dot grid every second for density like Opus */}
+                            {Array.from({ length: Math.ceil(totalOut / fps) + 1 }, (_, s) => (
+                                <span
+                                    key={`d-${s}`}
+                                    className="absolute top-1/2 -translate-y-1/2 w-0.5 h-0.5 rounded-full bg-zinc-700"
+                                    style={{ left: s * pxPerSec }}
+                                />
+                            ))}
                             {ticks.map((s) => (
-                                <span key={s} className="absolute top-0 text-[10px] text-zinc-500 tabular-nums pl-1.5 border-l border-white/[0.08] h-full leading-6" style={{ left: s * pxPerSec }}>
-                                    {s === 0 ? '00:00' : s}
+                                <span
+                                    key={s}
+                                    className="absolute top-0 text-[10px] text-zinc-500 tabular-nums pl-1.5 border-l border-white/[0.08] h-full leading-5"
+                                    style={{ left: s * pxPerSec }}
+                                >
+                                    {s === 0 ? '0' : s}
                                 </span>
                             ))}
                         </div>
                     </div>
 
-                    {/* Text lane */}
+                    {/* Text lane (no sticky label — Opus style) */}
                     {textWindows.length > 0 && (
-                        <div className="relative h-7 mt-0.5 flex">
-                            {laneLabel('Text')}
-                            <div className="relative flex-1" style={{ width: trackWidth, minWidth: trackWidth }}>
+                        <div className="relative h-6 mt-0.5 flex">
+                            <Gutter />
+                            <div className="relative shrink-0" style={{ width: trackWidth, minWidth: trackWidth }}>
                                 {textWindows.map(({ item, w, wi }) => (
                                     <LaneBlock
                                         key={`${item.id}-${wi}`}
@@ -942,9 +995,9 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
 
                     {/* Legacy b-roll */}
                     {brollWindows.length > 0 && (
-                        <div className="relative h-7 mt-0.5 flex">
-                            {laneLabel('B-roll')}
-                            <div className="relative flex-1" style={{ width: trackWidth, minWidth: trackWidth }}>
+                        <div className="relative h-6 mt-0.5 flex">
+                            <Gutter />
+                            <div className="relative shrink-0" style={{ width: trackWidth, minWidth: trackWidth }}>
                                 {brollWindows.map(({ item, w, wi }) => (
                                     <LaneBlock
                                         key={`${item.id}-${wi}`}
@@ -968,9 +1021,9 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
 
                     {/* Overlays (uploaded b-roll / images) */}
                     {overlayWindows.length > 0 && (
-                        <div className="relative h-7 mt-0.5 flex">
-                            {laneLabel('Overlay')}
-                            <div className="relative flex-1" style={{ width: trackWidth, minWidth: trackWidth }}>
+                        <div className="relative h-6 mt-0.5 flex">
+                            <Gutter />
+                            <div className="relative shrink-0" style={{ width: trackWidth, minWidth: trackWidth }}>
                                 {overlayWindows.map(({ item, w, wi }) => (
                                     <LaneBlock
                                         key={`${item.id}-${wi}`}
@@ -992,11 +1045,24 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                         </div>
                     )}
 
-                    {/* Main clip / filmstrip lane */}
-                    <div className="relative h-[72px] mt-1 mb-1 flex">
-                        {laneLabel('Video')}
-                        <div className="relative flex-1" style={{ width: trackWidth, minWidth: trackWidth }}>
-                            {placed.map((p) => (
+                    {/* Main VIDEO filmstrip lane — + on far left & far right */}
+                    <div className="relative h-[64px] mt-1.5 flex items-stretch">
+                        <div
+                            className="sticky left-0 z-30 shrink-0 flex items-center justify-center bg-black"
+                            style={{ width: LEFT_GUTTER }}
+                        >
+                            <button
+                                type="button"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={() => framing.clips.length && duplicateClip(framing.clips[0].id)}
+                                title="Add clip"
+                                className="w-7 h-7 rounded-full border border-white/15 text-zinc-400 hover:text-white hover:border-white/40 hover:bg-white/5 flex items-center justify-center transition-colors"
+                            >
+                                <Plus size={14} />
+                            </button>
+                        </div>
+                        <div className="relative shrink-0" style={{ width: trackWidth, minWidth: trackWidth }}>
+                            {placed.map((p, i) => (
                                 <ClipBlock
                                     key={p.clip.id}
                                     clip={p.clip}
@@ -1005,8 +1071,9 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                                     selected={selectedIds.includes(p.clip.id)}
                                     dragging={draggingId === p.clip.id}
                                     thumbs={thumbs}
-                                    peaks={peaks}
                                     totalSrc={totalSrc}
+                                    isFirst={i === 0}
+                                    isLast={i === placed.length - 1}
                                     onBodyDown={onBodyDown}
                                     onTrimDown={onTrimDown}
                                     onDuplicate={duplicateClip}
@@ -1024,31 +1091,67 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                                     className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rotate-45 bg-amber-400/80 border border-amber-300 hover:bg-amber-300 z-20"
                                 />
                             ))}
-
+                        </div>
+                        <div className="shrink-0 flex items-center justify-center" style={{ width: RIGHT_PAD }}>
                             <button
                                 type="button"
                                 onPointerDown={(e) => e.stopPropagation()}
                                 onClick={() => framing.clips.length && duplicateClip(framing.clips[framing.clips.length - 1].id)}
                                 title="Add a clip"
-                                className="absolute top-1 bottom-1 w-9 flex items-center justify-center rounded-lg border border-dashed border-white/15 text-zinc-500 hover:text-white hover:border-white/40 hover:bg-white/5 z-20"
-                                style={{ left: trackWidth + 8 }}
+                                className="w-7 h-7 rounded-full border border-white/15 text-zinc-400 hover:text-white hover:border-white/40 hover:bg-white/5 flex items-center justify-center transition-colors"
                             >
-                                <Plus size={16} />
+                                <Plus size={14} />
                             </button>
                         </div>
                     </div>
 
-                    {/* Audio blocks */}
+                    {/* Continuous source-audio waveform under the filmstrip (~28px) */}
+                    <div className="relative h-7 mt-0.5 flex">
+                        <Gutter />
+                        <div
+                            className="relative shrink-0 rounded-sm overflow-hidden bg-[#141416]"
+                            style={{ width: trackWidth, minWidth: trackWidth }}
+                        >
+                            {placed.map((p) => {
+                                const s0 = p.clip.sourceStart / totalSrc;
+                                const s1 = p.clip.sourceEnd / totalSrc;
+                                const slice = fracSlice(peaks || [], s0, s1);
+                                const left = p.outStart * pxPerFrame;
+                                const width = Math.max(4, p.outDuration * pxPerFrame);
+                                return (
+                                    <div
+                                        key={`wf-${p.clip.id}`}
+                                        className="absolute top-0 bottom-0 flex items-center gap-px px-px pointer-events-none"
+                                        style={{ left, width }}
+                                    >
+                                        {slice.length === 0 ? (
+                                            <div className="w-full h-[40%] bg-zinc-700/40 rounded-[1px]" />
+                                        ) : (
+                                            slice.map((v, i) => (
+                                                <div
+                                                    key={i}
+                                                    className="flex-1 bg-zinc-500/70 rounded-[0.5px]"
+                                                    style={{ height: `${Math.max(8, v * 90)}%` }}
+                                                />
+                                            ))
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {/* Audio item pills (~24px) */}
                     {audioBlocks.length > 0 && (
-                        <div className="relative h-9 mt-0.5 mb-1 flex">
-                            {laneLabel('Audio')}
-                            <div className="relative flex-1" style={{ width: trackWidth, minWidth: trackWidth }}>
+                        <div className="relative h-6 mt-1 mb-1 flex">
+                            <Gutter />
+                            <div className="relative shrink-0" style={{ width: trackWidth, minWidth: trackWidth }}>
                                 {audioBlocks.map((b) => (
                                     <AudioBlock
                                         key={b.item.id}
                                         itemId={b.item.id}
                                         url={b.item.url}
-                                        label={b.label}
+                                        label={`Audio: ${b.label}`}
                                         Icon={b.Icon}
                                         colorClass={b.colorClass}
                                         left={b.left}
@@ -1066,39 +1169,34 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                     )}
 
                     {showAudioEmpty && (
-                        <div className="relative h-8 mt-0.5 mb-1 flex">
-                            {laneLabel('Audio')}
-                            <div className="relative flex-1" style={{ width: trackWidth, minWidth: trackWidth }}>
+                        <div className="relative h-6 mt-1 mb-1 flex">
+                            <Gutter />
+                            <div className="relative shrink-0" style={{ width: trackWidth, minWidth: trackWidth }}>
                                 <button
                                     type="button"
                                     onPointerDown={(e) => e.stopPropagation()}
                                     onClick={() => onSelectTrackItem?.('audio', null)}
-                                    style={{ width: Math.max(10, trackWidth) }}
+                                    style={{ width: Math.min(160, Math.max(72, trackWidth * 0.25)) }}
                                     title="Add audio"
-                                    className="absolute top-0 bottom-0 left-0 flex items-center justify-center rounded-md border border-dashed border-white/12 text-[11px] text-zinc-500 hover:text-white hover:border-white/30 hover:bg-white/[0.03]"
+                                    className="absolute top-0 bottom-0 left-0 flex items-center justify-center rounded-md border border-white/10 bg-zinc-800/40 text-[10px] text-zinc-400 hover:text-white hover:border-white/25 hover:bg-white/[0.04] px-2"
                                 >
-                                    <Music size={12} className="mr-1.5" /> Add audio
+                                    <Music size={11} className="mr-1 shrink-0" /> Add audio
                                 </button>
                             </div>
                         </div>
                     )}
 
                     {drag?.snapX != null && (
-                        <div className="absolute top-0 bottom-0 w-px bg-white z-50 pointer-events-none" style={{ left: RAIL_W + drag.snapX }} />
+                        <div className="absolute top-0 bottom-0 w-px bg-white z-50 pointer-events-none" style={{ left: LEFT_GUTTER + drag.snapX }} />
                     )}
 
-                    {/* Playhead lives over the content column (after rail) */}
-                    <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: RAIL_W, right: 0 }}>
+                    {/* Playhead over content column (after left gutter) */}
+                    <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: LEFT_GUTTER, right: 0 }}>
                         <div className="relative h-full" style={{ width: trackWidth }}>
                             <Playhead playerRef={playerRef} pxPerFrame={pxPerFrame} trackRef={trackRef} />
                         </div>
                     </div>
                 </div>
-            </div>
-
-            <div className="mt-1.5 px-1 text-[10px] text-zinc-600">
-                Drag clip edges to trim · drag blocks to move · white grips appear on hover · ✂ splits at the playhead
-            </div>
             </div>
         </div>
     );

@@ -1,7 +1,10 @@
 import React from 'react';
-import { ArrowLeft, Save, Upload, Loader2, Undo2, Redo2 } from 'lucide-react';
+import { ArrowLeft, Save, Loader2, Undo2, Redo2, Zap } from 'lucide-react';
 
-/** OpusClip-style top bar: quiet chrome, strong Export, clear title. */
+/**
+ * OpusClip pixel-target top bar:
+ * [← Title] ........ [Undo Redo] [Save changes] [Export] [⚡ 60] [Avatar]
+ */
 export default function EditorTopBar({
     title,
     dirty,
@@ -17,66 +20,96 @@ export default function EditorTopBar({
     onExport,
 }) {
     return (
-        <div className="h-12 shrink-0 border-b border-white/[0.06] bg-[#0c0c0e] flex items-center gap-2 px-3">
+        <header className="h-[48px] shrink-0 bg-[#0b0b0d] border-b border-white/[0.05] flex items-center px-3 gap-2">
             <button
                 type="button"
                 onClick={onBack}
-                className="w-8 h-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+                className="w-8 h-8 rounded-md flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-colors"
                 aria-label="Back to clips"
             >
-                <ArrowLeft size={17} />
+                <ArrowLeft size={18} strokeWidth={1.75} />
             </button>
-            <h1 className="text-[13px] font-medium text-zinc-100 truncate min-w-0 mr-1 tracking-tight">
+
+            <h1 className="text-[13px] font-medium text-zinc-200 truncate max-w-[min(42vw,420px)] tracking-[-0.01em]">
                 {title}
                 {dirty && (
-                    <span className="ml-2 inline-block w-1.5 h-1.5 rounded-full bg-viral align-middle" title="Unsaved changes" />
+                    <span
+                        className="ml-2 inline-block w-1.5 h-1.5 rounded-full bg-[#3dd68c] align-middle"
+                        title="Unsaved changes"
+                    />
                 )}
             </h1>
 
-            <div className="flex items-center gap-px mr-1 rounded-lg border border-white/[0.06] overflow-hidden">
+            <div className="ml-auto flex items-center gap-1.5">
                 <button
                     type="button"
                     onClick={onUndo}
                     disabled={!canUndo}
                     title="Undo (⌘Z)"
-                    className="w-8 h-8 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    className="w-8 h-8 rounded-md flex items-center justify-center text-zinc-500 hover:text-white hover:bg-white/[0.06] disabled:opacity-25 disabled:cursor-not-allowed"
                     aria-label="Undo"
                 >
-                    <Undo2 size={15} />
+                    <Undo2 size={16} strokeWidth={1.75} />
                 </button>
-                <span className="w-px h-4 bg-white/10" />
                 <button
                     type="button"
                     onClick={onRedo}
                     disabled={!canRedo}
                     title="Redo (⇧⌘Z)"
-                    className="w-8 h-8 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    className="w-8 h-8 rounded-md flex items-center justify-center text-zinc-500 hover:text-white hover:bg-white/[0.06] disabled:opacity-25 disabled:cursor-not-allowed"
                     aria-label="Redo"
                 >
-                    <Redo2 size={15} />
+                    <Redo2 size={16} strokeWidth={1.75} />
                 </button>
-            </div>
 
-            <div className="ml-auto flex items-center gap-2">
                 <button
                     type="button"
                     onClick={onSave}
                     disabled={!dirty || saving || !onSave}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/[0.04] text-zinc-200 border border-white/[0.08] hover:bg-white/[0.08] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    className="ml-1 h-8 px-3.5 rounded-lg text-[12px] font-medium text-zinc-200 bg-white/[0.06] border border-white/[0.08] hover:bg-white/[0.1] disabled:opacity-35 disabled:cursor-not-allowed transition-colors"
                 >
-                    {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-                    Save changes
+                    {saving ? (
+                        <span className="inline-flex items-center gap-1.5">
+                            <Loader2 size={13} className="animate-spin" /> Saving…
+                        </span>
+                    ) : (
+                        <span className="inline-flex items-center gap-1.5">
+                            <Save size={13} className="opacity-70" /> Save changes
+                        </span>
+                    )}
                 </button>
+
                 <button
                     type="button"
                     onClick={onExport}
                     disabled={exporting || !onExport}
-                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold bg-white text-black hover:bg-zinc-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
+                    className="h-8 px-4 rounded-lg text-[12px] font-semibold bg-white text-black hover:bg-zinc-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
-                    {exporting ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-                    {exporting ? `Exporting ${exportProgress ?? 0}%` : 'Export'}
+                    {exporting ? (
+                        <span className="inline-flex items-center gap-1.5">
+                            <Loader2 size={13} className="animate-spin" /> {exportProgress ?? 0}%
+                        </span>
+                    ) : (
+                        'Export'
+                    )}
                 </button>
+
+                <div
+                    className="hidden sm:flex h-8 items-center gap-1 px-2 rounded-lg text-[11px] font-medium text-amber-200/90 bg-amber-500/10 border border-amber-500/20"
+                    title="Credits"
+                >
+                    <Zap size={12} className="text-amber-300" fill="currentColor" />
+                    60
+                </div>
+
+                <div
+                    className="w-8 h-8 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 text-white text-[12px] font-semibold flex items-center justify-center shadow-inner"
+                    title="Account"
+                    aria-hidden
+                >
+                    T
+                </div>
             </div>
-        </div>
+        </header>
     );
 }
