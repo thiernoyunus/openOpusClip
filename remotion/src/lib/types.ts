@@ -359,6 +359,55 @@ export interface BrollItem {
   endFrame: number;
 }
 
+// --- Generic overlay + audio tracks (supersede BrollItem / MusicConfig) ---
+export type OverlayKind = "video" | "image";
+export type OverlayAnchor = "source" | "output";
+
+/**
+ * Generic overlay track item — supersedes `BrollItem` (video-only, max 3,
+ * full-cover). Supports images too, and free positioning via normalized
+ * x/y/w/h (x,y = center of the box). `anchor: "source"` (default) behaves
+ * like b-roll: startFrame/endFrame are SOURCE frames, EDL-mapped through
+ * `sourceRangeToOutputWindows` so the overlay follows its content across
+ * trims/cuts/reorder. `anchor: "output"` places it directly on the output
+ * timeline instead (a plain Sequence), for overlays tied to a fixed on-screen
+ * moment rather than source content.
+ */
+export interface OverlayItem {
+  id: string;
+  kind: OverlayKind;
+  url: string;
+  startFrame: number; // SOURCE frames (or OUTPUT frames when anchor === "output")
+  endFrame: number;
+  anchor?: OverlayAnchor; // default "source"
+  x?: number; // normalized 0-1, center of the box. default 0.5
+  y?: number; // default 0.5
+  w?: number; // normalized 0-1, fraction of canvas width. default 1
+  h?: number; // default 1
+  volume?: number; // 0-1, default 0 (muted, like legacy b-roll)
+  z?: number; // stacking order among overlays, default 0
+}
+
+export type AudioRole = "sfx" | "music";
+
+/**
+ * Generic audio track item — SFX + music. Always OUTPUT-anchored (unlike
+ * overlays) so a sound effect timed to a moment doesn't drift when clips are
+ * reordered/trimmed upstream of it.
+ */
+export interface AudioItem {
+  id: string;
+  role: AudioRole;
+  url: string;
+  startFrame: number; // OUTPUT frames
+  endFrame: number; // OUTPUT frames
+  trimBefore?: number; // frames into the media file, default 0
+  volume?: number; // 0-1, default 1
+  loop?: boolean; // default false
+  fadeInSec?: number; // default 0
+  fadeOutSec?: number; // default 0
+}
+
 export interface FramingConfig {
   version: number;
   source: FramingSource;
@@ -394,6 +443,16 @@ export interface FramingConfig {
   music?: MusicConfig | null;
   transitions?: TransitionsConfig;
   broll?: BrollItem[];
+  /** Generic overlay track (video/image); supersedes broll. */
+  overlays?: OverlayItem[];
+  /** Generic audio track (SFX + music); supersedes music. */
+  audio?: AudioItem[];
+  /**
+   * Volume of the source video's own audio (0-1, default 1). Replaces the
+   * legacy music.originalVolume "ducking" knob, which the music -> audio[]
+   * migration would otherwise silently drop.
+   */
+  sourceVolume?: number;
 }
 
 // --- Main composition props ---
@@ -652,6 +711,34 @@ export const brollItemSchema = z.object({
   endFrame: z.number().int().positive(),
 });
 
+export const overlayItemSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["video", "image"]),
+  url: z.string(),
+  startFrame: z.number().int().min(0),
+  endFrame: z.number().int().positive(),
+  anchor: z.enum(["source", "output"]).optional(),
+  x: z.number().min(0).max(1).optional(),
+  y: z.number().min(0).max(1).optional(),
+  w: z.number().min(0).max(1).optional(),
+  h: z.number().min(0).max(1).optional(),
+  volume: z.number().min(0).max(1).optional(),
+  z: z.number().optional(),
+});
+
+export const audioItemSchema = z.object({
+  id: z.string(),
+  role: z.enum(["sfx", "music"]),
+  url: z.string(),
+  startFrame: z.number().int().min(0),
+  endFrame: z.number().int().positive(),
+  trimBefore: z.number().int().min(0).optional(),
+  volume: z.number().min(0).max(1).optional(),
+  loop: z.boolean().optional(),
+  fadeInSec: z.number().min(0).optional(),
+  fadeOutSec: z.number().min(0).optional(),
+});
+
 export const framingConfigSchema = z.object({
   version: z.number().int(),
   source: z.object({
@@ -678,6 +765,9 @@ export const framingConfigSchema = z.object({
   music: musicConfigSchema.nullable().optional(),
   transitions: transitionsConfigSchema.optional(),
   broll: z.array(brollItemSchema).optional(),
+  overlays: z.array(overlayItemSchema).optional(),
+  audio: z.array(audioItemSchema).optional(),
+  sourceVolume: z.number().min(0).max(1).optional(),
 });
 
 export const shortVideoPropsSchema = z.object({

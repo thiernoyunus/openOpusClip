@@ -337,6 +337,40 @@ export const editorReducer = (state, action) => {
                     b.id === action.id ? { ...b, ...action.patch } : b
                 ),
             });
+        case 'ADD_OVERLAY':
+            return withHistory({
+                ...state.framing,
+                overlays: [...(state.framing.overlays || []), action.item],
+            });
+        case 'REMOVE_OVERLAY':
+            return withHistory({
+                ...state.framing,
+                overlays: (state.framing.overlays || []).filter((o) => o.id !== action.id),
+            });
+        case 'UPDATE_OVERLAY':
+            return withHistory({
+                ...state.framing,
+                overlays: (state.framing.overlays || []).map((o) =>
+                    o.id === action.id ? { ...o, ...action.patch } : o
+                ),
+            });
+        case 'ADD_AUDIO':
+            return withHistory({
+                ...state.framing,
+                audio: [...(state.framing.audio || []), action.item],
+            });
+        case 'REMOVE_AUDIO':
+            return withHistory({
+                ...state.framing,
+                audio: (state.framing.audio || []).filter((a) => a.id !== action.id),
+            });
+        case 'UPDATE_AUDIO':
+            return withHistory({
+                ...state.framing,
+                audio: (state.framing.audio || []).map((a) =>
+                    a.id === action.id ? { ...a, ...action.patch } : a
+                ),
+            });
         case 'TRACK_PERSON': {
             // Tracker click: in multi-panel layouts, reassign the clicked
             // panel; otherwise (fill/fit/manual) become a fill that follows
@@ -514,6 +548,11 @@ export function normalizeFraming(framing) {
     const { segments, cuts, clipInFrame, clipOutFrame, ...rest } = framing;
     void segments; void cuts; void clipInFrame; void clipOutFrame;
 
+    // NOTE: legacy broll[]/music are deliberately NOT migrated into
+    // overlays[]/audio[] here yet — the panels (AudioPanel/BrollPanel) still
+    // read and write the legacy fields, so moving the data before the panels
+    // are rewired would leave tracks audible/visible but uneditable. The
+    // one-time MOVE migration ships together with the panel rework (B4).
     return {
         ...rest,
         version: 3,
@@ -529,8 +568,14 @@ export function normalizeFraming(framing) {
         captionsInitialized: framing.captionsInitialized ?? false,
         textOverlays: framing.textOverlays ?? [],
         music: framing.music ?? null,
-        transitions: framing.transitions ?? { fadeIn: false, fadeOut: false, cutCrossfade: false },
         broll: framing.broll ?? [],
+        transitions: framing.transitions ?? { fadeIn: false, fadeOut: false, cutCrossfade: false },
+        overlays: framing.overlays ?? [],
+        audio: framing.audio ?? [],
+        // Not defaulted here on purpose: ReframedVideo falls back to legacy
+        // music.originalVolume when sourceVolume is unset, and the AudioPanel
+        // still writes the legacy field. B4 flips the panel to sourceVolume.
+        ...(framing.sourceVolume !== undefined ? { sourceVolume: framing.sourceVolume } : {}),
     };
 }
 

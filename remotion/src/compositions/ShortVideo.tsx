@@ -7,6 +7,8 @@ import { HookOverlay } from "./HookOverlay";
 import { VideoEffects } from "./VideoEffects";
 import { ReframedVideo } from "./ReframedVideo";
 import { BrollLayer } from "./BrollLayer";
+import { OverlaysLayer } from "./OverlaysLayer";
+import { AudioLayer } from "./AudioLayer";
 import { TextOverlays } from "./TextOverlays";
 import { TransitionOverlay } from "./TransitionOverlay";
 import { TransitionZoom } from "./TransitionZoom";
@@ -55,8 +57,14 @@ export const ShortVideo: React.FC<Record<string, unknown>> = (rawProps) => {
             )}
           </VideoEffects>
 
-          {/* Layer 2: B-roll inserts (cover the base during a span) */}
+          {/* Layer 2: B-roll inserts (cover the base during a span). Renders
+              legacy `broll[]` only — normalizeFraming migrates it into
+              `overlays[]` on load, so in practice this is empty once a
+              framing has passed through the editor. */}
           <BrollLayer framing={framing} />
+
+          {/* Layer 2b: generic overlay track (video/image), supersedes b-roll */}
+          <OverlaysLayer framing={framing} />
         </TransitionZoom>
       ) : (
         // No framing: plain base video, no zoom transition / b-roll.
@@ -80,10 +88,15 @@ export const ShortVideo: React.FC<Record<string, unknown>> = (rawProps) => {
       {/* Layer 6: Hook text overlay */}
       {hook && <HookOverlay config={hook} />}
 
-      {/* Layer 7: Background music */}
+      {/* Layer 7: Background music (legacy single-track field). normalizeFraming
+          migrates this into `audio[]` on load, so in practice this is null
+          once a framing has passed through the editor. */}
       {framing?.music && (
         <Audio src={framing.music.url} volume={framing.music.volume} loop />
       )}
+
+      {/* Layer 7b: generic audio track (SFX + music), supersedes `music` */}
+      {framing && <AudioLayer framing={framing} />}
     </AbsoluteFill>
   );
 };
