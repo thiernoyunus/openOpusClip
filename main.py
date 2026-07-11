@@ -1346,8 +1346,10 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
     if window_active:
         # Only the baked window's audio; re-encode so the cut is sample-accurate
         # (stream copy can only cut on packet boundaries).
-        in_seconds = bake_in_frame / fps
-        out_seconds = bake_end_frame / fps
+        # float(): fps can be a Fraction (NTSC 30000/1001); str() on a Fraction
+        # yields "3003/1000", which ffmpeg -ss/-to reject -> silent clip.
+        in_seconds = bake_in_frame / float(fps)
+        out_seconds = bake_end_frame / float(fps)
         audio_extract_command = [
             'ffmpeg', '-y', '-ss', str(in_seconds), '-to', str(out_seconds),
             '-i', input_video, '-vn', '-c:a', 'aac', temp_audio_output
