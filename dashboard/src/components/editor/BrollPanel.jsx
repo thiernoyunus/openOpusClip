@@ -4,6 +4,13 @@ import { getApiUrl } from '../../config';
 
 const MAX_OVERLAY = 10;
 
+// Extensions the /asset endpoint would classify as audio (mirrors app.py's
+// _ASSET_KIND_BY_EXT). Checked client-side BEFORE upload so a correctly-typed
+// audio file dropped on the wrong panel never reaches the server — the
+// post-upload kind check below is defense-in-depth for anything this misses
+// (e.g. an extensionless drag-and-drop), not the primary guard.
+const AUDIO_EXTENSIONS = ['.mp3', '.m4a', '.wav', '.aac', '.ogg'];
+
 // Position/size presets (normalized 0-1 canvas coords) offered per overlay.
 const POSITION_PRESETS = [
     { id: 'full', label: 'Full', x: 0.5, y: 0.5, w: 1, h: 1 },
@@ -103,6 +110,16 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
             if (e?.target) e.target.value = '';
             return;
         }
+        // Reject an audio file before it's ever uploaded — the picker's
+        // accept="video/*,image/*" isn't enforced by every browser (or a
+        // scripted client), and letting it reach the server would store the
+        // file on disk with no way to clean it back up once rejected.
+        const ext = (file.name.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+        if (AUDIO_EXTENSIONS.includes(ext)) {
+            setUploadError('That looks like an audio file — upload it from the Audio panel instead.');
+            if (e?.target) e.target.value = '';
+            return;
+        }
         setUploading(true);
         setUploadError(null);
         try {
@@ -113,6 +130,18 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
                 throw new Error(await readErrorMessage(res, `Upload failed (${res.status})`));
             }
             const { url, kind } = await res.json();
+            // Defense-in-depth: the extension check above catches the common
+            // case before upload; this catches anything that check missed
+            // (e.g. an extensionless file the server still classified as
+            // audio) so overlays[] can never end up with an invalid kind.
+            // ponytail: this rare case still orphans the uploaded file on disk
+            // (no delete-asset endpoint exists) — add one if it shows up in practice.
+            if (kind !== 'video' && kind !== 'image') {
+                setUploadError(kind === 'audio'
+                    ? 'That file is audio — upload it from the Audio panel instead.'
+                    : `Unsupported file type: ${kind || 'unknown'}.`);
+                return;
+            }
             // Read playhead AFTER the network work so the block lands where you are now.
             const start = getCurrentSourceFrame();
             let endFrame;
