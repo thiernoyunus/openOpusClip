@@ -30,6 +30,23 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const clamp = (v: number, lo: number, hi: number) =>
   Math.max(lo, Math.min(hi, v));
 
+/**
+ * First index i where items[i].frame >= target (or items.length if none).
+ * items must be sorted ascending by .frame — both cameraKeyframes and face
+ * track samples are recorded in frame order. Runs every playback frame, so
+ * this replaces the old full-array scans with a binary search.
+ */
+const lowerBoundByFrame = (items: { frame: number }[], target: number): number => {
+  let lo = 0;
+  let hi = items.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (items[mid].frame < target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+};
+
 /** Linear interpolation between sampled keyframes, clamped at both ends. */
 export const interpolateCrop = (
   keyframes: CameraKeyframe[],
@@ -39,21 +56,17 @@ export const interpolateCrop = (
   if (frame <= keyframes[0].frame) return keyframes[0];
   const last = keyframes[keyframes.length - 1];
   if (frame >= last.frame) return last;
-  // keyframes are sorted by frame; find the surrounding pair
-  for (let i = 1; i < keyframes.length; i++) {
-    if (keyframes[i].frame >= frame) {
-      const a = keyframes[i - 1];
-      const b = keyframes[i];
-      const t = b.frame === a.frame ? 0 : (frame - a.frame) / (b.frame - a.frame);
-      return {
-        x: lerp(a.x, b.x, t),
-        y: lerp(a.y, b.y, t),
-        w: lerp(a.w, b.w, t),
-        h: lerp(a.h, b.h, t),
-      };
-    }
-  }
-  return last;
+  // keyframes are sorted by frame; binary-search the surrounding pair
+  const i = lowerBoundByFrame(keyframes, frame);
+  const a = keyframes[i - 1];
+  const b = keyframes[i];
+  const t = b.frame === a.frame ? 0 : (frame - a.frame) / (b.frame - a.frame);
+  return {
+    x: lerp(a.x, b.x, t),
+    y: lerp(a.y, b.y, t),
+    w: lerp(a.w, b.w, t),
+    h: lerp(a.h, b.h, t),
+  };
 };
 
 /**
@@ -65,27 +78,26 @@ export const smoothedFaceRect = (
   track: FaceTrack | undefined,
   frame: number
 ): CropRect | null => {
-  if (!track || track.samples.length === 0) return null;
-  const windowed = track.samples.filter(
-    (s) => Math.abs(s.frame - frame) <= 12
-  );
-  if (windowed.length > 0) {
-    const n = windowed.length;
-    return {
-      x: windowed.reduce((acc, s) => acc + s.x, 0) / n,
-      y: windowed.reduce((acc, s) => acc + s.y, 0) / n,
-      w: windowed.reduce((acc, s) => acc + s.w, 0) / n,
-      h: windowed.reduce((acc, s) => acc + s.h, 0) / n,
-    };
+  const samples = track?.samples;
+  if (!samples || samples.length === 0) return null;
+  // samples are sorted by frame; binary-search the ±12 window instead of
+  // filtering the whole track every playback frame.
+  let sx = 0, sy = 0, sw = 0, sh = 0, n = 0;
+  for (let i = lowerBoundByFrame(samples, frame - 12); i < samples.length; i++) {
+    if (samples[i].frame > frame + 12) break;
+    sx += samples[i].x; sy += samples[i].y; sw += samples[i].w; sh += samples[i].h;
+    n++;
   }
-  let nearest = track.samples[0];
+  if (n > 0) {
+    return { x: sx / n, y: sy / n, w: sw / n, h: sh / n };
+  }
+  // No sample in window: nearest sample is one of the two straddling `frame`.
+  const j = lowerBoundByFrame(samples, frame);
+  let nearest = samples[Math.min(j, samples.length - 1)];
   let nearestDist = Math.abs(nearest.frame - frame);
-  for (const s of track.samples) {
-    const d = Math.abs(s.frame - frame);
-    if (d < nearestDist) {
-      nearest = s;
-      nearestDist = d;
-    }
+  if (j > 0 && Math.abs(samples[j - 1].frame - frame) < nearestDist) {
+    nearest = samples[j - 1];
+    nearestDist = Math.abs(nearest.frame - frame);
   }
   return nearestDist <= 45 ? nearest : null;
 };
@@ -360,6 +372,13 @@ const RangeContent: React.FC<{
   const { fps, width, height } = useVideoConfig();
   const { source, faceTracks } = framing;
 
+  // Look up tracked faces by id via a Map instead of faceTracks.find() on
+  // every playback frame (and once per panel).
+  const faceTrackById = React.useMemo(
+    () => new Map((faceTracks ?? []).map((t) => [t.id, t])),
+    [faceTracks]
+  );
+
   const sourceFrame = Math.min(
     range.startFrame + Math.round(frame * (source.fps / fps)),
     range.endFrame - 1
@@ -402,8 +421,7 @@ const RangeContent: React.FC<{
       crop = { x: 0, y: 0, w: 1, h: 1 }; // full frame — nothing to crop
     } else {
       const trackId = segment.trackedFaceIds?.[0];
-      const track =
-        trackId != null ? faceTracks.find((t) => t.id === trackId) : undefined;
+      const track = trackId != null ? faceTrackById.get(trackId) : undefined;
       const face = track ? smoothedFaceRect(track, sourceFrame) : null;
       crop = face
         ? cropForFace(face, outAspect, source.width, source.height)
@@ -472,7 +490,7 @@ const RangeContent: React.FC<{
           );
         }
         const trackId = segment.trackedFaceIds[i];
-        const track = faceTracks.find((t) => t.id === trackId);
+        const track = faceTrackById.get(trackId);
         const face = smoothedFaceRect(track, sourceFrame);
         const panelAspect = panel.width / panel.height;
         const crop = face
@@ -501,7 +519,8 @@ export const ReframedVideo: React.FC<{
   framing: FramingConfig;
 }> = ({ src, framing }) => {
   const { fps } = useVideoConfig();
-  const ranges = placedRanges(framing, fps);
+  // placedRanges walks all clips; memoize so it doesn't re-run every frame.
+  const ranges = React.useMemo(() => placedRanges(framing, fps), [framing, fps]);
   // sourceVolume is the v3 field; legacy configs that never passed through the
   // editor still carry it on music.originalVolume.
   const originalVolume = framing.sourceVolume ?? (framing.music ? framing.music.originalVolume : 1);
