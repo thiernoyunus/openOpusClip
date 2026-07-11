@@ -40,10 +40,15 @@ function drainRenderQueue(): void {
   while (activeRenders < MAX_RENDER_JOBS && renderQueue.length > 0) {
     const task = renderQueue.shift()!;
     activeRenders++;
-    task().finally(() => {
-      activeRenders--;
-      drainRenderQueue();
-    });
+    // Promise.resolve().then() converts a synchronous throw into a rejection,
+    // so the slot is always released.
+    Promise.resolve()
+      .then(task)
+      .catch((err) => console.error("[render] queue task error:", err))
+      .finally(() => {
+        activeRenders--;
+        drainRenderQueue();
+      });
   }
 }
 
