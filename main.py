@@ -776,13 +776,24 @@ def analyze_scenes_strategy(video_path, scenes):
     cap.release()
     return strategies
 
-def detect_scenes(video_path):
+def detect_scenes(video_path, start_frame=0, end_frame=None):
+    """Detect scenes, optionally over a frame window [start_frame, end_frame).
+
+    Returned scene boundaries are ALWAYS in absolute frame numbers of the
+    input file (seeking before detection preserves the stream's timecodes).
+    """
     video = open_video(video_path)
+    fps = video.frame_rate
     scene_manager = SceneManager()
     scene_manager.add_detector(ContentDetector())
-    scene_manager.detect_scenes(video=video)
+    if start_frame:
+        video.seek(int(start_frame))
+    end_time = None
+    if end_frame is not None:
+        from scenedetect import FrameTimecode
+        end_time = FrameTimecode(int(end_frame), fps)
+    scene_manager.detect_scenes(video=video, end_time=end_time)
     scene_list = scene_manager.get_scene_list()
-    fps = video.frame_rate
     return scene_list, fps
 
 def get_video_resolution(video_path):
@@ -1056,7 +1067,8 @@ Technical Details: {str(e)}
     return downloaded_file, sanitized_title
 
 def process_video_to_vertical(input_video, final_output_video, framing_output_path=None,
-                              framing_source_override=None, aspect_ratio="9:16"):
+                              framing_source_override=None, aspect_ratio="9:16",
+                              bake_in_frame=0, bake_out_frame=None):
     """
     Core logic to convert horizontal video to vertical using scene detection and Active Speaker Tracking (MediaPipe).
 
@@ -1064,6 +1076,14 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
     every framing decision (face tracks, per-segment layout, crop keyframes) in
     normalized coordinates, so the web editor can re-frame non-destructively.
     The baked output is identical either way.
+
+    bake_in_frame / bake_out_frame (optional) restrict the bake to a frame
+    window of the input file (None = whole file). This lets the clip pipeline
+    feed the PADDED editor source directly and bake only the clip's window —
+    no second re-encoded cut needed. Scene detection, frame numbering and all
+    recorded framing coordinates stay in ABSOLUTE input-file frames, so when
+    the input is the padded source they are already padded-source coordinates
+    (the framing writer applies no extra offset in that case).
     """
     script_start_time = time.time()
     
@@ -1077,18 +1097,22 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
     if os.path.exists(temp_audio_output): os.remove(temp_audio_output)
     if os.path.exists(final_output_video): os.remove(final_output_video)
 
+    window_active = bool(bake_in_frame) or bake_out_frame is not None
+
     print(f"🎬 Processing clip: {input_video}")
     print("   Step 1: Detecting scenes...")
-    scenes, fps = detect_scenes(input_video)
-    
+    scenes, fps = detect_scenes(input_video, start_frame=bake_in_frame, end_frame=bake_out_frame)
+
     if not scenes:
         print("   ❌ No scenes were detected. Using full video as one scene.")
-        # If scene detection fails or finds nothing, treat whole video as one scene
+        # If scene detection fails or finds nothing, treat the whole bake
+        # window (or whole video when no window) as one scene.
         cap = cv2.VideoCapture(input_video)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        file_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         cap.release()
+        fallback_end = bake_out_frame if bake_out_frame is not None else file_frames
         from scenedetect import FrameTimecode
-        scenes = [(FrameTimecode(0, fps), FrameTimecode(total_frames, fps))]
+        scenes = [(FrameTimecode(int(bake_in_frame), fps), FrameTimecode(int(fallback_end), fps))]
 
     print(f"   ✅ Found {len(scenes)} scenes.")
 
@@ -1127,15 +1151,31 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
 
     cap = cv2.VideoCapture(input_video)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    frame_number = 0
+
+    # Bake window in absolute input-file frames (defaults to the whole file).
+    bake_end_frame = bake_out_frame if bake_out_frame is not None else total_frames
+    window_frames = max(0, bake_end_frame - bake_in_frame)
+
+    # Skip decode up to the window start. cap.grab() frame-by-frame is the
+    # reliable way — CAP_PROP_POS_FRAMES seeking is not frame-accurate.
+    for _ in range(bake_in_frame):
+        if not cap.grab():
+            break
+
+    frame_number = bake_in_frame
     current_scene_index = 0
     pipe_broke = False  # set if FFmpeg dies mid-stream (write hits a closed pipe)
 
-    # Pre-calculate scene boundaries
+    # Pre-calculate scene boundaries (absolute frames; clamp to the window so
+    # framing coordinates never spill past the baked range)
     scene_boundaries = []
     for s_start, s_end in scenes:
         scene_boundaries.append((s_start.get_frames(), s_end.get_frames()))
+    if window_active:
+        scene_boundaries = [
+            (max(bake_in_frame, s), min(bake_end_frame, e))
+            for s, e in scene_boundaries
+        ]
 
     # Global tracker for single-person shots
     speaker_tracker = SpeakerTracker(cooldown_frames=30)
@@ -1150,9 +1190,11 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
     split_cameraman = SplitCameraman(original_width, original_height, OUTPUT_WIDTH / (OUTPUT_HEIGHT / 2))
 
     # Bar off outside the main thread (see analyze_scenes_strategy note).
-    with tqdm(total=total_frames, desc="   Processing", file=sys.stdout,
+    with tqdm(total=window_frames, desc="   Processing", file=sys.stdout,
               disable=threading.current_thread() is not threading.main_thread()) as pbar:
         while cap.isOpened():
+            if bake_out_frame is not None and frame_number >= bake_out_frame:
+                break
             ret, frame = cap.read()
             if not ret:
                 break
@@ -1286,9 +1328,19 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
         )
 
     print("\n   🔊 Step 5: Extracting audio...")
-    audio_extract_command = [
-        'ffmpeg', '-y', '-i', input_video, '-vn', '-acodec', 'copy', temp_audio_output
-    ]
+    if window_active:
+        # Only the baked window's audio; re-encode so the cut is sample-accurate
+        # (stream copy can only cut on packet boundaries).
+        in_seconds = bake_in_frame / fps
+        out_seconds = bake_end_frame / fps
+        audio_extract_command = [
+            'ffmpeg', '-y', '-ss', str(in_seconds), '-to', str(out_seconds),
+            '-i', input_video, '-vn', '-c:a', 'aac', temp_audio_output
+        ]
+    else:
+        audio_extract_command = [
+            'ffmpeg', '-y', '-i', input_video, '-vn', '-acodec', 'copy', temp_audio_output
+        ]
     try:
         run_logged_command(audio_extract_command, "Extracting audio", temp_audio_output, check=True)
     except subprocess.CalledProcessError:
@@ -1320,12 +1372,24 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
     if os.path.exists(temp_audio_output): os.remove(temp_audio_output)
 
     # Write framing metadata for the web editor (schema v2:
-    # docs/video-editor-plan-2.md §1). The analysis above ran on the UNPADDED
-    # clip; when the kept _source.mp4 is a padded cut (framing_source_override),
-    # shift every recorded frame number by the padding offset so coordinates
-    # are in padded-source frames, and record the clip bounds for trim/extend.
+    # docs/video-editor-plan-2.md §1).
+    # - Windowed bake (bake_in/out set): the input IS the padded source and
+    #   frame_number ran in absolute input-file frames, so every recorded
+    #   coordinate is already in padded-source frames — apply NO extra offset;
+    #   the clip bounds are the bake window itself.
+    # - No window (legacy/trailer path): the analysis ran on the UNPADDED clip;
+    #   when the kept _source.mp4 is a padded cut (framing_source_override),
+    #   shift every recorded frame number by the padding offset so coordinates
+    #   are in padded-source frames, and record the clip bounds for trim/extend.
     if framing_output_path:
-        offset = framing_source_override['offsetFrames'] if framing_source_override else 0
+        if window_active:
+            offset = 0
+            clip_in_frame = bake_in_frame
+            clip_out_frame = bake_end_frame
+        else:
+            offset = framing_source_override['offsetFrames'] if framing_source_override else 0
+            clip_in_frame = offset
+            clip_out_frame = offset + total_frames
         segments_out = []
         for i, (s_f, e_f) in enumerate(scene_boundaries):
             strategy = scene_strategies[i] if i < len(scene_strategies) else 'TRACK'
@@ -1377,12 +1441,12 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
             },
             'outputWidth': OUTPUT_WIDTH,
             'outputHeight': OUTPUT_HEIGHT,
-            'clipInFrame': offset,
-            'clipOutFrame': offset + total_frames,
+            'clipInFrame': clip_in_frame,
+            'clipOutFrame': clip_out_frame,
             # Immutable caption origin: word ms are relative to the original clip
             # start (== this initial clipInFrame). Recorded separately so trimming
             # the head later doesn't shift the subtitles.
-            'captionsOriginFrame': offset,
+            'captionsOriginFrame': clip_in_frame,
             'cuts': [],
             'segments': segments_out,
             'faceTracks': face_tracks_out,
@@ -2503,32 +2567,15 @@ if __name__ == '__main__':
             # Cut clip
             clip_filename = f"{video_title}_clip_{i+1}.mp4"
             # 16:9 source is KEPT with ±3s padding — the web editor re-frames
-            # from it and can trim/extend within the padding (framing v2 EDL)
-            clip_cut_path = os.path.join(output_dir, f"temp_{video_title}_clip_{i+1}.mp4")
+            # from it and can trim/extend within the padding (framing v2 EDL).
+            # It is ALSO the bake input: process_video_to_vertical bakes just
+            # the clip's frame window from it, so one re-encoded cut per clip.
             clip_source_path = os.path.join(output_dir, f"{video_title}_clip_{i+1}_source.mp4")
             clip_final_path = os.path.join(output_dir, clip_filename)
             clip_framing_path = os.path.join(output_dir, f"{video_title}_clip_{i+1}.framing.json")
 
-            # Unpadded cut: the bake input (re-encoding for frame precision)
-            cut_command = [
-                'ffmpeg', '-y',
-                '-ss', str(start),
-                '-to', str(end),
-                '-i', input_video,
-                # Force even width/height — yuv420p (video_codec_args) needs it,
-                # and source videos (local uploads, some downloads) can be odd-sized.
-                '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-                # Dense keyframes (every 0.5s @30fps) so the web editor's
-                # seeks decode fast — long GOPs cause a multi-second black
-                # flash on layout switch in the live preview. Negligible
-                # size cost; this cut also serves as the editor-source fallback.
-                *video_codec_args('intermediate', keyframe_interval=15),
-                '-c:a', 'aac',
-                clip_cut_path
-            ]
-            run_logged_command(cut_command, f"Cutting clip {i+1}", clip_cut_path)
-
             # Padded cut: the editor's source (extend headroom on both sides)
+            # and the bake input (re-encoding for frame precision)
             EXTEND_PAD_SECONDS = 3.0
             pad_start = max(0.0, start - EXTEND_PAD_SECONDS)
             pad_end = min(duration, end + EXTEND_PAD_SECONDS)
@@ -2537,50 +2584,73 @@ if __name__ == '__main__':
                 '-ss', str(pad_start),
                 '-to', str(pad_end),
                 '-i', input_video,
-                # Force even width/height — see the unpadded-cut comment above.
+                # Force even width/height — yuv420p (video_codec_args) needs it,
+                # and source videos (local uploads, some downloads) can be odd-sized.
                 '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-                # Dense keyframes so the editor (which seeks this padded
-                # source constantly) repaints fast after a layout switch.
+                # Dense keyframes (every 0.5s @30fps) so the web editor's
+                # seeks decode fast — long GOPs cause a multi-second black
+                # flash on layout switch in the live preview.
                 *video_codec_args('intermediate', keyframe_interval=15),
                 '-c:a', 'aac',
                 clip_source_path
             ]
             padded_result = run_logged_command(padded_cut_command, f"Preparing editor source for clip {i+1}", clip_source_path)
 
-            # If the padded cut failed, fall back to keeping the unpadded
-            # cut as the editor source (no extend headroom, offset 0) so a
-            # valid _source.mp4 always exists for the framing coordinates.
-            if (padded_result.returncode != 0 or not os.path.exists(clip_source_path) or os.path.getsize(clip_source_path) == 0) and os.path.exists(clip_cut_path):
-                print(f"   ⚠️  Padded source cut failed for clip {i+1}; using unpadded cut as editor source.")
-                shutil.copyfile(clip_cut_path, clip_source_path)
+            # If the padded cut failed, retry with the exact [start, end] range
+            # (no extend headroom, offset 0) so a valid _source.mp4 still
+            # exists for both the bake and the framing coordinates.
+            if padded_result.returncode != 0 or not os.path.exists(clip_source_path) or os.path.getsize(clip_source_path) == 0:
+                print(f"   ⚠️  Padded source cut failed for clip {i+1}; retrying with the exact clip range.")
+                exact_cut_command = [
+                    'ffmpeg', '-y',
+                    '-ss', str(start),
+                    '-to', str(end),
+                    '-i', input_video,
+                    '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+                    *video_codec_args('intermediate', keyframe_interval=15),
+                    '-c:a', 'aac',
+                    clip_source_path
+                ]
+                exact_result = run_logged_command(exact_cut_command, f"Cutting clip {i+1} (exact range)", clip_source_path)
+                if exact_result.returncode != 0 or not os.path.exists(clip_source_path) or os.path.getsize(clip_source_path) == 0:
+                    print(f"   ❌ Could not cut a source for clip {i+1}; skipping it.")
+                    return False
                 pad_start = start  # offset collapses to 0
 
             framing_source_override = None
-            if os.path.exists(clip_source_path):
-                src_cap = cv2.VideoCapture(clip_source_path)
-                if src_cap.isOpened():
-                    padded_frames = int(src_cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                    src_fps = src_cap.get(cv2.CAP_PROP_FPS) or 30.0
-                    src_cap.release()
-                    framing_source_override = {
-                        'file': os.path.basename(clip_source_path),
-                        'durationFrames': padded_frames,
-                        'offsetFrames': int(round((start - pad_start) * src_fps)),
-                    }
-                else:
-                    src_cap.release()
+            offset_frames = 0
+            bake_out = None
+            src_cap = cv2.VideoCapture(clip_source_path)
+            if src_cap.isOpened():
+                padded_frames = int(src_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                src_fps = src_cap.get(cv2.CAP_PROP_FPS) or 30.0
+                src_cap.release()
+                offset_frames = int(round((start - pad_start) * src_fps))
+                clip_frames = int(round((end - start) * src_fps))
+                bake_out = min(padded_frames, offset_frames + clip_frames)
+                framing_source_override = {
+                    'file': os.path.basename(clip_source_path),
+                    'durationFrames': padded_frames,
+                    'offsetFrames': offset_frames,
+                }
+            else:
+                src_cap.release()
 
-            # Process vertical (bakes from the unpadded cut; framing.json is
-            # written in padded-source coordinates via the override)
+            if framing_source_override is None:
+                print(f"   ❌ Source cut for clip {i+1} is unreadable; skipping it.")
+                return False
+
+            # Process vertical: bake only the clip's window of the padded
+            # source. Frame numbering is absolute in the padded file, so the
+            # framing.json comes out in padded-source coordinates directly.
             success = process_video_to_vertical(
-                clip_cut_path, clip_final_path,
+                clip_source_path, clip_final_path,
                 framing_output_path=clip_framing_path,
                 framing_source_override=framing_source_override,
                 aspect_ratio=args.aspect_ratio,
+                bake_in_frame=offset_frames,
+                bake_out_frame=bake_out,
             )
-
-            if os.path.exists(clip_cut_path):
-                os.remove(clip_cut_path)
 
             if success:
                 print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
