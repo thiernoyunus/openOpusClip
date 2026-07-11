@@ -86,7 +86,7 @@ const FILTERS = [
  * classifies it and we route to the matching track. Pexels stock video + AI
  * b-roll and the original-audio mixer live under the library.
  */
-function MediaPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame, captions = [], playerRef }) {
+function MediaPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame, captions = [], playerRef, focusAsset = null }) {
     const overlays = framing.overlays || [];
     const audio = framing.audio || [];
     const srcFps = framing.source.fps;
@@ -95,6 +95,17 @@ function MediaPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
 
     const fileRef = useRef(null);
     const [selected, setSelected] = useState(null); // { track: 'overlay'|'audio', id }
+
+    // Clicking a block on the timeline sends {track, id, nonce} so the panel
+    // opens that asset's inspector directly. Sync during render keyed on nonce
+    // (React's "adjust state when a prop changes" pattern), so re-clicking the
+    // same asset re-fires without a setState-in-effect.
+    const [lastFocusNonce, setLastFocusNonce] = useState(null);
+    if (focusAsset && focusAsset.nonce !== lastFocusNonce) {
+        setLastFocusNonce(focusAsset.nonce);
+        setSelected({ track: focusAsset.track, id: focusAsset.id });
+    }
+
     const [filter, setFilter] = useState('all');
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState(null);
@@ -142,6 +153,7 @@ function MediaPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
     // Single upload for any asset — the server classifies it and we route by kind.
     const uploadFile = async (file) => {
         if (!file) return;
+        if (uploading) return; // one at a time — a second in-flight upload reads stale caps
         if (!jobId && jobId !== 0) {
             setUploadError('No project open — open a clip in the editor first.');
             return;

@@ -331,6 +331,8 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     const [exportProgress, setExportProgress] = useState(0);
     const [captions, setCaptions] = useState(() => clip.transcript_captions || clip.transcriptCaptions || []);
     const [activeTab, setActiveTab] = useState('captions');
+    // Which media asset a timeline click asked the Media panel to focus.
+    const [mediaFocus, setMediaFocus] = useState(null);
     // Right tool panel is collapsed by default (max canvas space); a rail click
     // opens it, clicking the active tool (or the header chevron) collapses it.
     const [panelOpen, setPanelOpen] = useState(false);
@@ -458,11 +460,15 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         }
     }, [panelOpen, activeTab]);
 
-    // Timeline lane click: open the right-rail panel that owns that track. The
-    // panels don't expose per-item focus, so switching the tab is the sync.
-    const handleSelectTrackItem = useCallback((kind) => {
+    // Timeline lane click: open the right-rail panel that owns that track, and
+    // for a specific media block, focus its inspector directly. A fresh object
+    // each call so re-clicking the same asset still re-triggers the panel.
+    const handleSelectTrackItem = useCallback((kind, id = null) => {
         const tab = { text: 'text', broll: 'media', audio: 'media', transitions: 'transitions' }[kind];
         if (!tab) return;
+        if (tab === 'media') {
+            setMediaFocus(id ? { track: kind === 'audio' ? 'audio' : 'overlay', id, nonce: Date.now() } : null);
+        }
         setActiveTab(tab);
         setPanelOpen(true);
     }, []);
@@ -768,7 +774,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                             <TextPanel framing={framing} dispatch={dispatch} getCurrentSourceFrame={getCurrentSourceFrame} />
                                         )}
                                         {activeTab === 'media' && (
-                                            <MediaPanel framing={framing} dispatch={dispatch} jobId={jobId} clipIndex={index} getCurrentSourceFrame={getCurrentSourceFrame} captions={captions} playerRef={playerRef} />
+                                            <MediaPanel framing={framing} dispatch={dispatch} jobId={jobId} clipIndex={index} getCurrentSourceFrame={getCurrentSourceFrame} captions={captions} playerRef={playerRef} focusAsset={mediaFocus} />
                                         )}
                                         {activeTab === 'transitions' && (
                                             <TransitionsPanel framing={framing} dispatch={dispatch} />
