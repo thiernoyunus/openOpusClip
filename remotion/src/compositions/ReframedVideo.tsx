@@ -490,7 +490,7 @@ const RangeContent: React.FC<{
           );
         }
         const trackId = segment.trackedFaceIds[i];
-        const track = faceTrackById.get(trackId);
+        const track = trackId != null ? faceTrackById.get(trackId) : undefined;
         const face = smoothedFaceRect(track, sourceFrame);
         const panelAspect = panel.width / panel.height;
         const crop = face
