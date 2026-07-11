@@ -2596,14 +2596,23 @@ if __name__ == '__main__':
                 return False
 
         # Each worker drives its own ffmpeg decode/encode + detection pipeline,
-        # so even a few workers can saturate (or swap) a laptop. Serial by
-        # default; set OPENSHORTS_CLIP_WORKERS=2..4 on machines with RAM to spare.
+        # so even a few workers can saturate (or swap) a laptop. Auto mode
+        # (default) scales to the machine: serial when RAM is small or unknown,
+        # parallel on big machines. OPENSHORTS_CLIP_WORKERS=N overrides.
+        def auto_clip_workers():
+            try:
+                ram_gb = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / 1e9
+            except (AttributeError, ValueError, OSError):
+                return 1  # can't tell (e.g. native Windows) -> stay cautious
+            if ram_gb < 15:
+                return 1
+            return max(1, min(4, (os.cpu_count() or 4) // 4))
         try:
-            clip_workers = int(os.environ.get('OPENSHORTS_CLIP_WORKERS', '1'))
+            clip_workers = int(os.environ.get('OPENSHORTS_CLIP_WORKERS', '0'))
         except ValueError:
-            clip_workers = 1
+            clip_workers = 0
         if clip_workers <= 0:
-            clip_workers = 1
+            clip_workers = auto_clip_workers()
         shorts = clips_data['shorts']
         if clip_workers > 1 and len(shorts) > 1:
             print(f"\n⚡ Processing {len(shorts)} clips with {clip_workers} parallel workers...")
