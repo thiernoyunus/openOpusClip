@@ -10,6 +10,11 @@ import { EDITOR_FPS } from './EditorCanvas';
 const MAX_OVERLAY = 10;
 const MAX_AUDIO = 10;
 
+// Mirrors app.py's _ASSET_KIND_BY_EXT — used to guess a file's track BEFORE
+// upload so a capped track rejects it without the server writing an orphaned
+// file to disk (there's no delete-asset endpoint to clean it up).
+const AUDIO_EXTENSIONS = ['.mp3', '.m4a', '.wav', '.aac', '.ogg'];
+
 // Position/size presets (normalized 0-1 canvas coords) offered per overlay.
 const POSITION_PRESETS = [
     { id: 'full', label: 'Full', x: 0.5, y: 0.5, w: 1, h: 1 },
@@ -26,8 +31,12 @@ function probeMediaDuration(tag, url) {
     return new Promise((resolve) => {
         const el = document.createElement(tag);
         el.preload = 'metadata';
-        el.onloadedmetadata = () => resolve(Number.isFinite(el.duration) ? el.duration : 0);
-        el.onerror = () => resolve(0);
+        // Time out so a stalled/CORS-blocked file (no load or error event) can't
+        // hang the promise and leave the panel stuck on "Uploading…".
+        const done = (v) => { clearTimeout(timer); resolve(v); };
+        const timer = setTimeout(() => done(0), 5000);
+        el.onloadedmetadata = () => done(Number.isFinite(el.duration) ? el.duration : 0);
+        el.onerror = () => done(0);
         el.src = url;
     });
 }
@@ -137,6 +146,24 @@ function MediaPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
             setUploadError('No project open — open a clip in the editor first.');
             return;
         }
+        // Guess the track by extension and reject a full one BEFORE uploading —
+        // the /asset endpoint writes accepted files to disk with no cleanup path,
+        // so a post-upload cap check would orphan the file. The server-side kind
+        // check below stays as defense-in-depth for extensionless/misnamed files.
+        const ext = (file.name.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+        const looksAudio = AUDIO_EXTENSIONS.includes(ext);
+        if (looksAudio && audioAtCap) {
+            setUploadError(`Maximum ${MAX_AUDIO} audio items reached.`);
+            return;
+        }
+        if (!looksAudio && ext && overlaysAtCap) {
+            setUploadError(`Maximum ${MAX_OVERLAY} visual items reached.`);
+            return;
+        }
+        if (audioAtCap && overlaysAtCap) {
+            setUploadError('Media limit reached — remove an item first.');
+            return;
+        }
         setUploading(true);
         setUploadError(null);
         try {
@@ -171,7 +198,10 @@ function MediaPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
     };
 
     const onDrop = async (e) => {
+        // stopPropagation too, so a bubbled drop can't make the browser navigate
+        // to / open the dropped file.
         e.preventDefault();
+        e.stopPropagation();
         await uploadFile(e.dataTransfer?.files?.[0]);
     };
 
@@ -372,7 +402,12 @@ function MediaPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
                 onDrop={onDrop}
                 role="button"
                 tabIndex={0}
-                onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && fileRef.current?.click()}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault(); // Space would otherwise scroll the panel
+                        fileRef.current?.click();
+                    }
+                }}
                 className="w-full flex flex-col items-center justify-center gap-1.5 px-3 py-5 rounded-xl border border-dashed border-edge bg-surface2/40 text-muted hover:bg-white/5 cursor-pointer"
             >
                 {uploading ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
