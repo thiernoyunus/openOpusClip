@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Loader2, AlertCircle, Captions, Crosshair, Sparkles, Type, Music, Clapperboard, ChevronRight, ChevronDown, Check, Crop, Trash2 } from 'lucide-react';
+import { Loader2, AlertCircle, Captions, Crosshair, Sparkles, Type, Clapperboard, ChevronRight, ChevronDown, Check, Crop, Trash2 } from 'lucide-react';
 import { getApiUrl } from '../../config';
 import useEditorState, { defaultSubtitleConfig, loadDefaultCaptionStyle, tracksInClip, LAYOUT_PANELS } from './useEditorState';
 import { outputDurationFrames, outputToSource, placedClips } from '@remotion-src/lib/edl';
@@ -11,8 +11,7 @@ import TranscriptPanel from './TranscriptPanel';
 import CaptionsPanel from './CaptionsPanel';
 import TransitionsPanel from './TransitionsPanel';
 import TextPanel from './TextPanel';
-import AudioPanel from './AudioPanel';
-import BrollPanel from './BrollPanel';
+import MediaPanel from './MediaPanel';
 import ManualCropModal from './ManualCropModal';
 import ExtendClipModal from './ExtendClipModal';
 
@@ -56,10 +55,9 @@ async function downloadVideo(url, filename) {
 
 const TABS = [
     { id: 'captions', label: 'Captions', icon: Captions },
-    { id: 'broll', label: 'B-Roll', icon: Clapperboard },
+    { id: 'media', label: 'Media', icon: Clapperboard },
     { id: 'transitions', label: 'Transitions', icon: Sparkles },
     { id: 'text', label: 'Text', icon: Type },
-    { id: 'audio', label: 'Audio', icon: Music },
 ];
 
 function MiniLayoutIcon({ layout }) {
@@ -333,6 +331,8 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     const [exportProgress, setExportProgress] = useState(0);
     const [captions, setCaptions] = useState(() => clip.transcript_captions || clip.transcriptCaptions || []);
     const [activeTab, setActiveTab] = useState('captions');
+    // Which media asset a timeline click asked the Media panel to focus.
+    const [mediaFocus, setMediaFocus] = useState(null);
     // Right tool panel is collapsed by default (max canvas space); a rail click
     // opens it, clicking the active tool (or the header chevron) collapses it.
     const [panelOpen, setPanelOpen] = useState(false);
@@ -460,11 +460,15 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         }
     }, [panelOpen, activeTab]);
 
-    // Timeline lane click: open the right-rail panel that owns that track. The
-    // panels don't expose per-item focus, so switching the tab is the sync.
-    const handleSelectTrackItem = useCallback((kind) => {
-        const tab = { text: 'text', broll: 'broll', audio: 'audio', transitions: 'transitions' }[kind];
+    // Timeline lane click: open the right-rail panel that owns that track, and
+    // for a specific media block, focus its inspector directly. A fresh object
+    // each call so re-clicking the same asset still re-triggers the panel.
+    const handleSelectTrackItem = useCallback((kind, id = null) => {
+        const tab = { text: 'text', broll: 'media', audio: 'media', transitions: 'transitions' }[kind];
         if (!tab) return;
+        if (tab === 'media') {
+            setMediaFocus(id ? { track: kind === 'audio' ? 'audio' : 'overlay', id, nonce: Date.now() } : null);
+        }
         setActiveTab(tab);
         setPanelOpen(true);
     }, []);
@@ -769,11 +773,8 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                         {activeTab === 'text' && (
                                             <TextPanel framing={framing} dispatch={dispatch} getCurrentSourceFrame={getCurrentSourceFrame} />
                                         )}
-                                        {activeTab === 'audio' && (
-                                            <AudioPanel framing={framing} jobId={jobId} clipIndex={index} dispatch={dispatch} playerRef={playerRef} />
-                                        )}
-                                        {activeTab === 'broll' && (
-                                            <BrollPanel framing={framing} dispatch={dispatch} jobId={jobId} clipIndex={index} getCurrentSourceFrame={getCurrentSourceFrame} captions={captions} />
+                                        {activeTab === 'media' && (
+                                            <MediaPanel framing={framing} dispatch={dispatch} jobId={jobId} clipIndex={index} getCurrentSourceFrame={getCurrentSourceFrame} captions={captions} playerRef={playerRef} focusAsset={mediaFocus} />
                                         )}
                                         {activeTab === 'transitions' && (
                                             <TransitionsPanel framing={framing} dispatch={dispatch} />
