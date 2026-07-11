@@ -548,7 +548,7 @@ export function normalizeFraming(framing) {
     const { segments, cuts, clipInFrame, clipOutFrame, ...rest } = framing;
     void segments; void cuts; void clipInFrame; void clipOutFrame;
 
-    // --- Legacy track migration: broll[] -> overlays[], music -> audio[].
+// --- Legacy track migration: broll[] -> overlays[], music -> audio[].
     // MOVE semantics (not copy) — the legacy field is cleared on the normalized
     // object so nothing double-renders once the new generic tracks exist.
     // Idempotent: once broll/music are cleared, re-running finds nothing left
