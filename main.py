@@ -1172,10 +1172,25 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
     for s_start, s_end in scenes:
         scene_boundaries.append((s_start.get_frames(), s_end.get_frames()))
     if window_active:
-        scene_boundaries = [
-            (max(bake_in_frame, s), min(bake_end_frame, e))
-            for s, e in scene_boundaries
-        ]
+        # Drop scenes that don't overlap the window and clamp the survivors.
+        # Filter scene_strategies in tandem so the two stay index-aligned
+        # (the bake loop and the framing writer both index them together).
+        kept_boundaries, kept_strategies = [], []
+        for idx, (s, e) in enumerate(scene_boundaries):
+            cs, ce = max(bake_in_frame, s), min(bake_end_frame, e)
+            if ce <= cs:
+                continue  # scene lies entirely outside the bake window
+            kept_boundaries.append((cs, ce))
+            kept_strategies.append(
+                scene_strategies[idx] if idx < len(scene_strategies) else 'TRACK'
+            )
+        scene_boundaries = kept_boundaries
+        scene_strategies = kept_strategies
+        if not scene_boundaries:
+            # Degenerate: nothing overlapped (shouldn't happen with windowed
+            # detection) — fall back to the whole window as one tracked scene.
+            scene_boundaries = [(bake_in_frame, bake_end_frame)]
+            scene_strategies = ['TRACK']
 
     # Global tracker for single-person shots
     speaker_tracker = SpeakerTracker(cooldown_frames=30)
