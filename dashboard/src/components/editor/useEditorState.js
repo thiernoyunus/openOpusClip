@@ -63,6 +63,18 @@ export const editorReducer = (state, action) => {
             );
             return withHistory({ ...state.framing, clips });
         }
+        case 'SET_ASPECT': {
+            // Clip-level output ratio (preview + export). Non-9:16 ignores the
+            // per-segment fill/split/fit machinery at render time so the 9:16
+            // layout choices stay intact and restore when switching back.
+            const { outputWidth, outputHeight } = action;
+            if (!outputWidth || !outputHeight) return state;
+            return withHistory({
+                ...state.framing,
+                outputWidth,
+                outputHeight,
+            });
+        }
         case 'SET_TRACKED_FACES': {
             const clips = state.framing.clips.map((c) =>
                 c.id === action.clipId
@@ -482,15 +494,19 @@ export const FACE_PANEL_INDICES = {
  * a segment (used when the user picks a different person to track). Mirrors
  * the pipeline's output shape; smoothing comes from smoothedFaceRect.
  */
-export function buildFillKeyframes(framing, clip, trackId) {
+export function buildFillKeyframes(framing, clip, trackId, aspect) {
     const track = framing.faceTracks.find((t) => t.id === trackId);
     if (!track) return [];
     const { width: srcW, height: srcH } = framing.source;
+    // Crop aspect follows the clip's output ratio (defaults to 9:16).
+    const ar =
+        aspect ??
+        (framing.outputWidth ?? 1080) / (framing.outputHeight ?? 1920);
     const keyframes = [];
     for (let frame = clip.sourceStart; frame < clip.sourceEnd; frame += 3) {
         const face = smoothedFaceRect(track, frame);
         if (!face) continue;
-        const crop = cropForFace(face, 9 / 16, srcW, srcH);
+        const crop = cropForFace(face, ar, srcW, srcH);
         keyframes.push({
             frame,
             x: Number(crop.x.toFixed(4)),

@@ -29,10 +29,10 @@ const LAYOUT_LABEL = {
 const LAYOUT_OPTIONS = ['fill', 'fit', 'split', 'three', 'four', 'screenshare', 'gameplay'];
 
 const ASPECT_OPTIONS = [
-    { label: 'Vertical 9:16', width: 1080, height: 1920 },
-    { label: 'Square 1:1', width: 1080, height: 1080 },
-    { label: 'Landscape 16:9', width: 1920, height: 1080 },
-    { label: 'Portrait 4:5', width: 1080, height: 1350 },
+    { label: 'Portrait (9:16)', width: 1080, height: 1920 },
+    { label: 'Square (1:1)', width: 1080, height: 1080 },
+    { label: 'Landscape (16:9)', width: 1920, height: 1080 },
+    { label: 'Instagram (4:5)', width: 1080, height: 1350 },
 ];
 
 /** Save a video URL to the browser's Downloads folder (fetch→blob→<a download>). */
@@ -102,9 +102,10 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
         : 0;
     const outW = framing.outputWidth ?? 1080;
     const outH = framing.outputHeight ?? 1920;
+    const is916 = Math.abs(outW / outH - 9 / 16) < 0.01;
     const fitMatchesFill = Math.abs((framing.source.width / framing.source.height) - (outW / outH)) < 0.01;
     const currentAspect = ASPECT_OPTIONS.find((a) => a.width === outW && a.height === outH) || ASPECT_OPTIONS[0];
-    const canManuallyReframe = selected.length <= 1 && primary;
+    const canManuallyReframe = selected.length <= 1 && primary && is916;
 
     const applyLayout = (layout, global = false) => {
         const clipIds = selected.length ? selectedIds : primary ? [primary.id] : [];
@@ -179,21 +180,32 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
                     <ChevronDown size={12} className="opacity-60" />
                 </button>
                 {aspectOpen && (
-                    <div className="absolute left-0 top-full mt-1 w-44 rounded-md border border-edge bg-surface2 shadow-xl py-1">
+                    <div className="absolute left-0 top-full mt-1 w-48 rounded-lg border border-white/[0.08] bg-[#1a1a1d] shadow-xl py-1 z-50">
                         {ASPECT_OPTIONS.map((opt) => {
                             const active = opt.width === outW && opt.height === outH;
                             return (
                                 <button
+                                    type="button"
                                     key={opt.label}
-                                    disabled={!active}
-                                    onClick={() => setAspectOpen(false)}
-                                    className={`w-full h-8 px-3 flex items-center gap-2 text-xs text-left ${
-                                        active ? 'text-zinc-400' : 'text-zinc-500 cursor-not-allowed'
+                                    onClick={() => {
+                                        if (!active) {
+                                            dispatch({
+                                                type: 'SET_ASPECT',
+                                                outputWidth: opt.width,
+                                                outputHeight: opt.height,
+                                            });
+                                        }
+                                        setAspectOpen(false);
+                                    }}
+                                    className={`w-full h-9 px-3 flex items-center gap-2 text-xs text-left transition-colors ${
+                                        active
+                                            ? 'text-white bg-white/[0.06]'
+                                            : 'text-zinc-300 hover:bg-white/[0.05] hover:text-white'
                                     }`}
                                 >
                                     <AspectIcon width={opt.width} height={opt.height} />
                                     <span className="flex-1">{opt.label}</span>
-                                    {active && <Check size={13} className="text-zinc-300" />}
+                                    {active && <Check size={13} className="text-zinc-200" />}
                                 </button>
                             );
                         })}
@@ -215,54 +227,66 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
                     <ChevronDown size={12} className="opacity-60" />
                 </button>
                 {layoutOpen && (
-                    <div className="absolute left-0 top-full mt-1 w-52 rounded-md border border-edge bg-surface2 shadow-xl py-1">
-                        <div className="relative" onMouseLeave={() => setGlobalOpen(false)}>
-                            <button
-                                onMouseEnter={() => setGlobalOpen(true)}
-                                onFocus={() => setGlobalOpen(true)}
-                                className="w-full h-9 px-3 flex items-center gap-2 text-xs text-left text-zinc-300 hover:bg-white/5"
-                            >
-                                <span className="flex-1">Global layout settings</span>
-                                <ChevronRight size={13} />
-                            </button>
-                            {globalOpen && (
-                                <div
-                                    className="absolute left-full top-0 ml-1 w-36 rounded-md border border-edge bg-surface2 shadow-xl"
-                                >
-                                    {layoutRows(true)}
-                                </div>
-                            )}
-                        </div>
-                        <div className="px-3 pt-2 pb-1 text-[10px] text-zinc-500">Current layout</div>
-                        {layoutRows(false)}
-                        {canManuallyReframe && (
-                            <div className="mt-1 border-t border-edge p-2">
-                                <button
-                                    onClick={() => {
-                                        if (!selected.length) dispatch({ type: 'SELECT', id: primary.id, multi: false });
-                                        setShowCropModal(true);
-                                        setLayoutOpen(false);
-                                        setGlobalOpen(false);
-                                    }}
-                                    className="w-full h-8 px-2 rounded-md flex items-center gap-2 text-xs text-zinc-300 hover:bg-white/5 hover:text-fg"
-                                >
-                                    <Crop size={13} />
-                                    {primary.manualCrop ? 'Adjust manual reframe' : 'Set manual reframe'}
-                                </button>
-                                {primary.manualCrop && (
+                    <div className="absolute left-0 top-full mt-1 w-52 rounded-lg border border-white/[0.08] bg-[#1a1a1d] shadow-xl py-1 z-50">
+                        {!is916 ? (
+                            <p className="px-3 py-2.5 text-[11px] text-zinc-400 leading-snug">
+                                Fill / Split / Fit only apply to <span className="text-zinc-200">9:16</span>.
+                                This ratio shows the source scene (full width or speaker crop).
+                            </p>
+                        ) : (
+                            <>
+                                <div className="relative" onMouseLeave={() => setGlobalOpen(false)}>
                                     <button
-                                        onClick={() => {
-                                            dispatch({ type: 'SET_MANUAL_CROP', clipId: primary.id, crop: null });
-                                            setLayoutOpen(false);
-                                            setGlobalOpen(false);
-                                        }}
-                                        className="mt-1 w-full h-8 px-2 rounded-md flex items-center gap-2 text-xs text-muted hover:bg-white/5 hover:text-fg"
+                                        type="button"
+                                        onMouseEnter={() => setGlobalOpen(true)}
+                                        onFocus={() => setGlobalOpen(true)}
+                                        className="w-full h-9 px-3 flex items-center gap-2 text-xs text-left text-zinc-300 hover:bg-white/5"
                                     >
-                                        <Trash2 size={12} />
-                                        Remove manual reframe
+                                        <span className="flex-1">Global layout settings</span>
+                                        <ChevronRight size={13} />
                                     </button>
+                                    {globalOpen && (
+                                        <div
+                                            className="absolute left-full top-0 ml-1 w-36 rounded-lg border border-white/[0.08] bg-[#1a1a1d] shadow-xl"
+                                        >
+                                            {layoutRows(true)}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="px-3 pt-2 pb-1 text-[10px] text-zinc-500">Current layout</div>
+                                {layoutRows(false)}
+                                {canManuallyReframe && (
+                                    <div className="mt-1 border-t border-white/[0.06] p-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                if (!selected.length) dispatch({ type: 'SELECT', id: primary.id, multi: false });
+                                                setShowCropModal(true);
+                                                setLayoutOpen(false);
+                                                setGlobalOpen(false);
+                                            }}
+                                            className="w-full h-8 px-2 rounded-md flex items-center gap-2 text-xs text-zinc-300 hover:bg-white/5 hover:text-fg"
+                                        >
+                                            <Crop size={13} />
+                                            {primary.manualCrop ? 'Adjust manual reframe' : 'Set manual reframe'}
+                                        </button>
+                                        {primary.manualCrop && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    dispatch({ type: 'SET_MANUAL_CROP', clipId: primary.id, crop: null });
+                                                    setLayoutOpen(false);
+                                                    setGlobalOpen(false);
+                                                }}
+                                                className="mt-1 w-full h-8 px-2 rounded-md flex items-center gap-2 text-xs text-muted hover:bg-white/5 hover:text-fg"
+                                            >
+                                                <Trash2 size={12} />
+                                                Remove manual reframe
+                                            </button>
+                                        )}
+                                    </div>
                                 )}
-                            </div>
+                            </>
                         )}
                     </div>
                 )}

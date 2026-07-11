@@ -95,6 +95,9 @@ const EditorCanvas = forwardRef(function EditorCanvas(
                 style={boxStyle}
             >
                 <Player
+                    // Remount when the canvas size changes so the composition
+                    // doesn't keep the previous aspect's frame buffer.
+                    key={`${outW}x${outH}`}
                     ref={playerRef}
                     component={ShortVideo}
                     inputProps={inputProps}
