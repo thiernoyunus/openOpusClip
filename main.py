@@ -2596,14 +2596,51 @@ if __name__ == '__main__':
                 return False
 
         # Each worker drives its own ffmpeg decode/encode + detection pipeline,
-        # so even a few workers can saturate (or swap) a laptop. Serial by
-        # default; set OPENSHORTS_CLIP_WORKERS=2..4 on machines with RAM to spare.
+        # so even a few workers can saturate (or swap) a laptop. Auto mode
+        # (default) scales to the machine: serial when RAM is small or unknown,
+        # parallel on big machines. OPENSHORTS_CLIP_WORKERS=N overrides.
+        def available_ram_gib():
+            # In a memory-capped container SC_PHYS_PAGES reports the whole host,
+            # so read the cgroup limit first (v2, then v1) and only fall back to
+            # physical RAM. Return None when it can't be determined.
+            # ponytail: cgroup v1/v2 file reads cover Docker/K8s; no cgroup =
+            # bare metal -> sysconf.
+            for path in ('/sys/fs/cgroup/memory.max',                       # cgroup v2
+                         '/sys/fs/cgroup/memory/memory.limit_in_bytes'):    # cgroup v1
+                try:
+                    with open(path) as f:
+                        raw = f.read().strip()
+                    if raw and raw != 'max':
+                        limit = int(raw)
+                        # v1 uses a huge sentinel (~PAGE_SIZE * INT_MAX) for "no limit"
+                        if 0 < limit < (1 << 62):
+                            return limit / (1024 ** 3)
+                except (OSError, ValueError):
+                    pass
+            try:
+                return os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / (1024 ** 3)
+            except (AttributeError, ValueError, OSError):
+                return None
+
+        def usable_cpus():
+            # sched_getaffinity respects a cpuset/container CPU pin; os.cpu_count
+            # reports the whole host. Fall back to cpu_count off-Linux.
+            try:
+                return len(os.sched_getaffinity(0))
+            except AttributeError:
+                return os.cpu_count() or 4
+
+        def auto_clip_workers():
+            ram_gib = available_ram_gib()
+            if ram_gib is None or ram_gib < 15:
+                return 1  # small, capped, or unknown (e.g. native Windows) -> cautious
+            return max(1, min(4, usable_cpus() // 4))
         try:
-            clip_workers = int(os.environ.get('OPENSHORTS_CLIP_WORKERS', '1'))
+            clip_workers = int(os.environ.get('OPENSHORTS_CLIP_WORKERS', '0'))
         except ValueError:
-            clip_workers = 1
+            clip_workers = 0
         if clip_workers <= 0:
-            clip_workers = 1
+            clip_workers = auto_clip_workers()
         shorts = clips_data['shorts']
         if clip_workers > 1 and len(shorts) > 1:
             print(f"\n⚡ Processing {len(shorts)} clips with {clip_workers} parallel workers...")
