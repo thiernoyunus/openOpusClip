@@ -24,7 +24,8 @@ export function useFilmstrip(sourceUrl, count = 14) {
             // its timeline slot (esp. when zoomed in). 96px looked blurry/blocky;
             // 192px @ q0.75 is crisp for a negligible payload bump.
             const W = 192;
-            const H = video.videoWidth > 0 ? Math.max(1, Math.round(W * (video.videoHeight / video.videoWidth))) : 108;
+            const ratio = W * (video.videoHeight / video.videoWidth);
+            const H = Number.isFinite(ratio) && ratio > 0 ? Math.max(1, Math.round(ratio)) : 108;
             canvas.width = W;
             canvas.height = H;
             const ctx = canvas.getContext('2d');
