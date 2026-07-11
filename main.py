@@ -693,7 +693,10 @@ def create_general_frame(frame, output_width, output_height):
         (max(1, output_width // 4), max(1, output_height // 4)),
         interpolation=cv2.INTER_AREA,
     )
-    small = cv2.GaussianBlur(small, (13, 13), 0)
+    # Kernel must be odd and no larger than the plate (tiny custom resolutions)
+    ksize_w = min(13, max(1, (small.shape[1] - 1) | 1))
+    ksize_h = min(13, max(1, (small.shape[0] - 1) | 1))
+    small = cv2.GaussianBlur(small, (ksize_w, ksize_h), 0)
     background = cv2.resize(small, (output_width, output_height), interpolation=cv2.INTER_LINEAR)
     
     # 2. Foreground — CONTAIN within the output (fit width normally, but fall back
@@ -1178,12 +1181,14 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
                 # Record face tracks even in GENERAL scenes (multi-person scenes
                 # land here — the editor needs these tracks to offer split/three/four).
                 # Recorder only; never feeds speaker_tracker, so baked output is untouched.
-                if face_recorder is not None and frame_number % DETECT_EVERY == 0:
+                if face_recorder is not None and (frame_number % DETECT_EVERY == 0 or is_scene_start):
                     face_recorder.add(frame_number, detect_face_candidates(frame))
 
             elif current_strategy == 'SPLIT':
-                # Stable two-person scene -> stacked panels, one per face
-                if frame_number % DETECT_EVERY == 0:
+                # Stable two-person scene -> stacked panels, one per face.
+                # Always detect on scene-start so force_snap targets the new
+                # scene's faces, not stale positions from the previous scene.
+                if frame_number % DETECT_EVERY == 0 or is_scene_start:
                     candidates = detect_face_candidates(frame)
                     rec_ids = face_recorder.add(frame_number, candidates) if face_recorder is not None else []
                     # Two most prominent faces, ordered left -> right
@@ -1205,8 +1210,9 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
             else:
                 # "Single Speaker" -> Track & Crop
 
-                # Detect every DETECT_EVERY frames for performance (env-tunable)
-                if frame_number % DETECT_EVERY == 0:
+                # Detect every DETECT_EVERY frames for performance (env-tunable),
+                # plus on scene-start so the snap lands on the new speaker.
+                if frame_number % DETECT_EVERY == 0 or is_scene_start:
                     candidates = detect_face_candidates(frame)
                     rec_ids = face_recorder.add(frame_number, candidates) if face_recorder is not None else []
                     target_box = speaker_tracker.get_target(candidates, frame_number, original_width)
