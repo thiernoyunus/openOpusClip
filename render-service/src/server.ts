@@ -21,6 +21,37 @@ export interface RenderJob {
 // In-memory render job map
 export const renderJobs = new Map<string, RenderJob>();
 
+// --- Render queue ---
+// Each render spins up headless Chrome × RENDER_CONCURRENCY tabs, so unlimited
+// parallel renders OOM laptops. Cap concurrent renders; extras wait as "queued".
+const MAX_RENDER_JOBS = Math.max(
+  1,
+  parseInt(process.env.MAX_RENDER_JOBS || "1", 10) || 1
+);
+let activeRenders = 0;
+const renderQueue: Array<() => Promise<void>> = [];
+
+function enqueueRender(task: () => Promise<void>): void {
+  renderQueue.push(task);
+  drainRenderQueue();
+}
+
+function drainRenderQueue(): void {
+  while (activeRenders < MAX_RENDER_JOBS && renderQueue.length > 0) {
+    const task = renderQueue.shift()!;
+    activeRenders++;
+    // Promise.resolve().then() converts a synchronous throw into a rejection,
+    // so the slot is always released.
+    Promise.resolve()
+      .then(task)
+      .catch((err) => console.error("[render] queue task error:", err))
+      .finally(() => {
+        activeRenders--;
+        drainRenderQueue();
+      });
+  }
+}
+
 // --- Request validation schema ---
 
 const renderRequestSchema = z.object({
@@ -130,32 +161,34 @@ app.post("/render", (req, res) => {
       }
     : props.framing;
 
-  // Fire and forget - render runs in background
-  executeRender({
-    renderId,
-    jobId,
-    clipIndex,
-    props: {
-      videoUrl: resolvedVideoUrl,
-      durationInFrames: props.durationInFrames,
-      fps: props.fps,
-      width: props.width,
-      height: props.height,
-      subtitles: props.subtitles ?? null,
-      hook: props.hook ?? null,
-      effects: props.effects ?? null,
-      sourceVideoUrl: resolvedSourceVideoUrl,
-      framing: resolvedFraming ?? null,
-    },
-  }).catch((err) => {
-    console.error(`[render] Unhandled error for ${renderId}:`, err);
-    const existingJob = renderJobs.get(renderId);
-    if (existingJob) {
-      existingJob.status = "error";
-      existingJob.error =
-        err instanceof Error ? err.message : "Unknown error";
-    }
-  });
+  // Queued render — runs in background when a slot frees up (MAX_RENDER_JOBS)
+  enqueueRender(() =>
+    executeRender({
+      renderId,
+      jobId,
+      clipIndex,
+      props: {
+        videoUrl: resolvedVideoUrl,
+        durationInFrames: props.durationInFrames,
+        fps: props.fps,
+        width: props.width,
+        height: props.height,
+        subtitles: props.subtitles ?? null,
+        hook: props.hook ?? null,
+        effects: props.effects ?? null,
+        sourceVideoUrl: resolvedSourceVideoUrl,
+        framing: resolvedFraming ?? null,
+      },
+    }).catch((err) => {
+      console.error(`[render] Unhandled error for ${renderId}:`, err);
+      const existingJob = renderJobs.get(renderId);
+      if (existingJob) {
+        existingJob.status = "error";
+        existingJob.error =
+          err instanceof Error ? err.message : "Unknown error";
+      }
+    })
+  );
 
   res.status(202).json({ renderId, status: "queued" });
 });

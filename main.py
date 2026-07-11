@@ -2576,13 +2576,14 @@ if __name__ == '__main__':
                 return False
 
         # Each worker drives its own ffmpeg decode/encode + detection pipeline,
-        # so a few workers saturate the machine. Tunable; 1 = old serial behavior.
+        # so even a few workers can saturate (or swap) a laptop. Serial by
+        # default; set OPENSHORTS_CLIP_WORKERS=2..4 on machines with RAM to spare.
         try:
-            clip_workers = int(os.environ.get('OPENSHORTS_CLIP_WORKERS', '0'))
+            clip_workers = int(os.environ.get('OPENSHORTS_CLIP_WORKERS', '1'))
         except ValueError:
-            clip_workers = 0
+            clip_workers = 1
         if clip_workers <= 0:
-            clip_workers = max(1, min(4, (os.cpu_count() or 8) // 4))
+            clip_workers = 1
         shorts = clips_data['shorts']
         if clip_workers > 1 and len(shorts) > 1:
             print(f"\n⚡ Processing {len(shorts)} clips with {clip_workers} parallel workers...")
