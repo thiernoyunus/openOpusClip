@@ -1,9 +1,8 @@
 import React from 'react';
-import { ArrowLeft, Save, Loader2, Undo2, Redo2, Zap } from 'lucide-react';
+import { ArrowLeft, Save, Loader2, Undo2, Redo2 } from 'lucide-react';
 
 /**
- * OpusClip pixel-target top bar:
- * [← Title] ........ [Undo Redo] [Save changes] [Export] [⚡ 60] [Avatar]
+ * Top bar: [← Title] ........ [Undo Redo] [Save changes] [Export]
  */
 export default function EditorTopBar({
     title,
@@ -93,22 +92,6 @@ export default function EditorTopBar({
                         'Export'
                     )}
                 </button>
-
-                <div
-                    className="hidden sm:flex h-8 items-center gap-1 px-2 rounded-lg text-[11px] font-medium text-amber-200/90 bg-amber-500/10 border border-amber-500/20"
-                    title="Credits"
-                >
-                    <Zap size={12} className="text-amber-300" fill="currentColor" />
-                    60
-                </div>
-
-                <div
-                    className="w-8 h-8 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 text-white text-[12px] font-semibold flex items-center justify-center shadow-inner"
-                    title="Account"
-                    aria-hidden
-                >
-                    T
-                </div>
             </div>
         </header>
     );
