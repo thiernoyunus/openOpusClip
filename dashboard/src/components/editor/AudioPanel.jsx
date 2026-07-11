@@ -92,9 +92,18 @@ function AudioPanel({ framing, jobId, clipIndex, dispatch, playerRef }) {
 
     const patch = (id, p) => dispatch({ type: 'UPDATE_AUDIO', id, patch: p });
     const remove = (id) => dispatch({ type: 'REMOVE_AUDIO', id });
-    // "Loop as music" makes an item a looping music bed; toggling off restores SFX.
-    const toggleMusic = (item) =>
-        patch(item.id, item.role === 'music' ? { role: 'sfx', loop: false } : { role: 'music', loop: true });
+    // "Loop as music" makes an item a looping music bed spanning the WHOLE
+    // video — without extending the block, a short track would still stop at
+    // its own duration (loop only repeats inside the block's span). Toggling
+    // back to SFX keeps the current span; trim the block if you want it shorter.
+    const toggleMusic = (item) => {
+        if (item.role === 'music') {
+            patch(item.id, { role: 'sfx', loop: false });
+            return;
+        }
+        const totalOut = Math.max(1, outputDurationFrames(framing, EDITOR_FPS));
+        patch(item.id, { role: 'music', loop: true, startFrame: 0, endFrame: totalOut });
+    };
 
     const nameOf = (item) => {
         try {

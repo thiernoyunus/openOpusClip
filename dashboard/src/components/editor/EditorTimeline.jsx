@@ -942,7 +942,7 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                 onPointerUp={endDrag}
                 onPointerLeave={endDrag}
             >
-                <div className="relative" style={{ width: Math.max(trackWidth + LEFT_GUTTER + RIGHT_PAD, '100%'), minWidth: '100%' }}>
+                <div className="relative" style={{ width: trackWidth + LEFT_GUTTER + RIGHT_PAD, minWidth: '100%' }}>
                     {/* Ruler with subtle dots + second markers */}
                     <div className="relative h-5 flex cursor-pointer" onPointerDown={rulerDown}>
                         <Gutter />
