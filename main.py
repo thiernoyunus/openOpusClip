@@ -2622,11 +2622,19 @@ if __name__ == '__main__':
             except (AttributeError, ValueError, OSError):
                 return None
 
+        def usable_cpus():
+            # sched_getaffinity respects a cpuset/container CPU pin; os.cpu_count
+            # reports the whole host. Fall back to cpu_count off-Linux.
+            try:
+                return len(os.sched_getaffinity(0))
+            except AttributeError:
+                return os.cpu_count() or 4
+
         def auto_clip_workers():
             ram_gib = available_ram_gib()
             if ram_gib is None or ram_gib < 15:
                 return 1  # small, capped, or unknown (e.g. native Windows) -> cautious
-            return max(1, min(4, (os.cpu_count() or 4) // 4))
+            return max(1, min(4, usable_cpus() // 4))
         try:
             clip_workers = int(os.environ.get('OPENSHORTS_CLIP_WORKERS', '0'))
         except ValueError:
