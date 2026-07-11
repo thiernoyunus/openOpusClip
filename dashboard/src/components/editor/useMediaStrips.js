@@ -20,8 +20,11 @@ export function useFilmstrip(sourceUrl, count = 14) {
         const canvas = document.createElement('canvas');
 
         const capture = async () => {
-            const W = 96;
-            const H = video.videoWidth > 0 ? Math.max(1, Math.round(W * (video.videoHeight / video.videoWidth))) : 54;
+            // Captured wide enough to stay sharp when a thumb is stretched across
+            // its timeline slot (esp. when zoomed in). 96px looked blurry/blocky;
+            // 192px @ q0.75 is crisp for a negligible payload bump.
+            const W = 192;
+            const H = video.videoWidth > 0 ? Math.max(1, Math.round(W * (video.videoHeight / video.videoWidth))) : 108;
             canvas.width = W;
             canvas.height = H;
             const ctx = canvas.getContext('2d');
@@ -39,7 +42,7 @@ export function useFilmstrip(sourceUrl, count = 14) {
                 });
                 if (cancelled) return;
                 ctx.drawImage(video, 0, 0, W, H);
-                captured.push(canvas.toDataURL('image/jpeg', 0.6));
+                captured.push(canvas.toDataURL('image/jpeg', 0.75));
                 setThumbs([...captured]);
             }
         };
