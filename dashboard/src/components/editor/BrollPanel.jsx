@@ -113,6 +113,14 @@ function BrollPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
                 throw new Error(await readErrorMessage(res, `Upload failed (${res.status})`));
             }
             const { url, kind } = await res.json();
+            // The picker's accept="video/*,image/*" isn't enforced by every
+            // browser (or a scripted client), and the /asset endpoint accepts
+            // audio too (for AudioPanel). Reject anything that isn't a valid
+            // OverlayItem.kind here instead of silently corrupting overlays[]
+            // with kind:"audio".
+            if (kind !== 'video' && kind !== 'image') {
+                throw new Error(`This file is a ${kind} — upload it from the Audio panel instead.`);
+            }
             // Read playhead AFTER the network work so the block lands where you are now.
             const start = getCurrentSourceFrame();
             let endFrame;
