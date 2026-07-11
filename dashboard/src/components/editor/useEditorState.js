@@ -1,9 +1,14 @@
 import { useReducer } from 'react';
 import { cropForFace, smoothedFaceRect } from '@remotion-src/compositions/ReframedVideo';
-import { framingToClips } from '@remotion-src/lib/edl';
+import { framingToClips, outputDurationFrames } from '@remotion-src/lib/edl';
 
 const HISTORY_LIMIT = 50;
 const MIN_CLIP_LEN = 2; // frames — keeps every clip seekable / non-degenerate
+// Mirrors EditorCanvas.EDITOR_FPS (not imported here to avoid a circular
+// import: EditorCanvas -> TrackerOverlay -> useEditorState). Only used for the
+// one-time legacy music -> audio[] migration below, where an output-frame
+// duration is needed before a Player/fps is available.
+const EDITOR_FPS = 30;
 
 // Unique clip ids. A module counter disambiguates clips created in the same
 // tick (e.g. a multi-range cut that splits several clips at once).
@@ -300,8 +305,8 @@ export const editorReducer = (state, action) => {
         }
         case 'SET_TRANSITIONS':
             return withHistory({ ...state.framing, transitions: { ...state.framing.transitions, ...action.patch } });
-        case 'SET_MUSIC':
-            return withHistory({ ...state.framing, music: action.music });
+        case 'SET_SOURCE_VOLUME':
+            return withHistory({ ...state.framing, sourceVolume: action.volume });
         case 'ADD_TEXT_OVERLAY': {
             if ((state.framing.textOverlays || []).length >= 5) return state;
             return withHistory({
@@ -321,15 +326,10 @@ export const editorReducer = (state, action) => {
                 ...state.framing,
                 textOverlays: state.framing.textOverlays.filter((o) => o.id !== action.id),
             });
-        case 'ADD_BROLL': {
-            if ((state.framing.broll || []).length >= 3) return state;
-            return withHistory({ ...state.framing, broll: [...(state.framing.broll || []), action.item] });
-        }
-        case 'REMOVE_BROLL':
-            return withHistory({
-                ...state.framing,
-                broll: state.framing.broll.filter((b) => b.id !== action.id),
-            });
+        // ADD_BROLL / REMOVE_BROLL removed in B4: BrollPanel now writes overlays[]
+        // and the legacy broll[] track is emptied by the load-time migration.
+        // UPDATE_BROLL is kept only because EditorTimeline still drags the (now
+        // always-empty) legacy broll lane through it.
         case 'UPDATE_BROLL':
             return withHistory({
                 ...state.framing,
@@ -548,11 +548,53 @@ export function normalizeFraming(framing) {
     const { segments, cuts, clipInFrame, clipOutFrame, ...rest } = framing;
     void segments; void cuts; void clipInFrame; void clipOutFrame;
 
-    // NOTE: legacy broll[]/music are deliberately NOT migrated into
-    // overlays[]/audio[] here yet — the panels (AudioPanel/BrollPanel) still
-    // read and write the legacy fields, so moving the data before the panels
-    // are rewired would leave tracks audible/visible but uneditable. The
-    // one-time MOVE migration ships together with the panel rework (B4).
+// --- Legacy track migration: broll[] -> overlays[], music -> audio[].
+    // MOVE semantics (not copy) — the legacy field is cleared on the normalized
+    // object so nothing double-renders once the new generic tracks exist.
+    // Idempotent: once broll/music are cleared, re-running finds nothing left
+    // to migrate and returns the same overlays/audio it was given.
+    const migratedOverlays = (framing.broll ?? []).map((b) => ({
+        id: b.id,
+        kind: 'video',
+        url: b.url,
+        startFrame: b.startFrame,
+        endFrame: b.endFrame,
+        anchor: 'source',
+        x: 0.5,
+        y: 0.5,
+        w: 1,
+        h: 1,
+        volume: 0,
+        z: 0,
+    }));
+    const overlays = [...(framing.overlays ?? []), ...migratedOverlays];
+
+    const migratedAudio = [];
+    const legacyMusic = framing.music;
+    if (legacyMusic && legacyMusic.url) {
+        // Output-duration-anchored: music must span the whole (already
+        // migrated) clip track, computed the same way the rest of the editor
+        // derives total duration (EditorView.jsx uses outputDurationFrames the
+        // same way, against EDITOR_FPS).
+        const endFrame = Math.max(
+            1,
+            outputDurationFrames({ source: framing.source, clips }, EDITOR_FPS)
+        );
+        migratedAudio.push({
+            id: `audio-${newClipId()}`,
+            role: 'music',
+            url: legacyMusic.url,
+            startFrame: 0,
+            endFrame,
+            trimBefore: 0,
+            volume: legacyMusic.volume ?? 0.15,
+            loop: true,
+            fadeInSec: 0,
+            fadeOutSec: 0,
+        });
+    }
+    const audio = [...(framing.audio ?? []), ...migratedAudio];
+
     return {
         ...rest,
         version: 3,
@@ -567,15 +609,15 @@ export function normalizeFraming(framing) {
         // re-auto-enable a clip the user deliberately turned captions off on.
         captionsInitialized: framing.captionsInitialized ?? false,
         textOverlays: framing.textOverlays ?? [],
-        music: framing.music ?? null,
-        broll: framing.broll ?? [],
+        // Legacy single-track fields, cleared by the migration above.
+        music: null,
+        broll: [],
         transitions: framing.transitions ?? { fadeIn: false, fadeOut: false, cutCrossfade: false },
-        overlays: framing.overlays ?? [],
-        audio: framing.audio ?? [],
-        // Not defaulted here on purpose: ReframedVideo falls back to legacy
-        // music.originalVolume when sourceVolume is unset, and the AudioPanel
-        // still writes the legacy field. B4 flips the panel to sourceVolume.
-        ...(framing.sourceVolume !== undefined ? { sourceVolume: framing.sourceVolume } : {}),
+        overlays,
+        audio,
+        // Carry the legacy "duck the original audio under music" knob — nulling
+        // music above would otherwise silently snap source audio back to 100%.
+        sourceVolume: framing.sourceVolume ?? framing.music?.originalVolume ?? 1,
     };
 }
 

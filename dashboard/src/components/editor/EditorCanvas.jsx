@@ -3,8 +3,29 @@ import { Player } from '@remotion/player';
 import { ShortVideo } from '@remotion-src/compositions/ShortVideo';
 import TrackerOverlay from './TrackerOverlay';
 import CaptionDragOverlay from './CaptionDragOverlay';
+import { getApiUrl } from '../../config';
 
 export const EDITOR_FPS = 30;
+
+// Framing stores portable RELATIVE /videos/... URLs for uploaded assets
+// (overlays, audio, legacy music/broll). Same-origin dev serves them via the
+// vite proxy, but with VITE_API_URL on a different origin the Player would
+// request them from the dashboard host and 404 — absolutize for playback only
+// (never persisted; the render-service does its own resolution for export).
+const apiAssetUrl = (url) =>
+    typeof url === 'string' && url.startsWith('/videos/') ? getApiUrl(url) : url;
+const withPlayableUrls = (framing) => {
+    if (!framing) return framing;
+    const mapList = (list) =>
+        Array.isArray(list) ? list.map((it) => (it && it.url ? { ...it, url: apiAssetUrl(it.url) } : it)) : list;
+    return {
+        ...framing,
+        overlays: mapList(framing.overlays),
+        audio: mapList(framing.audio),
+        broll: mapList(framing.broll),
+        music: framing.music?.url ? { ...framing.music, url: apiAssetUrl(framing.music.url) } : framing.music,
+    };
+};
 
 /**
  * The preview canvas: a Remotion Player running the exact ShortVideo composition
@@ -52,7 +73,7 @@ const EditorCanvas = forwardRef(function EditorCanvas(
         () => ({
             videoUrl: '',
             sourceVideoUrl: sourceUrl,
-            framing,
+            framing: withPlayableUrls(framing),
             durationInFrames,
             fps: EDITOR_FPS,
             // Preview renders at the full export resolution so it's true WYSIWYG.

@@ -350,44 +350,41 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     const selCount = selRange ? selRange.hi - selRange.lo + 1 : 0;
 
     return (
-        <div className="w-[420px] shrink-0 border-r border-edge bg-[#050506] flex flex-col min-h-0">
-            <div className="px-4 pt-3 pb-2 shrink-0 relative">
-                <div className="flex items-center gap-1.5 text-xs text-muted">
-                    <FileText size={12} /> Transcript
-                    <div className="ml-auto flex items-center gap-1.5">
-                        {onOpenExtend && (
-                            extending ? (
-                                <span
-                                    title="Adding a section from the original video"
-                                    className="flex items-center gap-1 px-2 py-1 rounded bg-viral/15 border border-viral/40 text-[11px] text-viral animate-pulse"
-                                >
-                                    <Loader2 size={12} className="animate-spin" /> Adding section…
-                                </span>
-                            ) : (
-                                <button
-                                    onClick={onOpenExtend}
-                                    title="Pull a section of the original video into this short"
-                                    className="flex items-center gap-1 px-2 py-1 rounded bg-surface2 border border-edge text-[11px] text-muted hover:text-fg hover:bg-white/5 transition-colors"
-                                >
-                                    <Plus size={12} /> Extend a clip
-                                </button>
-                            )
-                        )}
-                        <button
-                            onClick={() => setCleanupOpen((v) => !v)}
-                            disabled={captions.length === 0}
-                            title="Auto-remove filler words and pauses"
-                            className={`flex items-center gap-1 px-2 py-1 rounded bg-surface2 border border-edge text-[11px] transition-colors ${
-                                captions.length === 0
-                                    ? 'opacity-40 cursor-not-allowed'
-                                    : cleanupOpen
-                                      ? 'text-fg border-white/30'
-                                      : 'text-muted hover:text-fg hover:bg-white/5'
-                            }`}
-                        >
-                            <Wand2 size={12} /> Speech cleanup
-                        </button>
-                    </div>
+        <div className="w-[380px] shrink-0 border-r border-white/[0.05] bg-[#0b0b0d] flex flex-col min-h-0">
+            <div className="px-4 pt-3.5 pb-2 shrink-0 relative">
+                {/* OpusClip: Speech cleanup pill top-left, then Extend */}
+                <div className="flex flex-wrap items-center gap-2 mb-3">
+                    <button
+                        type="button"
+                        onClick={() => setCleanupOpen((v) => !v)}
+                        disabled={captions.length === 0}
+                        title="Auto-remove filler words and pauses"
+                        className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-full text-[12px] font-medium border transition-colors ${
+                            captions.length === 0
+                                ? 'opacity-40 cursor-not-allowed border-emerald-500/15 text-emerald-700/60 bg-emerald-500/5'
+                                : cleanupOpen
+                                  ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-200'
+                                  : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400/90 hover:bg-emerald-500/15 hover:text-emerald-300'
+                        }`}
+                    >
+                        <Wand2 size={13} /> Speech cleanup
+                    </button>
+                    {onOpenExtend && (
+                        extending ? (
+                            <span className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-[#3dd68c]/12 border border-[#3dd68c]/30 text-[12px] text-[#3dd68c] animate-pulse">
+                                <Loader2 size={12} className="animate-spin" /> Adding…
+                            </span>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={onOpenExtend}
+                                title="Pull a section of the original video into this short"
+                                className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-[12px] text-[#3dd68c] hover:bg-[#3dd68c]/10 transition-colors"
+                            >
+                                <Plus size={14} /> Extend a clip
+                            </button>
+                        )
+                    )}
                 </div>
                 {cleanupOpen && (
                     <div className="absolute right-4 top-full mt-1 z-30 w-56 bg-surface2 border border-edge rounded-lg shadow-lg p-3 text-xs">
@@ -427,15 +424,10 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                         </div>
                     </div>
                 )}
-                <div className="mt-1 flex items-center gap-2 text-[10px] text-zinc-600">
-                    <span>click word to seek · double-click to edit/add emoji</span>
-                    <span>·</span>
-                    <span className="inline-flex items-center gap-1"><Clock size={10} /> click pauses to cut</span>
-                </div>
             </div>
             <div
                 ref={containerRef}
-                className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-5 leading-7"
+                className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-6 leading-8"
                 // plaintext: let the bidi algorithm reorder runs (Arabic RTL, Latin
                 // LTR) per the first strong char of each block, without isolating
                 // each word. textAlign:start makes Arabic lines hug the right edge.
