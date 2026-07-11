@@ -2599,13 +2599,33 @@ if __name__ == '__main__':
         # so even a few workers can saturate (or swap) a laptop. Auto mode
         # (default) scales to the machine: serial when RAM is small or unknown,
         # parallel on big machines. OPENSHORTS_CLIP_WORKERS=N overrides.
-        def auto_clip_workers():
+        def available_ram_gib():
+            # In a memory-capped container SC_PHYS_PAGES reports the whole host,
+            # so read the cgroup limit first (v2, then v1) and only fall back to
+            # physical RAM. Return None when it can't be determined.
+            # ponytail: cgroup v1/v2 file reads cover Docker/K8s; no cgroup =
+            # bare metal -> sysconf.
+            for path in ('/sys/fs/cgroup/memory.max',                       # cgroup v2
+                         '/sys/fs/cgroup/memory/memory.limit_in_bytes'):    # cgroup v1
+                try:
+                    with open(path) as f:
+                        raw = f.read().strip()
+                    if raw and raw != 'max':
+                        limit = int(raw)
+                        # v1 uses a huge sentinel (~PAGE_SIZE * INT_MAX) for "no limit"
+                        if 0 < limit < (1 << 62):
+                            return limit / (1024 ** 3)
+                except (OSError, ValueError):
+                    pass
             try:
-                ram_gb = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / 1e9
+                return os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / (1024 ** 3)
             except (AttributeError, ValueError, OSError):
-                return 1  # can't tell (e.g. native Windows) -> stay cautious
-            if ram_gb < 15:
-                return 1
+                return None
+
+        def auto_clip_workers():
+            ram_gib = available_ram_gib()
+            if ram_gib is None or ram_gib < 15:
+                return 1  # small, capped, or unknown (e.g. native Windows) -> cautious
             return max(1, min(4, (os.cpu_count() or 4) // 4))
         try:
             clip_workers = int(os.environ.get('OPENSHORTS_CLIP_WORKERS', '0'))
