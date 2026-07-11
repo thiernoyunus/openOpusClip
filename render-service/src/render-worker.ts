@@ -14,14 +14,14 @@ import { renderJobs } from "./server.js";
 // are chosen to be safe for a *final* export (not a draft preview).
 
 // Concurrency = number of parallel headless-Chrome tabs capturing frames.
-// Remotion defaults to ~half the logical cores; using all cores roughly
-// doubles frame throughput on a render-dedicated box. Override via
-// RENDER_CONCURRENCY (integer) if the host is shared / memory-constrained.
+// Half the logical cores by default — all-cores roughly doubles throughput on
+// a render-dedicated box but starves shared laptops. Set RENDER_CONCURRENCY
+// (integer) to raise it on dedicated hardware.
 const RENDER_CONCURRENCY: number = (() => {
   const raw = process.env.RENDER_CONCURRENCY;
   const parsed = raw ? parseInt(raw, 10) : NaN;
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return Math.max(1, os.cpus().length);
+  return Math.max(1, Math.floor(os.cpus().length / 2));
 })();
 
 // x264 encoding preset. Remotion's default is "medium". A faster preset cuts

@@ -29,8 +29,9 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Configuration
-# Default to 1 if not set, but user can set higher for powerful servers
-MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "5"))
+# One job at a time by default — safe for laptops. Set higher (e.g. 4-5) on
+# servers with plenty of RAM/cores; each job is a full main.py subprocess.
+MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "1"))
 MAX_FILE_SIZE_MB = 2048  # 2GB limit
 # Output projects are kept until the user deletes them by default. Set
 # JOB_RETENTION_SECONDS > 0 to auto-purge finished projects older than that many

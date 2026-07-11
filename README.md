@@ -240,6 +240,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 cd dashboard && npm install && cd ..
+cd remotion && npm install && cd ..
 cd render-service && npm install && cd ..
 ```
 
@@ -250,6 +251,13 @@ cp .env.example .env
 ```
 
 API keys for Gemini, ElevenLabs, and Zernio are entered in the app Settings screen. The Clip Generator only needs a Gemini key. Zernio is not required unless you want to publish, schedule, or track posts on TikTok, Instagram, YouTube, and other platforms.
+
+> **Running on a laptop?** The defaults are already laptop-safe: one video job at
+> a time, one clip at a time, one export at a time. If your machine still
+> struggles, open `.env.example` — every performance knob is documented there
+> (and on a beefy server you can turn the same knobs up). Tips: use short local
+> uploads (1-3 min) rather than long YouTube videos while testing, and pick the
+> "base" or "tiny" Whisper model.
 
 ### 4. Launch locally
 ```bash
