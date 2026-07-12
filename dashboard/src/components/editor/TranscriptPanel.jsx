@@ -133,66 +133,69 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         return () => p.removeEventListener('frameupdate', onFrame);
     }, [playerRef]);
 
-    const segmentStarts = useMemo(() => {
+    // Per-clip info in PLAYBACK order (framing.clips array order == play order).
+    // origSec / origEndSec = where this clip's content lives in the ORIGINAL
+    // video (extend-inserted clips carry originalStartSec; pipeline clips
+    // derive it from the clip's start second + offset from the caption origin).
+    const clipInfo = useMemo(() => {
         if (!framing) return [];
-        // Clip starts on the same origin-anchored ms axis as word.startMs so the
-        // interleaved dividers land between the right words. Sorted by source
-        // start (the transcript reads in source order — after a clip REORDER the
-        // dividers reflect source position, not playback order; known limitation).
-        // origSec / origEndSec = where this clip's content lives in the ORIGINAL
-        // video (extend-inserted clips carry originalStartSec; pipeline clips
-        // derive it from the clip's start second + offset from the caption origin).
-        return framing.clips
-            .map((c) => {
-                const origSec = c.originalStartSec != null
-                    ? c.originalStartSec
-                    : clipStartSec != null
-                      ? clipStartSec + (c.sourceStart - captionsOrigin) / srcFps
-                      : null;
-                return {
-                    ms: ((c.sourceStart - captionsOrigin) / srcFps) * 1000,
-                    layout: c.layout,
-                    id: c.id,
-                    origSec,
-                    origEndSec: origSec != null ? origSec + (c.sourceEnd - c.sourceStart) / srcFps : null,
-                };
-            })
-            .sort((a, b) => a.ms - b.ms);
+        return framing.clips.map((c) => {
+            const origSec = c.originalStartSec != null
+                ? c.originalStartSec
+                : clipStartSec != null
+                  ? clipStartSec + (c.sourceStart - captionsOrigin) / srcFps
+                  : null;
+            return {
+                ms: ((c.sourceStart - captionsOrigin) / srcFps) * 1000,
+                layout: c.layout,
+                id: c.id,
+                origSec,
+                origEndSec: origSec != null ? origSec + (c.sourceEnd - c.sourceStart) / srcFps : null,
+            };
+        });
     }, [framing, captionsOrigin, srcFps, clipStartSec]);
+
+    // Which clip each word belongs to, walked in SOURCE order (like the old
+    // single-pass scan) so cut/removed words still interleave with their kept
+    // neighbors correctly. This only decides GROUPING, not display order —
+    // `rows` below walks the groups in `clipInfo`'s PLAYBACK order, so a
+    // reordered or Extend-inserted clip shows where it now plays, not where
+    // it was originally cut from (previously this was source order — the
+    // panel could show your latest addition at the bottom instead of the top).
+    const bucketsById = useMemo(() => {
+        const map = new Map(clipInfo.map((c) => [c.id, []]));
+        const bySource = [...clipInfo].sort((a, b) => a.ms - b.ms);
+        let nextSeg = 0;
+        let currentId = bySource[0]?.id ?? null;
+        captions.forEach((word, index) => {
+            while (nextSeg < bySource.length && bySource[nextSeg].ms <= word.startMs) {
+                currentId = bySource[nextSeg].id;
+                nextSeg += 1;
+            }
+            if (currentId != null) map.get(currentId)?.push(index);
+        });
+        return map;
+    }, [captions, clipInfo]);
 
     const rows = useMemo(() => {
         const out = [];
-        let nextSeg = 0;
         const pauseByWord = new Map(pauses.map((pause) => [pause.index, pause]));
-        captions.forEach((word, index) => {
-            while (
-                nextSeg < segmentStarts.length &&
-                segmentStarts[nextSeg].ms <= word.startMs
-            ) {
-                // Opus-style "+" bar at each clip boundary: opens the extend
-                // picker anchored at this boundary's original-video position,
-                // inserting the added section right here (after the prev clip).
-                if (nextSeg > 0 && onOpenExtend) {
-                    out.push({
-                        type: 'extend',
-                        key: `x-${segmentStarts[nextSeg].id}`,
-                        afterClipId: segmentStarts[nextSeg - 1].id,
-                        sec: segmentStarts[nextSeg].origSec,
-                    });
-                }
-                out.push({ type: 'divider', ...segmentStarts[nextSeg] });
-                nextSeg += 1;
+        clipInfo.forEach((info) => {
+            out.push({ type: 'divider', ...info });
+            (bucketsById.get(info.id) || []).forEach((index) => {
+                out.push({ type: 'word', word: captions[index], index });
+                const pause = pauseByWord.get(index);
+                if (pause) out.push({ type: 'pause', ...pause });
+            });
+            // Opus-style "+" bar after every clip: opens the extend picker
+            // anchored at this clip's end in the original video, inserting the
+            // added section right here (between this clip and the next one).
+            if (onOpenExtend) {
+                out.push({ type: 'extend', key: `x-${info.id}`, afterClipId: info.id, sec: info.origEndSec });
             }
-            out.push({ type: 'word', word, index });
-            const pause = pauseByWord.get(index);
-            if (pause) out.push({ type: 'pause', ...pause });
         });
-        const last = segmentStarts[segmentStarts.length - 1];
-        if (last && onOpenExtend) {
-            out.push({ type: 'extend', key: 'x-end', afterClipId: last.id, sec: last.origEndSec });
-        }
         return out;
-    }, [captions, pauses, segmentStarts, onOpenExtend]);
+    }, [captions, pauses, clipInfo, bucketsById, onOpenExtend]);
 
     // Each non-cut word's position on the OUTPUT timeline (ms), precomputed
     // once so the per-frame active-word lookup is a binary search instead of an
@@ -449,7 +452,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                     ) : (
                         <button
                             type="button"
-                            onClick={() => onOpenExtend({ prepend: true, sec: segmentStarts[0]?.origSec ?? null })}
+                            onClick={() => onOpenExtend({ prepend: true, sec: clipInfo[0]?.origSec ?? null })}
                             title="Add a section of the original video before the start of this short"
                             className="inline-flex items-center gap-1 h-7 px-2 rounded-md border border-white/10 bg-white/[0.03] text-[12px] text-zinc-300 hover:text-[#3dd68c] hover:border-[#3dd68c]/30 hover:bg-[#3dd68c]/10 transition-colors"
                         >
