@@ -71,7 +71,7 @@ const PauseChip = React.memo(function PauseChip({ pause, selected, isCut, onPaus
  * content (splits the owning clip(s) and drops the middle). Removed words
  * render struck through; use Undo to bring them back.
  */
-export default function TranscriptPanel({ captions, framing, playerRef, onEditWord, dispatch, onOpenExtend, extending }) {
+export default function TranscriptPanel({ captions, framing, playerRef, onEditWord, dispatch, onOpenExtend, extending, clipStartSec }) {
     const [currentMs, setCurrentMs] = useState(0);
     const [editingIndex, setEditingIndex] = useState(null);
     const [draft, setDraft] = useState('');
@@ -139,14 +139,26 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         // interleaved dividers land between the right words. Sorted by source
         // start (the transcript reads in source order — after a clip REORDER the
         // dividers reflect source position, not playback order; known limitation).
+        // origSec / origEndSec = where this clip's content lives in the ORIGINAL
+        // video (extend-inserted clips carry originalStartSec; pipeline clips
+        // derive it from the clip's start second + offset from the caption origin).
         return framing.clips
-            .map((c) => ({
-                ms: ((c.sourceStart - captionsOrigin) / srcFps) * 1000,
-                layout: c.layout,
-                id: c.id,
-            }))
+            .map((c) => {
+                const origSec = c.originalStartSec != null
+                    ? c.originalStartSec
+                    : clipStartSec != null
+                      ? clipStartSec + (c.sourceStart - captionsOrigin) / srcFps
+                      : null;
+                return {
+                    ms: ((c.sourceStart - captionsOrigin) / srcFps) * 1000,
+                    layout: c.layout,
+                    id: c.id,
+                    origSec,
+                    origEndSec: origSec != null ? origSec + (c.sourceEnd - c.sourceStart) / srcFps : null,
+                };
+            })
             .sort((a, b) => a.ms - b.ms);
-    }, [framing, captionsOrigin, srcFps]);
+    }, [framing, captionsOrigin, srcFps, clipStartSec]);
 
     const rows = useMemo(() => {
         const out = [];
@@ -157,6 +169,17 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                 nextSeg < segmentStarts.length &&
                 segmentStarts[nextSeg].ms <= word.startMs
             ) {
+                // Opus-style "+" bar at each clip boundary: opens the extend
+                // picker anchored at this boundary's original-video position,
+                // inserting the added section right here (after the prev clip).
+                if (nextSeg > 0 && onOpenExtend) {
+                    out.push({
+                        type: 'extend',
+                        key: `x-${segmentStarts[nextSeg].id}`,
+                        afterClipId: segmentStarts[nextSeg - 1].id,
+                        sec: segmentStarts[nextSeg].origSec,
+                    });
+                }
                 out.push({ type: 'divider', ...segmentStarts[nextSeg] });
                 nextSeg += 1;
             }
@@ -164,8 +187,12 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
             const pause = pauseByWord.get(index);
             if (pause) out.push({ type: 'pause', ...pause });
         });
+        const last = segmentStarts[segmentStarts.length - 1];
+        if (last && onOpenExtend) {
+            out.push({ type: 'extend', key: 'x-end', afterClipId: last.id, sec: last.origEndSec });
+        }
         return out;
-    }, [captions, pauses, segmentStarts]);
+    }, [captions, pauses, segmentStarts, onOpenExtend]);
 
     // Each non-cut word's position on the OUTPUT timeline (ms), precomputed
     // once so the per-frame active-word lookup is a binary search instead of an
@@ -377,7 +404,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                         ) : (
                             <button
                                 type="button"
-                                onClick={onOpenExtend}
+                                onClick={() => onOpenExtend({ afterClipId: null, sec: segmentStarts[0]?.origSec ?? null })}
                                 title="Pull a section of the original video into this short"
                                 className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-[12px] text-[#3dd68c] hover:bg-[#3dd68c]/10 transition-colors"
                             >
@@ -437,7 +464,18 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                     <p className="text-xs text-muted mt-2">No transcript available for this clip.</p>
                 ) : (
                     rows.map((row) =>
-                        row.type === 'divider' ? (
+                        row.type === 'extend' ? (
+                            <button
+                                key={row.key}
+                                type="button"
+                                disabled={extending}
+                                onClick={() => onOpenExtend({ afterClipId: row.afterClipId, sec: row.sec })}
+                                title="Add a section of the original video here"
+                                className="w-full h-7 my-1.5 rounded-full bg-white/[0.04] hover:bg-[#3dd68c]/10 border border-transparent hover:border-[#3dd68c]/30 text-zinc-500 hover:text-[#3dd68c] flex items-center justify-center transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                <Plus size={13} />
+                            </button>
+                        ) : row.type === 'divider' ? (
                             <div key={`d-${row.id}`} className="flex items-center gap-2 my-2 select-none">
                                 <span className="text-[10px] font-medium text-zinc-400 bg-surface2 border border-edge px-1.5 py-0.5 rounded">
                                     Clip {(row.ms / 1000).toFixed(1)}s · {LAYOUT_LABEL[row.layout] || row.layout}

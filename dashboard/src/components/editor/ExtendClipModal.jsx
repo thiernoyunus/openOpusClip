@@ -39,12 +39,14 @@ function Stepper({ label, value, edge, onStep }) {
  * another to extend it (contiguous range). Right: a preview of the original
  * seeking to the selection start, with ±0.5s steppers and an Add button.
  */
-export default function ExtendClipModal({ jobId, onClose, onAdd }) {
+export default function ExtendClipModal({ jobId, initialSec, onClose, onAdd }) {
     const [data, setData] = useState(null); // { hasOriginal, duration, segments }
     const [loadError, setLoadError] = useState(null);
     const [range, setRange] = useState(null); // { anchor, focus } segment indices
     const [bounds, setBounds] = useState(null); // { start, end } fine-tuned seconds
     const videoRef = useRef(null);
+    const listRef = useRef(null);
+    const draggingRef = useRef(false); // mousedown on a segment -> drag extends the selection
 
     const originalUrl = getApiUrl(`/videos/${jobId}/original.mp4`);
 
@@ -79,10 +81,43 @@ export default function ExtendClipModal({ jobId, onClose, onAdd }) {
         }
     }, [start, selRange]);
 
-    const onSegmentClick = (i, e) => {
+    // Scroll the transcript to the spot the "+" was clicked (initialSec is in
+    // original-video seconds) and cue the preview there — Opus behavior: the
+    // picker opens where you're extending, not at the top of the video.
+    useEffect(() => {
+        if (!data || initialSec == null) return;
+        const i = segments.findIndex((s) => s.end >= initialSec);
+        if (i === -1) return;
+        listRef.current
+            ?.querySelector(`[data-seg-index="${i}"]`)
+            ?.scrollIntoView({ block: 'center' });
+        if (videoRef.current) {
+            try { videoRef.current.currentTime = initialSec; } catch { /* not ready yet */ }
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [data]); // once, when the transcript loads
+
+    // End a drag-selection wherever the mouse is released.
+    useEffect(() => {
+        const up = () => { draggingRef.current = false; };
+        window.addEventListener('mouseup', up);
+        return () => window.removeEventListener('mouseup', up);
+    }, []);
+
+    const onSegmentDown = (i, e) => {
         setBounds(null);
-        if (e.shiftKey && range) setRange({ anchor: range.anchor, focus: i });
-        else setRange({ anchor: i, focus: i });
+        if (e.shiftKey && range) {
+            setRange({ anchor: range.anchor, focus: i });
+        } else {
+            setRange({ anchor: i, focus: i });
+            draggingRef.current = true;
+        }
+    };
+
+    const onSegmentEnter = (i) => {
+        if (!draggingRef.current) return;
+        setBounds(null);
+        setRange((r) => (r ? { anchor: r.anchor, focus: i } : { anchor: i, focus: i }));
     };
 
     const step = (edge, delta) => {
@@ -141,16 +176,18 @@ export default function ExtendClipModal({ jobId, onClose, onAdd }) {
                         {/* Left: source transcript, grouped by segment */}
                         <div className="w-1/2 border-r border-edge flex flex-col min-h-0">
                             <div className="px-4 py-2 text-[11px] text-muted border-b border-edge shrink-0">
-                                Click a segment to start a selection · Shift-click another to extend
+                                Click or drag to select a section · Shift-click to extend it
                             </div>
-                            <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-1">
+                            <div ref={listRef} className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-1 select-none">
                                 {segments.map((seg, i) => {
                                     const inSel = selRange && i >= selRange.lo && i <= selRange.hi;
                                     return (
                                         <button
                                             key={i}
                                             type="button"
-                                            onClick={(e) => onSegmentClick(i, e)}
+                                            data-seg-index={i}
+                                            onMouseDown={(e) => onSegmentDown(i, e)}
+                                            onMouseEnter={() => onSegmentEnter(i)}
                                             className={`w-full text-left rounded-md px-2.5 py-1.5 transition-colors ${
                                                 inSel ? 'bg-lime-300/20 border border-lime-300/40' : 'hover:bg-white/5 border border-transparent'
                                             }`}
@@ -175,6 +212,13 @@ export default function ExtendClipModal({ jobId, onClose, onAdd }) {
                                     ref={videoRef}
                                     src={originalUrl}
                                     controls
+                                    onLoadedMetadata={(e) => {
+                                        // Cue the anchor point once the file is seekable
+                                        // (the effect above may have fired too early).
+                                        if (!selRange && initialSec != null) {
+                                            e.currentTarget.currentTime = initialSec;
+                                        }
+                                    }}
                                     className="max-w-full max-h-full rounded-md"
                                 />
                             </div>

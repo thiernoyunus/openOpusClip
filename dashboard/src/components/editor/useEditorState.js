@@ -262,7 +262,7 @@ export const editorReducer = (state, action) => {
             // source duration, insert the new clip after the selected clip (or at
             // the end), and append the appended section's caption words to the
             // subtitle track so they render at the moment they're spoken.
-            const { newDurationFrames, clip, afterClipId, words } = action;
+            const { newDurationFrames, clip, afterClipId, words, faceTracks } = action;
             const framing = state.framing;
             const clips = [...framing.clips];
             let at = clips.length;
@@ -270,23 +270,33 @@ export const editorReducer = (state, action) => {
                 const idx = clips.findIndex((c) => c.id === afterClipId);
                 if (idx !== -1) at = idx + 1;
             }
-            // ponytail: auto-reframe analysis of extensions is a later upgrade —
-            // the new clip is a plain fill with no tracking; the manual Tracker
-            // already works on it.
-            clips.splice(at, 0, {
+            // The server analyzed the appended frames with the same reframe
+            // pipeline as the original clip (action.clips + action.faceTracks).
+            // New face-track ids start at 0, so shift them past the existing
+            // ones before merging. Falls back to a single plain-fill clip.
+            const idBase = (framing.faceTracks || []).reduce((m, t) => Math.max(m, t.id + 1), 0);
+            const inserted = (action.clips?.length ? action.clips : [clip]).map((c) => ({
                 id: newClipId(),
-                sourceStart: clip.sourceStart,
-                sourceEnd: clip.sourceEnd,
-                layout: clip.layout || 'fill',
-                trackedFaceIds: [],
-                cameraKeyframes: [],
+                sourceStart: c.sourceStart,
+                sourceEnd: c.sourceEnd,
+                layout: c.layout || 'fill',
+                trackedFaceIds: (c.trackedFaceIds || []).map((x) => x + idBase),
+                cameraKeyframes: c.cameraKeyframes || [],
                 manualCrop: null,
-            });
+                ...(c.originalStartSec != null ? { originalStartSec: c.originalStartSec } : {}),
+            }));
+            clips.splice(at, 0, ...inserted);
             const nextFraming = {
                 ...framing,
                 source: { ...framing.source, durationFrames: newDurationFrames },
                 clips,
             };
+            if (Array.isArray(faceTracks) && faceTracks.length) {
+                nextFraming.faceTracks = [
+                    ...(framing.faceTracks || []),
+                    ...faceTracks.map((t) => ({ ...t, id: t.id + idBase })),
+                ];
+            }
             if (nextFraming.subtitles && Array.isArray(words) && words.length) {
                 nextFraming.subtitles = {
                     ...nextFraming.subtitles,

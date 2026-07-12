@@ -72,6 +72,10 @@ const EDITOR_DEV_FIXTURES = {
     source_url: '/videos/dev/demo_clip_1_source.mp4',
     video_url: '/videos/dev/demo_clip_1_source.mp4',
     video_title_for_youtube_short: 'Editor dev fixture (backend)',
+    // Where the fixture clip sits in its "original" video — anchors the
+    // transcript panel's "+" extend bars in dev.
+    start: 0,
+    end: 45,
   },
 };
 

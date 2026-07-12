@@ -340,6 +340,10 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     // "Extend a clip": modal open + a background flag while the appended section
     // is being cut/concatenated on the server (editing stays usable meanwhile).
     const [showExtendModal, setShowExtendModal] = useState(false);
+    // Where the extend was initiated from: { afterClipId, sec } — sec is the
+    // ORIGINAL-video second the picker should scroll to (Opus-style), and the
+    // added section is inserted after afterClipId (null = after selection/end).
+    const [extendCtx, setExtendCtx] = useState(null);
     const [extending, setExtending] = useState(false);
     // Caption placement scope: 'all' = drag/preset edits the global subtitle
     // position (every clip); 'clip' = edits only the clip at the playhead.
@@ -624,11 +628,14 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         return hit?.clip.id ?? framing.clips?.[0]?.id ?? null;
     }, [framing]);
 
-    // Extend a clip: POST the section, then poll the background task. On done,
-    // grow the source, insert the new clip after the selected one, and append
-    // the appended section's caption words (both to the subtitle track via the
-    // reducer and to the local transcript list so they show and survive a toggle).
+    // Extend a clip: POST the section, then poll the background task (which
+    // also reframes the appended frames with the pipeline's face tracking).
+    // On done, grow the source, insert the analyzed clip(s) at the spot the
+    // "+" was clicked, merge the new face tracks, and append the section's
+    // caption words (both to the subtitle track via the reducer and to the
+    // local transcript list so they show and survive a toggle).
     const handleExtendAdd = useCallback(async (startSec, endSec) => {
+        const afterClipId = extendCtx?.afterClipId ?? state.selectedIds[0] ?? null;
         setShowExtendModal(false);
         setExtending(true);
         try {
@@ -642,7 +649,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                 throw new Error(detail.detail || `Extend failed (${res.status}).`);
             }
             const { task_id } = await res.json();
-            const deadline = Date.now() + 180000; // ~3 min
+            const deadline = Date.now() + 600000; // ~10 min (includes the reframe analysis)
             for (;;) {
                 await new Promise((r) => setTimeout(r, 2000));
                 if (Date.now() > deadline) throw new Error('Adding the section timed out.');
@@ -650,13 +657,26 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                 if (!st.ok) throw new Error('Lost contact with the server.');
                 const task = await st.json();
                 if (task.status === 'done') {
-                    const { newDurationFrames, insertStart, insertEnd, words } = task.result;
+                    const { newDurationFrames, insertStart, insertEnd, words, clips, faceTracks } = task.result;
+                    const fps = state.framing?.source?.fps || EDITOR_FPS;
                     setSourceVersion(Date.now());
                     dispatch({
                         type: 'EXTEND_SOURCE',
                         newDurationFrames,
-                        clip: { sourceStart: insertStart, sourceEnd: insertEnd, layout: 'fill' },
-                        afterClipId: state.selectedIds[0] || null,
+                        // Each analyzed clip remembers its original-video start so
+                        // later "+" bars next to it can anchor the picker correctly.
+                        clips: (clips || []).map((c) => ({
+                            ...c,
+                            originalStartSec: startSec + (c.sourceStart - insertStart) / fps,
+                        })),
+                        clip: {
+                            sourceStart: insertStart,
+                            sourceEnd: insertEnd,
+                            layout: 'fill',
+                            originalStartSec: startSec,
+                        },
+                        faceTracks,
+                        afterClipId,
                         words,
                     });
                     setCaptions((prev) => [...prev, ...(words || [])]);
@@ -669,7 +689,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         } finally {
             setExtending(false);
         }
-    }, [jobId, index, dispatch, state.selectedIds, showError]);
+    }, [jobId, index, dispatch, state.selectedIds, state.framing, extendCtx, showError]);
 
     const title =
         clip.video_title_for_youtube_short || `Clip ${typeof index === 'number' ? index + 1 : ''}`;
@@ -717,7 +737,11 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                             playerRef={playerRef}
                             onEditWord={handleEditWord}
                             dispatch={dispatch}
-                            onOpenExtend={() => setShowExtendModal(true)}
+                            clipStartSec={typeof clip.start === 'number' ? clip.start : null}
+                            onOpenExtend={(ctx) => {
+                                setExtendCtx(ctx || null);
+                                setShowExtendModal(true);
+                            }}
                             extending={extending}
                         />
 
@@ -806,6 +830,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                     {showExtendModal && (
                         <ExtendClipModal
                             jobId={jobId}
+                            initialSec={extendCtx?.sec ?? null}
                             onClose={() => setShowExtendModal(false)}
                             onAdd={handleExtendAdd}
                         />
