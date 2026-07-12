@@ -71,7 +71,7 @@ const PauseChip = React.memo(function PauseChip({ pause, selected, isCut, onPaus
  * content (splits the owning clip(s) and drops the middle). Removed words
  * render struck through; use Undo to bring them back.
  */
-export default function TranscriptPanel({ captions, framing, playerRef, onEditWord, dispatch, onOpenExtend, extending }) {
+export default function TranscriptPanel({ captions, framing, playerRef, onEditWord, dispatch, onOpenExtend, extending, clipStartSec }) {
     const [currentMs, setCurrentMs] = useState(0);
     const [editingIndex, setEditingIndex] = useState(null);
     const [draft, setDraft] = useState('');
@@ -133,39 +133,88 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         return () => p.removeEventListener('frameupdate', onFrame);
     }, [playerRef]);
 
-    const segmentStarts = useMemo(() => {
+    // Per-clip info in PLAYBACK order (framing.clips array order == play order).
+    // origSec / origEndSec = where this clip's content lives in the ORIGINAL
+    // video. Extend-inserted clips carry originalOffsetSec — a frame-position-
+    // INDEPENDENT constant (origSec = offset + sourceStart/fps) — so it stays
+    // correct even after the clip is later trimmed/split/cut and sourceStart
+    // moves; pipeline clips derive origSec from the clip's start second plus
+    // offset from the caption origin.
+    const clipInfo = useMemo(() => {
         if (!framing) return [];
-        // Clip starts on the same origin-anchored ms axis as word.startMs so the
-        // interleaved dividers land between the right words. Sorted by source
-        // start (the transcript reads in source order — after a clip REORDER the
-        // dividers reflect source position, not playback order; known limitation).
-        return framing.clips
-            .map((c) => ({
+        return framing.clips.map((c) => {
+            const origSec = c.originalOffsetSec != null
+                ? c.originalOffsetSec + c.sourceStart / srcFps
+                : clipStartSec != null
+                  ? clipStartSec + (c.sourceStart - captionsOrigin) / srcFps
+                  : null;
+            return {
                 ms: ((c.sourceStart - captionsOrigin) / srcFps) * 1000,
                 layout: c.layout,
                 id: c.id,
-            }))
-            .sort((a, b) => a.ms - b.ms);
-    }, [framing, captionsOrigin, srcFps]);
+                origSec,
+                origEndSec: origSec != null ? origSec + (c.sourceEnd - c.sourceStart) / srcFps : null,
+            };
+        });
+    }, [framing, captionsOrigin, srcFps, clipStartSec]);
+
+    // Which clip each word belongs to, walked in SOURCE order (like the old
+    // single-pass scan) so cut/removed words still interleave with their kept
+    // neighbors correctly. This only decides GROUPING, not display order —
+    // `rows` below walks the groups in `clipInfo`'s PLAYBACK order, so a
+    // reordered or Extend-inserted clip shows where it now plays, not where
+    // it was originally cut from (previously this was source order — the
+    // panel could show your latest addition at the bottom instead of the top).
+    const bucketsById = useMemo(() => {
+        const map = new Map(clipInfo.map((c) => [c.id, []]));
+        const bySource = [...clipInfo].sort((a, b) => a.ms - b.ms);
+        let nextSeg = 0;
+        let currentId = bySource[0]?.id ?? null;
+        captions.forEach((word, index) => {
+            while (nextSeg < bySource.length && bySource[nextSeg].ms <= word.startMs) {
+                currentId = bySource[nextSeg].id;
+                nextSeg += 1;
+            }
+            if (currentId != null) map.get(currentId)?.push(index);
+        });
+        return map;
+    }, [captions, clipInfo]);
 
     const rows = useMemo(() => {
         const out = [];
-        let nextSeg = 0;
+        let pos = 0; // ordinal among word-rows, in DISPLAY (playback) order
         const pauseByWord = new Map(pauses.map((pause) => [pause.index, pause]));
-        captions.forEach((word, index) => {
-            while (
-                nextSeg < segmentStarts.length &&
-                segmentStarts[nextSeg].ms <= word.startMs
-            ) {
-                out.push({ type: 'divider', ...segmentStarts[nextSeg] });
-                nextSeg += 1;
+        clipInfo.forEach((info) => {
+            out.push({ type: 'divider', ...info });
+            (bucketsById.get(info.id) || []).forEach((index) => {
+                // clipId + pos let selection/cut work in DISPLAY order (see
+                // selRange/handleCut below) instead of assuming caption array
+                // index is monotonic in display order, which it no longer is
+                // once a clip has been reordered or Extend-inserted elsewhere.
+                out.push({ type: 'word', word: captions[index], index, clipId: info.id, pos: pos++ });
+                const pause = pauseByWord.get(index);
+                if (pause) out.push({ type: 'pause', ...pause });
+            });
+            // Opus-style "+" bar after every clip: opens the extend picker
+            // anchored at this clip's end in the original video, inserting the
+            // added section right here (between this clip and the next one).
+            if (onOpenExtend) {
+                out.push({ type: 'extend', key: `x-${info.id}`, afterClipId: info.id, sec: info.origEndSec });
             }
-            out.push({ type: 'word', word, index });
-            const pause = pauseByWord.get(index);
-            if (pause) out.push({ type: 'pause', ...pause });
         });
         return out;
-    }, [captions, pauses, segmentStarts]);
+    }, [captions, pauses, clipInfo, bucketsById, onOpenExtend]);
+
+    // Flat, display-ordered list of just the word rows — lets selection/cut
+    // translate a display-position range back to {caption index, clipId}
+    // triples (see handleCut) instead of treating the caption array's index
+    // order as if it matched what's on screen.
+    const wordRows = useMemo(() => rows.filter((r) => r.type === 'word'), [rows]);
+    const posByIndex = useMemo(() => {
+        const m = new Map();
+        wordRows.forEach((r) => m.set(r.index, r.pos));
+        return m;
+    }, [wordRows]);
 
     // Each non-cut word's position on the OUTPUT timeline (ms), precomputed
     // once so the per-frame active-word lookup is a binary search instead of an
@@ -297,15 +346,45 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         setEmojiQuery('');
     }, []);
 
+    // sel.anchor/focus are caption ARRAY indices (stable identity for a word);
+    // the selection itself is a range in DISPLAY position space (posByIndex),
+    // since displayed order no longer matches array-index order once a clip
+    // has been reordered or Extend-inserted elsewhere (see rows/wordRows above).
     const selRange = sel
-        ? { lo: Math.min(sel.anchor, sel.focus), hi: Math.max(sel.anchor, sel.focus) }
+        ? (() => {
+              const a = posByIndex.get(sel.anchor);
+              const f = posByIndex.get(sel.focus);
+              if (a == null || f == null) return null;
+              return { lo: Math.min(a, f), hi: Math.max(a, f) };
+          })()
         : null;
 
     const handleCut = () => {
         if (!selRange) return;
-        const startFrame = wordToSource(captions[selRange.lo]).start;
-        const endFrame = wordToSource(captions[selRange.hi]).end;
-        dispatch({ type: 'CUT_SOURCE_RANGE', ranges: [{ startFrame, endFrame }] });
+        // The selection is a contiguous run in DISPLAY order, but that can
+        // span more than one clip (e.g. shift-selecting across a boundary
+        // where the clips aren't source-adjacent). Cluster consecutive
+        // selected words by which clip they belong to and cut one source
+        // range per cluster, in a single undo step — cutting the whole span
+        // as ONE range would be wrong (and could delete unrelated footage)
+        // whenever the clips it crosses aren't next to each other in source.
+        const ranges = [];
+        let curClipId = null;
+        let curStart = 0;
+        let curEnd = 0;
+        wordRows.slice(selRange.lo, selRange.hi + 1).forEach(({ word, clipId }) => {
+            const { start, end } = wordToSource(word);
+            if (clipId === curClipId) {
+                curEnd = end;
+            } else {
+                if (curClipId != null) ranges.push({ startFrame: curStart, endFrame: curEnd });
+                curClipId = clipId;
+                curStart = start;
+                curEnd = end;
+            }
+        });
+        if (curClipId != null) ranges.push({ startFrame: curStart, endFrame: curEnd });
+        if (ranges.length > 0) dispatch({ type: 'CUT_SOURCE_RANGE', ranges });
         setSel(null);
     };
 
@@ -352,8 +431,9 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     return (
         <div className="w-[380px] shrink-0 border-r border-white/[0.05] bg-[#0b0b0d] flex flex-col min-h-0">
             <div className="px-4 pt-3.5 pb-2 shrink-0 relative">
-                {/* OpusClip: Speech cleanup pill top-left, then Extend */}
-                <div className="flex flex-wrap items-center gap-2 mb-3">
+                {/* OpusClip: Speech cleanup pill on top; "Extend a clip" sits on
+                    its own row right above the transcript (see below). */}
+                <div className="flex flex-wrap items-center gap-2">
                     <button
                         type="button"
                         onClick={() => setCleanupOpen((v) => !v)}
@@ -369,22 +449,6 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                     >
                         <Wand2 size={13} /> Speech cleanup
                     </button>
-                    {onOpenExtend && (
-                        extending ? (
-                            <span className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-[#3dd68c]/12 border border-[#3dd68c]/30 text-[12px] text-[#3dd68c] animate-pulse">
-                                <Loader2 size={12} className="animate-spin" /> Adding…
-                            </span>
-                        ) : (
-                            <button
-                                type="button"
-                                onClick={onOpenExtend}
-                                title="Pull a section of the original video into this short"
-                                className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-[12px] text-[#3dd68c] hover:bg-[#3dd68c]/10 transition-colors"
-                            >
-                                <Plus size={14} /> Extend a clip
-                            </button>
-                        )
-                    )}
                 </div>
                 {cleanupOpen && (
                     <div className="absolute right-4 top-full mt-1 z-30 w-56 bg-surface2 border border-edge rounded-lg shadow-lg p-3 text-xs">
@@ -425,6 +489,27 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                     </div>
                 )}
             </div>
+            {/* Opus placement: "Extend a clip" directly above the transcript.
+                Clicking it extends the BEGINNING of the short — the picker opens
+                at the clip's start in the original and the section is prepended. */}
+            {onOpenExtend && (
+                <div className="px-4 pb-1.5 shrink-0">
+                    {extending ? (
+                        <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-[#3dd68c]/12 border border-[#3dd68c]/30 text-[12px] text-[#3dd68c] animate-pulse">
+                            <Loader2 size={12} className="animate-spin" /> Adding…
+                        </span>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={() => onOpenExtend({ prepend: true, sec: clipInfo[0]?.origSec ?? null })}
+                            title="Add a section of the original video before the start of this short"
+                            className="inline-flex items-center gap-1 h-7 px-2 rounded-md border border-white/10 bg-white/[0.03] text-[12px] text-zinc-300 hover:text-[#3dd68c] hover:border-[#3dd68c]/30 hover:bg-[#3dd68c]/10 transition-colors"
+                        >
+                            <Plus size={13} /> Extend a clip
+                        </button>
+                    )}
+                </div>
+            )}
             <div
                 ref={containerRef}
                 className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-6 leading-8"
@@ -437,7 +522,18 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                     <p className="text-xs text-muted mt-2">No transcript available for this clip.</p>
                 ) : (
                     rows.map((row) =>
-                        row.type === 'divider' ? (
+                        row.type === 'extend' ? (
+                            <button
+                                key={row.key}
+                                type="button"
+                                disabled={extending}
+                                onClick={() => onOpenExtend({ afterClipId: row.afterClipId, sec: row.sec })}
+                                title="Add a section of the original video here"
+                                className="w-full h-7 my-1.5 rounded-full bg-white/[0.04] hover:bg-[#3dd68c]/10 border border-transparent hover:border-[#3dd68c]/30 text-zinc-500 hover:text-[#3dd68c] flex items-center justify-center transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                <Plus size={13} />
+                            </button>
+                        ) : row.type === 'divider' ? (
                             <div key={`d-${row.id}`} className="flex items-center gap-2 my-2 select-none">
                                 <span className="text-[10px] font-medium text-zinc-400 bg-surface2 border border-edge px-1.5 py-0.5 rounded">
                                     Clip {(row.ms / 1000).toFixed(1)}s · {LAYOUT_LABEL[row.layout] || row.layout}
@@ -497,7 +593,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                 isActive={row.index === activeIndex}
                                 suppressHighlight={!!selectedPause}
                                 isCut={isCutByWord[row.index]}
-                                inSel={!!(selRange && row.index >= selRange.lo && row.index <= selRange.hi)}
+                                inSel={!!(selRange && row.pos >= selRange.lo && row.pos <= selRange.hi)}
                                 onWordClick={onWordClick}
                                 onEdit={onEdit}
                             />

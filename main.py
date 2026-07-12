@@ -1481,6 +1481,37 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
 
     return True
 
+def analyze_framing_range(input_video, start_frame, end_frame, aspect_ratio, out_path):
+    """Framing analysis for one frame window of `input_video` without keeping
+    any video: run the normal reframe bake into throwaway files and keep only
+    the framing decisions. Writes {"segments": [...], "faceTracks": [...]} to
+    out_path (frame numbers absolute in the input file). Used by the editor's
+    "Extend a clip" so an appended section is reframed exactly like the
+    original pipeline framed the clip."""
+    # ponytail: reuses the full bake (throwaway encode) instead of duplicating
+    # an analysis-only frame loop; extract one if Extend ever feels too slow.
+    tmp_dir = tempfile.mkdtemp(prefix="openshorts_analyze_")
+    try:
+        tmp_video = os.path.join(tmp_dir, "bake.mp4")
+        tmp_framing = os.path.join(tmp_dir, "framing.json")
+        ok = process_video_to_vertical(
+            input_video, tmp_video,
+            framing_output_path=tmp_framing,
+            aspect_ratio=aspect_ratio,
+            bake_in_frame=int(start_frame), bake_out_frame=int(end_frame),
+        )
+        if not ok or not os.path.exists(tmp_framing):
+            raise RuntimeError("Framing analysis failed")
+        with open(tmp_framing) as f:
+            data = json.load(f)
+        with open(out_path, "w") as f:
+            json.dump({
+                "segments": data.get("segments", []),
+                "faceTracks": data.get("faceTracks", []),
+            }, f)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
 def transcribe_video(video_path, whisper_model="base"):
     return transcribe(video_path, whisper_model)
 
@@ -2446,7 +2477,17 @@ if __name__ == '__main__':
     parser.add_argument('--trailer-pace', choices=sorted(TRAILER_PACE_PRESETS), default='standard', help="Trailer length/cut-density preset (trailer mode): punchy ~35s, standard ~60s, extended ~90s.")
     parser.add_argument('--smart-placement', action='store_true', help="Trailer mode: auto-position captions to avoid the speaker's face (DOAC smart placement; effective on wide/square output).")
 
+    parser.add_argument('--analyze-start', type=int, default=None, help="Analysis-only mode: first frame of the window to reframe (requires -i, --analyze-end, --analysis-out).")
+    parser.add_argument('--analyze-end', type=int, default=None, help="Analysis-only mode: end frame (exclusive) of the window.")
+    parser.add_argument('--analysis-out', type=str, default=None, help="Analysis-only mode: write framing decisions (segments + faceTracks) for the window to this JSON file and exit.")
+
     args = parser.parse_args()
+
+    if args.analysis_out is not None:
+        if not args.input or args.analyze_start is None or args.analyze_end is None:
+            parser.error("--analysis-out requires -i/--input, --analyze-start and --analyze-end")
+        analyze_framing_range(args.input, args.analyze_start, args.analyze_end, args.aspect_ratio, args.analysis_out)
+        sys.exit(0)
 
     script_start_time = time.time()
     

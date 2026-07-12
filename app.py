@@ -1114,6 +1114,57 @@ def _run_extend_task(task_id: str, job_id: str, clip_index: int, start_sec: floa
                 os.replace(tmp_meta, json_files[0])
             words = _extension_caption_words(ext_record, transcript, origin, src_fps)
 
+        # 5. Reframe the appended frames the same way the pipeline framed the
+        # original clip (scene detection + face tracking + smoothed camera),
+        # via an analysis-only subprocess. On any failure the editor falls
+        # back to inserting a plain fill clip, as before.
+        analysis = None
+        try:
+            aspect = "9:16"
+            framing_matches = glob.glob(os.path.join(output_dir, f"*_clip_{clip_index + 1}.framing.json"))
+            if framing_matches:
+                with open(framing_matches[0]) as f:
+                    fr = json.load(f)
+                aspect = {
+                    (1080, 1920): "9:16", (1080, 1080): "1:1",
+                    (1080, 1350): "4:5", (1920, 1080): "16:9",
+                }.get((fr.get("outputWidth"), fr.get("outputHeight")), "9:16")
+            analysis_path = os.path.join(output_dir, f".extend_{task_id}_analysis.json")
+            tmp_paths.append(analysis_path)
+            cmd = [
+                sys.executable, "-u", os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py"),
+                "-i", source_path,
+                "--analyze-start", str(old_frames), "--analyze-end", str(new_frames),
+                "--aspect-ratio", aspect, "--analysis-out", analysis_path,
+            ]
+            proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=540)
+            if proc.returncode == 0 and os.path.exists(analysis_path):
+                with open(analysis_path) as f:
+                    analysis = json.load(f)
+            else:
+                print(
+                    f"⚠️ Reframe analysis failed (exit code {proc.returncode}) for job {job_id} "
+                    f"clip {clip_index}: {proc.stderr.decode(errors='replace')[-2000:]}"
+                )
+        except Exception as e:  # noqa: BLE001 — log and fall back to a plain clip
+            print(f"⚠️ Reframe analysis raised for job {job_id} clip {clip_index}: {e}")
+            analysis = None
+
+        new_clips = None
+        if analysis and analysis.get("segments"):
+            new_clips = [
+                {
+                    "sourceStart": max(old_frames, int(seg["startFrame"])),
+                    "sourceEnd": min(new_frames, int(seg["endFrame"])),
+                    "layout": seg.get("layout", "fill"),
+                    "trackedFaceIds": seg.get("trackedFaceIds", []),
+                    "cameraKeyframes": seg.get("cameraKeyframes", []),
+                    "manualCrop": None,
+                }
+                for seg in analysis["segments"]
+                if min(new_frames, int(seg["endFrame"])) > max(old_frames, int(seg["startFrame"]))
+            ] or None
+
         with extend_tasks_lock:
             prev = extend_tasks.get(task_id, {})
             extend_tasks[task_id] = {
@@ -1124,6 +1175,9 @@ def _run_extend_task(task_id: str, job_id: str, clip_index: int, start_sec: floa
                     "insertStart": old_frames,
                     "insertEnd": new_frames,
                     "words": words,
+                    "clips": new_clips,
+                    "faceTracks": (analysis or {}).get("faceTracks") or [],
+                    "originalStartSec": start_sec,
                 },
             }
     except Exception as e:  # noqa: BLE001 — surface any failure to the poller

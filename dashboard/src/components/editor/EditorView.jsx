@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Loader2, AlertCircle, Captions, Crosshair, Sparkles, Type, Clapperboard, ChevronRight, ChevronDown, Check, Crop, Trash2 } from 'lucide-react';
 import { getApiUrl } from '../../config';
 import useEditorState, { defaultSubtitleConfig, loadDefaultCaptionStyle, tracksInClip, LAYOUT_PANELS } from './useEditorState';
@@ -340,6 +340,10 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     // "Extend a clip": modal open + a background flag while the appended section
     // is being cut/concatenated on the server (editing stays usable meanwhile).
     const [showExtendModal, setShowExtendModal] = useState(false);
+    // Where the extend was initiated from: { afterClipId, sec } — sec is the
+    // ORIGINAL-video second the picker should scroll to (Opus-style), and the
+    // added section is inserted after afterClipId (null = after selection/end).
+    const [extendCtx, setExtendCtx] = useState(null);
     const [extending, setExtending] = useState(false);
     // Caption placement scope: 'all' = drag/preset edits the global subtitle
     // position (every clip); 'clip' = edits only the clip at the playhead.
@@ -607,6 +611,29 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     const framing = state.framing;
     const durationInFrames = framing ? outputDurationFrames(framing, EDITOR_FPS) : 1;
 
+    // Which spans of the ORIGINAL video are already on the timeline (original
+    // seconds). The extend picker uses this to render in-timeline transcript
+    // white vs. not-yet-used gray, and to preselect the nearest addable part.
+    // originalOffsetSec (origVideoSec = offset + sourceStart/fps) is a
+    // frame-position-INDEPENDENT constant, so it stays correct even after the
+    // clip is later trimmed/split/cut and sourceStart moves.
+    const usedRanges = useMemo(() => {
+        if (!framing) return [];
+        const clipStart = typeof clip.start === 'number' ? clip.start : null;
+        const origin = framing.captionsOriginFrame ?? 0;
+        const fps = framing.source.fps;
+        return framing.clips
+            .map((c) => {
+                const s = c.originalOffsetSec != null
+                    ? c.originalOffsetSec + c.sourceStart / fps
+                    : clipStart != null
+                      ? clipStart + (c.sourceStart - origin) / fps
+                      : null;
+                return s == null ? null : { start: s, end: s + (c.sourceEnd - c.sourceStart) / fps };
+            })
+            .filter(Boolean);
+    }, [framing, clip.start]);
+
     // Current playhead in SOURCE frames — for inserting text/b-roll at the playhead
     const getCurrentSourceFrame = useCallback(
         () => (framing ? outputToSource(framing, playerRef.current?.getCurrentFrame() ?? 0, EDITOR_FPS) : 0),
@@ -624,11 +651,15 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         return hit?.clip.id ?? framing.clips?.[0]?.id ?? null;
     }, [framing]);
 
-    // Extend a clip: POST the section, then poll the background task. On done,
-    // grow the source, insert the new clip after the selected one, and append
-    // the appended section's caption words (both to the subtitle track via the
-    // reducer and to the local transcript list so they show and survive a toggle).
+    // Extend a clip: POST the section, then poll the background task (which
+    // also reframes the appended frames with the pipeline's face tracking).
+    // On done, grow the source, insert the analyzed clip(s) at the spot the
+    // "+" was clicked, merge the new face tracks, and append the section's
+    // caption words (both to the subtitle track via the reducer and to the
+    // local transcript list so they show and survive a toggle).
     const handleExtendAdd = useCallback(async (startSec, endSec) => {
+        const atStart = !!extendCtx?.prepend;
+        const afterClipId = atStart ? null : extendCtx?.afterClipId ?? state.selectedIds[0] ?? null;
         setShowExtendModal(false);
         setExtending(true);
         try {
@@ -642,7 +673,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                 throw new Error(detail.detail || `Extend failed (${res.status}).`);
             }
             const { task_id } = await res.json();
-            const deadline = Date.now() + 180000; // ~3 min
+            const deadline = Date.now() + 600000; // ~10 min (includes the reframe analysis)
             for (;;) {
                 await new Promise((r) => setTimeout(r, 2000));
                 if (Date.now() > deadline) throw new Error('Adding the section timed out.');
@@ -650,13 +681,27 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                 if (!st.ok) throw new Error('Lost contact with the server.');
                 const task = await st.json();
                 if (task.status === 'done') {
-                    const { newDurationFrames, insertStart, insertEnd, words } = task.result;
+                    const { newDurationFrames, insertStart, insertEnd, words, clips, faceTracks } = task.result;
+                    const fps = state.framing?.source?.fps || EDITOR_FPS;
+                    // Constant offset (origVideoSec = originalOffsetSec + sourceStart/fps),
+                    // NOT an absolute origSec — a later trim/split/cut moves sourceStart,
+                    // and this stays correct across that since it doesn't bake in a
+                    // specific frame position.
+                    const originalOffsetSec = startSec - insertStart / fps;
                     setSourceVersion(Date.now());
                     dispatch({
                         type: 'EXTEND_SOURCE',
                         newDurationFrames,
-                        clip: { sourceStart: insertStart, sourceEnd: insertEnd, layout: 'fill' },
-                        afterClipId: state.selectedIds[0] || null,
+                        clips: (clips || []).map((c) => ({ ...c, originalOffsetSec })),
+                        clip: {
+                            sourceStart: insertStart,
+                            sourceEnd: insertEnd,
+                            layout: 'fill',
+                            originalOffsetSec,
+                        },
+                        faceTracks,
+                        afterClipId,
+                        atStart,
                         words,
                     });
                     setCaptions((prev) => [...prev, ...(words || [])]);
@@ -669,7 +714,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         } finally {
             setExtending(false);
         }
-    }, [jobId, index, dispatch, state.selectedIds, showError]);
+    }, [jobId, index, dispatch, state.selectedIds, state.framing, extendCtx, showError]);
 
     const title =
         clip.video_title_for_youtube_short || `Clip ${typeof index === 'number' ? index + 1 : ''}`;
@@ -717,7 +762,11 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                             playerRef={playerRef}
                             onEditWord={handleEditWord}
                             dispatch={dispatch}
-                            onOpenExtend={() => setShowExtendModal(true)}
+                            clipStartSec={typeof clip.start === 'number' ? clip.start : null}
+                            onOpenExtend={(ctx) => {
+                                setExtendCtx(ctx || null);
+                                setShowExtendModal(true);
+                            }}
                             extending={extending}
                         />
 
@@ -806,6 +855,8 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                     {showExtendModal && (
                         <ExtendClipModal
                             jobId={jobId}
+                            initialSec={extendCtx?.sec ?? null}
+                            usedRanges={usedRanges}
                             onClose={() => setShowExtendModal(false)}
                             onAdd={handleExtendAdd}
                         />
