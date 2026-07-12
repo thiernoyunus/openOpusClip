@@ -379,8 +379,9 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     return (
         <div className="w-[380px] shrink-0 border-r border-white/[0.05] bg-[#0b0b0d] flex flex-col min-h-0">
             <div className="px-4 pt-3.5 pb-2 shrink-0 relative">
-                {/* OpusClip: Speech cleanup pill top-left, then Extend */}
-                <div className="flex flex-wrap items-center gap-2 mb-3">
+                {/* OpusClip: Speech cleanup pill on top; "Extend a clip" sits on
+                    its own row right above the transcript (see below). */}
+                <div className="flex flex-wrap items-center gap-2">
                     <button
                         type="button"
                         onClick={() => setCleanupOpen((v) => !v)}
@@ -396,22 +397,6 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                     >
                         <Wand2 size={13} /> Speech cleanup
                     </button>
-                    {onOpenExtend && (
-                        extending ? (
-                            <span className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-[#3dd68c]/12 border border-[#3dd68c]/30 text-[12px] text-[#3dd68c] animate-pulse">
-                                <Loader2 size={12} className="animate-spin" /> Adding…
-                            </span>
-                        ) : (
-                            <button
-                                type="button"
-                                onClick={() => onOpenExtend({ afterClipId: null, sec: segmentStarts[0]?.origSec ?? null })}
-                                title="Pull a section of the original video into this short"
-                                className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg text-[12px] text-[#3dd68c] hover:bg-[#3dd68c]/10 transition-colors"
-                            >
-                                <Plus size={14} /> Extend a clip
-                            </button>
-                        )
-                    )}
                 </div>
                 {cleanupOpen && (
                     <div className="absolute right-4 top-full mt-1 z-30 w-56 bg-surface2 border border-edge rounded-lg shadow-lg p-3 text-xs">
@@ -452,6 +437,27 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                     </div>
                 )}
             </div>
+            {/* Opus placement: "Extend a clip" directly above the transcript.
+                Clicking it extends the BEGINNING of the short — the picker opens
+                at the clip's start in the original and the section is prepended. */}
+            {onOpenExtend && (
+                <div className="px-4 pb-1.5 shrink-0">
+                    {extending ? (
+                        <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-[#3dd68c]/12 border border-[#3dd68c]/30 text-[12px] text-[#3dd68c] animate-pulse">
+                            <Loader2 size={12} className="animate-spin" /> Adding…
+                        </span>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={() => onOpenExtend({ prepend: true, sec: segmentStarts[0]?.origSec ?? null })}
+                            title="Add a section of the original video before the start of this short"
+                            className="inline-flex items-center gap-1 h-7 px-2 rounded-md border border-white/10 bg-white/[0.03] text-[12px] text-zinc-300 hover:text-[#3dd68c] hover:border-[#3dd68c]/30 hover:bg-[#3dd68c]/10 transition-colors"
+                        >
+                            <Plus size={13} /> Extend a clip
+                        </button>
+                    )}
+                </div>
+            )}
             <div
                 ref={containerRef}
                 className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-6 leading-8"

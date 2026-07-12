@@ -39,7 +39,7 @@ function Stepper({ label, value, edge, onStep }) {
  * another to extend it (contiguous range). Right: a preview of the original
  * seeking to the selection start, with ±0.5s steppers and an Add button.
  */
-export default function ExtendClipModal({ jobId, initialSec, onClose, onAdd }) {
+export default function ExtendClipModal({ jobId, initialSec, usedRanges = [], onClose, onAdd }) {
     const [data, setData] = useState(null); // { hasOriginal, duration, segments }
     const [loadError, setLoadError] = useState(null);
     const [range, setRange] = useState(null); // { anchor, focus } segment indices
@@ -63,6 +63,17 @@ export default function ExtendClipModal({ jobId, initialSec, onClose, onAdd }) {
     }, [jobId]);
 
     const segments = data?.segments || [];
+
+    // Whether each source segment is already on the short's timeline (white)
+    // or not yet used (gray) — Opus-style visual orientation.
+    const usedBySeg = useMemo(
+        () => segments.map((seg) => {
+            const mid = (seg.start + seg.end) / 2;
+            return usedRanges.some((r) => mid >= r.start && mid < r.end);
+        }),
+        [segments, usedRanges]
+    );
+
     const selRange = useMemo(
         () => (range ? { lo: Math.min(range.anchor, range.focus), hi: Math.max(range.anchor, range.focus) } : null),
         [range]
@@ -81,19 +92,31 @@ export default function ExtendClipModal({ jobId, initialSec, onClose, onAdd }) {
         }
     }, [start, selRange]);
 
-    // Scroll the transcript to the spot the "+" was clicked (initialSec is in
-    // original-video seconds) and cue the preview there — Opus behavior: the
-    // picker opens where you're extending, not at the top of the video.
+    // On open, jump to the spot the "+" was clicked (initialSec is in
+    // original-video seconds) and PRESELECT the nearest segment that isn't on
+    // the timeline yet — Opus behavior: the picker opens where you're
+    // extending with the addable part already highlighted, ready to Add.
     useEffect(() => {
-        if (!data || initialSec == null) return;
-        const i = segments.findIndex((s) => s.end >= initialSec);
-        if (i === -1) return;
-        listRef.current
-            ?.querySelector(`[data-seg-index="${i}"]`)
-            ?.scrollIntoView({ block: 'center' });
-        if (videoRef.current) {
-            try { videoRef.current.currentTime = initialSec; } catch { /* not ready yet */ }
+        if (!data || initialSec == null || segments.length === 0) return;
+        let best = -1;
+        let bestDist = Infinity;
+        segments.forEach((s, i) => {
+            const d = Math.abs((s.start + s.end) / 2 - initialSec);
+            if (!usedBySeg[i] && d < bestDist && d <= 15) {
+                best = i;
+                bestDist = d;
+            }
+        });
+        if (best === -1) {
+            // Everything nearby is already used — highlight the segment at the
+            // anchor point so the user still sees where they are.
+            const idx = segments.findIndex((s) => s.end >= initialSec);
+            best = idx === -1 ? segments.length - 1 : idx;
         }
+        setRange({ anchor: best, focus: best });
+        listRef.current
+            ?.querySelector(`[data-seg-index="${best}"]`)
+            ?.scrollIntoView({ block: 'center' });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [data]); // once, when the transcript loads
 
@@ -181,19 +204,22 @@ export default function ExtendClipModal({ jobId, initialSec, onClose, onAdd }) {
                             <div ref={listRef} className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-1 select-none">
                                 {segments.map((seg, i) => {
                                     const inSel = selRange && i >= selRange.lo && i <= selRange.hi;
+                                    const used = usedBySeg[i];
                                     return (
                                         <button
                                             key={i}
                                             type="button"
                                             data-seg-index={i}
+                                            title={used ? 'Already in this short' : undefined}
                                             onMouseDown={(e) => onSegmentDown(i, e)}
                                             onMouseEnter={() => onSegmentEnter(i)}
                                             className={`w-full text-left rounded-md px-2.5 py-1.5 transition-colors ${
                                                 inSel ? 'bg-lime-300/20 border border-lime-300/40' : 'hover:bg-white/5 border border-transparent'
                                             }`}
                                         >
-                                            <span className="text-[10px] tabular-nums text-zinc-500 mr-2">[{fmt(seg.start)}]</span>
-                                            <span className="text-xs text-zinc-300">
+                                            <span className="text-[10px] tabular-nums text-zinc-600 mr-2">[{fmt(seg.start)}]</span>
+                                            {/* Opus-style orientation: white = already in the short, gray = not yet used; selecting brightens it */}
+                                            <span className={`text-xs ${inSel || used ? 'text-zinc-100' : 'text-zinc-500'}`}>
                                                 {seg.words.map((w) => w.text).join(' ')}
                                             </span>
                                         </button>
@@ -213,11 +239,10 @@ export default function ExtendClipModal({ jobId, initialSec, onClose, onAdd }) {
                                     src={originalUrl}
                                     controls
                                     onLoadedMetadata={(e) => {
-                                        // Cue the anchor point once the file is seekable
-                                        // (the effect above may have fired too early).
-                                        if (!selRange && initialSec != null) {
-                                            e.currentTarget.currentTime = initialSec;
-                                        }
+                                        // Cue the current spot once the file is seekable
+                                        // (the seek effects may have fired too early).
+                                        if (selRange) e.currentTarget.currentTime = start;
+                                        else if (initialSec != null) e.currentTarget.currentTime = initialSec;
                                     }}
                                     className="max-w-full max-h-full rounded-md"
                                 />

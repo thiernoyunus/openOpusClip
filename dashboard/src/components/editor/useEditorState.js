@@ -266,7 +266,9 @@ export const editorReducer = (state, action) => {
             const framing = state.framing;
             const clips = [...framing.clips];
             let at = clips.length;
-            if (afterClipId) {
+            if (action.atStart) {
+                at = 0; // top "Extend a clip" button: prepend to the short
+            } else if (afterClipId) {
                 const idx = clips.findIndex((c) => c.id === afterClipId);
                 if (idx !== -1) at = idx + 1;
             }

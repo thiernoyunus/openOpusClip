@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Loader2, AlertCircle, Captions, Crosshair, Sparkles, Type, Clapperboard, ChevronRight, ChevronDown, Check, Crop, Trash2 } from 'lucide-react';
 import { getApiUrl } from '../../config';
 import useEditorState, { defaultSubtitleConfig, loadDefaultCaptionStyle, tracksInClip, LAYOUT_PANELS } from './useEditorState';
@@ -611,6 +611,26 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     const framing = state.framing;
     const durationInFrames = framing ? outputDurationFrames(framing, EDITOR_FPS) : 1;
 
+    // Which spans of the ORIGINAL video are already on the timeline (original
+    // seconds). The extend picker uses this to render in-timeline transcript
+    // white vs. not-yet-used gray, and to preselect the nearest addable part.
+    const usedRanges = useMemo(() => {
+        if (!framing) return [];
+        const clipStart = typeof clip.start === 'number' ? clip.start : null;
+        const origin = framing.captionsOriginFrame ?? 0;
+        const fps = framing.source.fps;
+        return framing.clips
+            .map((c) => {
+                const s = c.originalStartSec != null
+                    ? c.originalStartSec
+                    : clipStart != null
+                      ? clipStart + (c.sourceStart - origin) / fps
+                      : null;
+                return s == null ? null : { start: s, end: s + (c.sourceEnd - c.sourceStart) / fps };
+            })
+            .filter(Boolean);
+    }, [framing, clip.start]);
+
     // Current playhead in SOURCE frames — for inserting text/b-roll at the playhead
     const getCurrentSourceFrame = useCallback(
         () => (framing ? outputToSource(framing, playerRef.current?.getCurrentFrame() ?? 0, EDITOR_FPS) : 0),
@@ -635,7 +655,8 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     // caption words (both to the subtitle track via the reducer and to the
     // local transcript list so they show and survive a toggle).
     const handleExtendAdd = useCallback(async (startSec, endSec) => {
-        const afterClipId = extendCtx?.afterClipId ?? state.selectedIds[0] ?? null;
+        const atStart = !!extendCtx?.prepend;
+        const afterClipId = atStart ? null : extendCtx?.afterClipId ?? state.selectedIds[0] ?? null;
         setShowExtendModal(false);
         setExtending(true);
         try {
@@ -677,6 +698,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                         },
                         faceTracks,
                         afterClipId,
+                        atStart,
                         words,
                     });
                     setCaptions((prev) => [...prev, ...(words || [])]);
@@ -831,6 +853,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                         <ExtendClipModal
                             jobId={jobId}
                             initialSec={extendCtx?.sec ?? null}
+                            usedRanges={usedRanges}
                             onClose={() => setShowExtendModal(false)}
                             onAdd={handleExtendAdd}
                         />
