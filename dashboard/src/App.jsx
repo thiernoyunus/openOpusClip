@@ -596,8 +596,12 @@ function App() {
       if (e instanceof JobExpiredError) {
         setProjects(updateProject(p.id, { status: 'expired' }));
         setProcessingJobIds((ids) => ids.filter((id) => id !== p.id));
+        alert('Could not find this project on the server. It may have been deleted, or the server restarted before it finished — try processing it again.');
+      } else {
+        // Network blip / 500 / etc — not evidence the project is gone, don't
+        // mislabel it as expired.
+        alert(`Could not open this project: ${e.message || 'unknown error'}. Check your connection and try again.`);
       }
-      alert('Could not find this project on the server. It may have been deleted, or the server restarted before it finished — try processing it again.');
     }
   };
 

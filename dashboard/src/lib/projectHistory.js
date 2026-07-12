@@ -1,23 +1,20 @@
 // Client-side project history.
-// The backend keeps jobs in memory for ~1h, so we persist lightweight project
-// metadata in localStorage to power the "Recent projects" grid on the homepage.
+// Projects are kept on the server until you delete them (JOB_RETENTION_SECONDS
+// defaults to permanent), so we just persist lightweight metadata in
+// localStorage to power the "Recent projects" grid on the homepage — the
+// server (via openProject's pollJob check) is the only source of truth for
+// whether a project actually still exists. A card stuck on 'processing' (e.g.
+// the tab closed before the job finished) stays that way until you click it —
+// don't guess it's gone here.
 
 const KEY = 'openshorts_projects';
 const MAX = 30;
-const PROCESSING_MAX_AGE = 60 * 60 * 1000;
 
 export function getProjects() {
   try {
     const raw = localStorage.getItem(KEY);
     const list = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(list)) return [];
-    const now = Date.now();
-    return list.map((p) => {
-      if (p.status === 'processing' && p.createdAt && now - p.createdAt > PROCESSING_MAX_AGE) {
-        return { ...p, status: 'expired' };
-      }
-      return p;
-    });
+    return Array.isArray(list) ? list : [];
   } catch {
     return [];
   }
