@@ -285,7 +285,7 @@ export const editorReducer = (state, action) => {
                 trackedFaceIds: (c.trackedFaceIds || []).map((x) => x + idBase),
                 cameraKeyframes: c.cameraKeyframes || [],
                 manualCrop: null,
-                ...(c.originalStartSec != null ? { originalStartSec: c.originalStartSec } : {}),
+                ...(c.originalOffsetSec != null ? { originalOffsetSec: c.originalOffsetSec } : {}),
             }));
             clips.splice(at, 0, ...inserted);
             const nextFraming = {

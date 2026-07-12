@@ -614,6 +614,9 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     // Which spans of the ORIGINAL video are already on the timeline (original
     // seconds). The extend picker uses this to render in-timeline transcript
     // white vs. not-yet-used gray, and to preselect the nearest addable part.
+    // originalOffsetSec (origVideoSec = offset + sourceStart/fps) is a
+    // frame-position-INDEPENDENT constant, so it stays correct even after the
+    // clip is later trimmed/split/cut and sourceStart moves.
     const usedRanges = useMemo(() => {
         if (!framing) return [];
         const clipStart = typeof clip.start === 'number' ? clip.start : null;
@@ -621,8 +624,8 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         const fps = framing.source.fps;
         return framing.clips
             .map((c) => {
-                const s = c.originalStartSec != null
-                    ? c.originalStartSec
+                const s = c.originalOffsetSec != null
+                    ? c.originalOffsetSec + c.sourceStart / fps
                     : clipStart != null
                       ? clipStart + (c.sourceStart - origin) / fps
                       : null;
@@ -680,21 +683,21 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                 if (task.status === 'done') {
                     const { newDurationFrames, insertStart, insertEnd, words, clips, faceTracks } = task.result;
                     const fps = state.framing?.source?.fps || EDITOR_FPS;
+                    // Constant offset (origVideoSec = originalOffsetSec + sourceStart/fps),
+                    // NOT an absolute origSec — a later trim/split/cut moves sourceStart,
+                    // and this stays correct across that since it doesn't bake in a
+                    // specific frame position.
+                    const originalOffsetSec = startSec - insertStart / fps;
                     setSourceVersion(Date.now());
                     dispatch({
                         type: 'EXTEND_SOURCE',
                         newDurationFrames,
-                        // Each analyzed clip remembers its original-video start so
-                        // later "+" bars next to it can anchor the picker correctly.
-                        clips: (clips || []).map((c) => ({
-                            ...c,
-                            originalStartSec: startSec + (c.sourceStart - insertStart) / fps,
-                        })),
+                        clips: (clips || []).map((c) => ({ ...c, originalOffsetSec })),
                         clip: {
                             sourceStart: insertStart,
                             sourceEnd: insertEnd,
                             layout: 'fill',
-                            originalStartSec: startSec,
+                            originalOffsetSec,
                         },
                         faceTracks,
                         afterClipId,

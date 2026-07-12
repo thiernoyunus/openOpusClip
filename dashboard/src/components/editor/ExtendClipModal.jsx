@@ -133,7 +133,10 @@ export default function ExtendClipModal({ jobId, initialSec, usedRanges = [], on
             setRange({ anchor: range.anchor, focus: i });
         } else {
             setRange({ anchor: i, focus: i });
-            draggingRef.current = true;
+            // Only a real mousedown starts a drag — a keyboard select (Enter/
+            // Space) has no matching mouseup to clear the flag, which would
+            // otherwise leave the next mouse-hover free-extending the range.
+            if (e.type === 'mousedown') draggingRef.current = true;
         }
     };
 
@@ -213,6 +216,14 @@ export default function ExtendClipModal({ jobId, initialSec, usedRanges = [], on
                                             title={used ? 'Already in this short' : undefined}
                                             onMouseDown={(e) => onSegmentDown(i, e)}
                                             onMouseEnter={() => onSegmentEnter(i)}
+                                            onKeyDown={(e) => {
+                                                // Keyboard equivalent of mousedown-select (drag-select has no
+                                                // keyboard analog, but Enter/Space + Shift covers select/extend).
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                    e.preventDefault();
+                                                    onSegmentDown(i, e);
+                                                }
+                                            }}
                                             className={`w-full text-left rounded-md px-2.5 py-1.5 transition-colors ${
                                                 inSel ? 'bg-lime-300/20 border border-lime-300/40' : 'hover:bg-white/5 border border-transparent'
                                             }`}

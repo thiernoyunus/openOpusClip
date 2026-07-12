@@ -135,13 +135,16 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
 
     // Per-clip info in PLAYBACK order (framing.clips array order == play order).
     // origSec / origEndSec = where this clip's content lives in the ORIGINAL
-    // video (extend-inserted clips carry originalStartSec; pipeline clips
-    // derive it from the clip's start second + offset from the caption origin).
+    // video. Extend-inserted clips carry originalOffsetSec — a frame-position-
+    // INDEPENDENT constant (origSec = offset + sourceStart/fps) — so it stays
+    // correct even after the clip is later trimmed/split/cut and sourceStart
+    // moves; pipeline clips derive origSec from the clip's start second plus
+    // offset from the caption origin.
     const clipInfo = useMemo(() => {
         if (!framing) return [];
         return framing.clips.map((c) => {
-            const origSec = c.originalStartSec != null
-                ? c.originalStartSec
+            const origSec = c.originalOffsetSec != null
+                ? c.originalOffsetSec + c.sourceStart / srcFps
                 : clipStartSec != null
                   ? clipStartSec + (c.sourceStart - captionsOrigin) / srcFps
                   : null;
@@ -179,11 +182,16 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
 
     const rows = useMemo(() => {
         const out = [];
+        let pos = 0; // ordinal among word-rows, in DISPLAY (playback) order
         const pauseByWord = new Map(pauses.map((pause) => [pause.index, pause]));
         clipInfo.forEach((info) => {
             out.push({ type: 'divider', ...info });
             (bucketsById.get(info.id) || []).forEach((index) => {
-                out.push({ type: 'word', word: captions[index], index });
+                // clipId + pos let selection/cut work in DISPLAY order (see
+                // selRange/handleCut below) instead of assuming caption array
+                // index is monotonic in display order, which it no longer is
+                // once a clip has been reordered or Extend-inserted elsewhere.
+                out.push({ type: 'word', word: captions[index], index, clipId: info.id, pos: pos++ });
                 const pause = pauseByWord.get(index);
                 if (pause) out.push({ type: 'pause', ...pause });
             });
@@ -196,6 +204,17 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         });
         return out;
     }, [captions, pauses, clipInfo, bucketsById, onOpenExtend]);
+
+    // Flat, display-ordered list of just the word rows — lets selection/cut
+    // translate a display-position range back to {caption index, clipId}
+    // triples (see handleCut) instead of treating the caption array's index
+    // order as if it matched what's on screen.
+    const wordRows = useMemo(() => rows.filter((r) => r.type === 'word'), [rows]);
+    const posByIndex = useMemo(() => {
+        const m = new Map();
+        wordRows.forEach((r) => m.set(r.index, r.pos));
+        return m;
+    }, [wordRows]);
 
     // Each non-cut word's position on the OUTPUT timeline (ms), precomputed
     // once so the per-frame active-word lookup is a binary search instead of an
@@ -327,15 +346,45 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         setEmojiQuery('');
     }, []);
 
+    // sel.anchor/focus are caption ARRAY indices (stable identity for a word);
+    // the selection itself is a range in DISPLAY position space (posByIndex),
+    // since displayed order no longer matches array-index order once a clip
+    // has been reordered or Extend-inserted elsewhere (see rows/wordRows above).
     const selRange = sel
-        ? { lo: Math.min(sel.anchor, sel.focus), hi: Math.max(sel.anchor, sel.focus) }
+        ? (() => {
+              const a = posByIndex.get(sel.anchor);
+              const f = posByIndex.get(sel.focus);
+              if (a == null || f == null) return null;
+              return { lo: Math.min(a, f), hi: Math.max(a, f) };
+          })()
         : null;
 
     const handleCut = () => {
         if (!selRange) return;
-        const startFrame = wordToSource(captions[selRange.lo]).start;
-        const endFrame = wordToSource(captions[selRange.hi]).end;
-        dispatch({ type: 'CUT_SOURCE_RANGE', ranges: [{ startFrame, endFrame }] });
+        // The selection is a contiguous run in DISPLAY order, but that can
+        // span more than one clip (e.g. shift-selecting across a boundary
+        // where the clips aren't source-adjacent). Cluster consecutive
+        // selected words by which clip they belong to and cut one source
+        // range per cluster, in a single undo step — cutting the whole span
+        // as ONE range would be wrong (and could delete unrelated footage)
+        // whenever the clips it crosses aren't next to each other in source.
+        const ranges = [];
+        let curClipId = null;
+        let curStart = 0;
+        let curEnd = 0;
+        wordRows.slice(selRange.lo, selRange.hi + 1).forEach(({ word, clipId }) => {
+            const { start, end } = wordToSource(word);
+            if (clipId === curClipId) {
+                curEnd = end;
+            } else {
+                if (curClipId != null) ranges.push({ startFrame: curStart, endFrame: curEnd });
+                curClipId = clipId;
+                curStart = start;
+                curEnd = end;
+            }
+        });
+        if (curClipId != null) ranges.push({ startFrame: curStart, endFrame: curEnd });
+        if (ranges.length > 0) dispatch({ type: 'CUT_SOURCE_RANGE', ranges });
         setSel(null);
     };
 
@@ -544,7 +593,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                 isActive={row.index === activeIndex}
                                 suppressHighlight={!!selectedPause}
                                 isCut={isCutByWord[row.index]}
-                                inSel={!!(selRange && row.index >= selRange.lo && row.index <= selRange.hi)}
+                                inSel={!!(selRange && row.pos >= selRange.lo && row.pos <= selRange.hi)}
                                 onWordClick={onWordClick}
                                 onEdit={onEdit}
                             />

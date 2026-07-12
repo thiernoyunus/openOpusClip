@@ -1137,11 +1137,17 @@ def _run_extend_task(task_id: str, job_id: str, clip_index: int, start_sec: floa
                 "--analyze-start", str(old_frames), "--analyze-end", str(new_frames),
                 "--aspect-ratio", aspect, "--analysis-out", analysis_path,
             ]
-            proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=540)
+            proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=540)
             if proc.returncode == 0 and os.path.exists(analysis_path):
                 with open(analysis_path) as f:
                     analysis = json.load(f)
-        except Exception:
+            else:
+                print(
+                    f"⚠️ Reframe analysis failed (exit code {proc.returncode}) for job {job_id} "
+                    f"clip {clip_index}: {proc.stderr.decode(errors='replace')[-2000:]}"
+                )
+        except Exception as e:  # noqa: BLE001 — log and fall back to a plain clip
+            print(f"⚠️ Reframe analysis raised for job {job_id} clip {clip_index}: {e}")
             analysis = None
 
         new_clips = None
