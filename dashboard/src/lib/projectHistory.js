@@ -9,12 +9,29 @@
 
 const KEY = 'openshorts_projects';
 const MAX = 30;
+// One-time migration flag: browsers that used the app before the fix above
+// could have projects PERMANENTLY saved as 'expired' by the old buggy
+// getProjects() (e.g. via a later updateProject() call baking that guess
+// into storage). Downgrade those back to 'processing' exactly once so a
+// click re-validates them for real, instead of trusting a stale guess forever.
+const MIGRATION_KEY = 'openshorts_projects_migrated_v1';
+
+function migrateStaleExpired(list) {
+  if (localStorage.getItem(MIGRATION_KEY)) return list;
+  try { localStorage.setItem(MIGRATION_KEY, '1'); } catch { /* ignore */ }
+  let changed = false;
+  const migrated = list.map((p) => {
+    if (p.status === 'expired') { changed = true; return { ...p, status: 'processing' }; }
+    return p;
+  });
+  return changed ? save(migrated) : list;
+}
 
 export function getProjects() {
   try {
     const raw = localStorage.getItem(KEY);
     const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list : [];
+    return migrateStaleExpired(Array.isArray(list) ? list : []);
   } catch {
     return [];
   }
