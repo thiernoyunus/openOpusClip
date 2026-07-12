@@ -209,7 +209,7 @@ OpenShorts is free. You only pay for the AI APIs you use — and most have gener
 | **Google Gemini** | Free trial with generous limits | < $0.01 per 10-min video | Viral moment detection, titles, thumbnails, descriptions |
 | **ElevenLabs** | Free tier available | Pay-per-use | Voice dubbing |
 | **Zernio** | Free tier available | Pay-per-use | Publishing, scheduling & analytics for TikTok, Instagram, YouTube and more |
-| **AWS S3** | Optional | ~$0.023/GB | Cloud backup for clips |
+| **Cloud storage** (Cloudflare R2 / AWS S3 / any S3-compatible) | Optional — R2 free up to 10GB | R2: free egress · S3: ~$0.023/GB | Cloud backup for clips |
 
 **Bottom line:** You can clip videos for practically free with Gemini, and publish or schedule to all your social networks through Zernio.
 
@@ -319,11 +319,12 @@ Docker also serves the dashboard at **`http://localhost:5175/#app`**.
 **Server-side (.env):**
 | Variable | Description |
 |----------|------------|
-| `AWS_ACCESS_KEY_ID` | AWS access key for S3 |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret key |
-| `AWS_REGION` | AWS region (default: us-east-1) |
+| `S3_ENDPOINT_URL` | S3-compatible endpoint (set for Cloudflare R2 / MinIO; omit for AWS S3) |
+| `AWS_ACCESS_KEY_ID` | Storage access key (R2 or AWS) |
+| `AWS_SECRET_ACCESS_KEY` | Storage secret key |
+| `AWS_REGION` | Region — AWS only ('auto' is used for R2) |
 | `AWS_S3_BUCKET` | Private bucket for clip backup |
-| `MAX_CONCURRENT_JOBS` | Concurrent processing limit (default: 5) |
+| `MAX_CONCURRENT_JOBS` | Concurrent processing limit (default: 1) |
 
 **Client-side (encrypted in localStorage):**
 | Key | Description |
