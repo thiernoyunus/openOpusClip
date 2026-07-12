@@ -59,7 +59,12 @@ const TikTokIcon = ({ size = 16, className = "" }) => (
 
 const SESSION_KEY = 'openshorts_session';
 const LEGACY_SESSION_KEY = 'openshorts_session_v1';
-const SESSION_MAX_AGE = 3600000; // 1 hour (matches server job retention)
+// Sanity backstop for a genuinely ancient localStorage blob (e.g. months-old
+// browser tab) — NOT a job-expiry timer. The server is the source of truth for
+// whether a job still exists (see pollJob's 404/410 -> JobExpiredError below);
+// projects are kept until you delete them, so this no longer mirrors any
+// server-side retention window.
+const SESSION_MAX_AGE = 30 * 24 * 3600000; // 30 days
 const MAX_POLL_FAILURES = 5;
 
 const formatJobDuration = (seconds) => {
@@ -591,8 +596,12 @@ function App() {
       if (e instanceof JobExpiredError) {
         setProjects(updateProject(p.id, { status: 'expired' }));
         setProcessingJobIds((ids) => ids.filter((id) => id !== p.id));
+        alert('Could not find this project on the server. It may have been deleted, or the server restarted before it finished — try processing it again.');
+      } else {
+        // Network blip / 500 / etc — not evidence the project is gone, don't
+        // mislabel it as expired.
+        alert(`Could not open this project: ${e.message || 'unknown error'}. Check your connection and try again.`);
       }
-      alert('This project has expired. Jobs are kept on the server for about an hour after processing.');
     }
   };
 

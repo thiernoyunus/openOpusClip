@@ -1,23 +1,37 @@
 // Client-side project history.
-// The backend keeps jobs in memory for ~1h, so we persist lightweight project
-// metadata in localStorage to power the "Recent projects" grid on the homepage.
+// Projects are kept on the server until you delete them (JOB_RETENTION_SECONDS
+// defaults to permanent), so we just persist lightweight metadata in
+// localStorage to power the "Recent projects" grid on the homepage — the
+// server (via openProject's pollJob check) is the only source of truth for
+// whether a project actually still exists. A card stuck on 'processing' (e.g.
+// the tab closed before the job finished) stays that way until you click it —
+// don't guess it's gone here.
 
 const KEY = 'openshorts_projects';
 const MAX = 30;
-const PROCESSING_MAX_AGE = 60 * 60 * 1000;
+// One-time migration flag: browsers that used the app before the fix above
+// could have projects PERMANENTLY saved as 'expired' by the old buggy
+// getProjects() (e.g. via a later updateProject() call baking that guess
+// into storage). Downgrade those back to 'processing' exactly once so a
+// click re-validates them for real, instead of trusting a stale guess forever.
+const MIGRATION_KEY = 'openshorts_projects_migrated_v1';
+
+function migrateStaleExpired(list) {
+  if (localStorage.getItem(MIGRATION_KEY)) return list;
+  try { localStorage.setItem(MIGRATION_KEY, '1'); } catch { /* ignore */ }
+  let changed = false;
+  const migrated = list.map((p) => {
+    if (p.status === 'expired') { changed = true; return { ...p, status: 'processing' }; }
+    return p;
+  });
+  return changed ? save(migrated) : list;
+}
 
 export function getProjects() {
   try {
     const raw = localStorage.getItem(KEY);
     const list = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(list)) return [];
-    const now = Date.now();
-    return list.map((p) => {
-      if (p.status === 'processing' && p.createdAt && now - p.createdAt > PROCESSING_MAX_AGE) {
-        return { ...p, status: 'expired' };
-      }
-      return p;
-    });
+    return migrateStaleExpired(Array.isArray(list) ? list : []);
   } catch {
     return [];
   }
