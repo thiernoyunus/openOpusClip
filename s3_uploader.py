@@ -26,12 +26,15 @@ def _s3_client():
     """Return an authenticated S3-compatible client (Cloudflare R2, AWS S3, etc.)."""
     access_key = os.environ.get('AWS_ACCESS_KEY_ID')
     secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
-    region = os.environ.get('AWS_REGION', 'auto')
+    endpoint, cfg = _s3_config()
+    # 'auto' is valid for R2 but not for AWS S3 — default to a real region
+    # when no custom endpoint is configured.
+    default_region = 'auto' if endpoint else 'eu-west-3'
+    region = os.environ.get('AWS_REGION', default_region)
 
     if not access_key or not secret_key:
         return None
 
-    endpoint, cfg = _s3_config()
     return boto3.client(
         's3',
         endpoint_url=endpoint,
