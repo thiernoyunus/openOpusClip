@@ -329,7 +329,17 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     const [saving, setSaving] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [exportProgress, setExportProgress] = useState(0);
+    // Local transcript-panel copy of the captions. Once framing.subtitles
+    // exists, the effect below keeps this synced FROM it — subtitles.captions
+    // is the actual undo/redo-tracked source of truth (via the reducer's
+    // history), so a word edit / captionHidden toggle only needs to dispatch;
+    // Undo then reverts both the render data AND this display copy together,
+    // instead of this copy staying stuck on the pre-undo value.
     const [captions, setCaptions] = useState(() => clip.transcript_captions || clip.transcriptCaptions || []);
+    useEffect(() => {
+        const subCaptions = state.framing?.subtitles?.captions;
+        if (subCaptions) setCaptions(subCaptions);
+    }, [state.framing?.subtitles?.captions]);
     const [activeTab, setActiveTab] = useState('captions');
     // Which media asset a timeline click asked the Media panel to focus.
     const [mediaFocus, setMediaFocus] = useState(null);
