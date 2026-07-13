@@ -329,7 +329,17 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     const [saving, setSaving] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [exportProgress, setExportProgress] = useState(0);
+    // Local transcript-panel copy of the captions. Once framing.subtitles
+    // exists, the effect below keeps this synced FROM it — subtitles.captions
+    // is the actual undo/redo-tracked source of truth (via the reducer's
+    // history), so a word edit / captionHidden toggle only needs to dispatch;
+    // Undo then reverts both the render data AND this display copy together,
+    // instead of this copy staying stuck on the pre-undo value.
     const [captions, setCaptions] = useState(() => clip.transcript_captions || clip.transcriptCaptions || []);
+    useEffect(() => {
+        const subCaptions = state.framing?.subtitles?.captions;
+        if (subCaptions) setCaptions(subCaptions);
+    }, [state.framing?.subtitles?.captions]);
     const [activeTab, setActiveTab] = useState('captions');
     // Which media asset a timeline click asked the Media panel to focus.
     const [mediaFocus, setMediaFocus] = useState(null);
@@ -427,6 +437,22 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         },
         [state.framing, captions, dispatch]
     );
+
+    // "Remove caption only" / "Restore caption": flag word(s) captionHidden so
+    // the burned-in captions drop them while the video/audio stays. Mirrors the
+    // flag onto the local transcript (dimmed display) and the subtitle track (by
+    // index) exactly like a per-word edit. Enabling captions first if needed so
+    // the flag persists into the framing.
+    const handleSetCaptionHidden = useCallback((indices, hidden) => {
+        const set = new Set(indices);
+        setCaptions((prev) => prev.map((w, i) => (set.has(i) ? { ...w, captionHidden: hidden } : w)));
+        if (state.framing?.subtitles) {
+            dispatch({ type: 'SET_CAPTION_HIDDEN', indices, hidden });
+        } else if (state.framing) {
+            const edited = captions.map((w, i) => (set.has(i) ? { ...w, captionHidden: hidden } : w));
+            dispatch({ type: 'SET_SUBTITLES', subtitles: defaultSubtitleConfig(edited) });
+        }
+    }, [state.framing, captions, dispatch]);
 
     // AI enhance / clear writes emoji+highlight onto the subtitle config; mirror
     // it onto the transcript captions (by index) so the transcript shows what the
@@ -761,6 +787,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                             framing={framing}
                             playerRef={playerRef}
                             onEditWord={handleEditWord}
+                            onSetCaptionHidden={handleSetCaptionHidden}
                             dispatch={dispatch}
                             clipStartSec={typeof clip.start === 'number' ? clip.start : null}
                             onOpenExtend={(ctx) => {

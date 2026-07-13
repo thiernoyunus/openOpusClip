@@ -306,7 +306,10 @@ export const remapCaptions = (
   // Caption ms are relative to the ORIGINAL clip start (captionsOriginFrame),
   // captured once at generation time, so head trims don't shift subtitles.
   const origin = framing.captionsOriginFrame ?? clipBounds(framing).startFrame;
-  const wordSrc = captions.map((w) => {
+  // Words flagged captionHidden ("Remove caption only") stay in the video/audio
+  // but are dropped from the burned-in captions here, the same single choke
+  // point where cut words disappear.
+  const wordSrc = captions.filter((w) => !w.captionHidden).map((w) => {
     const startSrc = origin + Math.round((w.startMs / 1000) * srcFps);
     const endSrc = origin + Math.round((w.endMs / 1000) * srcFps);
     return { w, startSrc, endSrc, midSrc: (startSrc + endSrc) / 2 };

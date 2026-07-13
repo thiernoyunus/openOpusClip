@@ -19,6 +19,12 @@ export interface CaptionWord {
   /** Per-word color override (e.g. DOAC emotion accent). When set, persists from the word's start. */
   accentColor?: string;
   /**
+   * When true, this word is dropped from the burned-in captions but its video
+   * and audio stay (the "Remove caption only" transcript action). The word
+   * remains in the transcript so it can be restored. Optional → back-compat.
+   */
+  captionHidden?: boolean;
+  /**
    * BCP-47/ISO language code for this word (Soniox per-token language). Optional
    * and informational — RTL detection is text-based, so nothing depends on it.
    */
@@ -479,6 +485,10 @@ export const captionWordSchema = z.object({
   highlight: z.boolean().optional(),
   accentColor: z.string().optional(),
   language: z.string().optional(),
+  // Must be listed here or Zod strips it when the render worker parses props,
+  // and remapCaptions would never see it — hidden captions would reappear in
+  // the exported video.
+  captionHidden: z.boolean().optional(),
 });
 
 export const subtitleStyleSchema = z.object({

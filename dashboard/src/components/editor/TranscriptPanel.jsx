@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { Clock, FileText, Scissors, Smile, Wand2, X, Plus, Loader2 } from 'lucide-react';
+import { Clock, FileText, Scissors, Smile, Wand2, X, Plus, Loader2, Pencil, EyeOff, Eye } from 'lucide-react';
 import { EDITOR_FPS } from './EditorCanvas';
 import { wordSourceToOutput, sourceToOutputAll } from '@remotion-src/lib/edl';
 import { detectFillerCuts, detectPauseCuts, visibleTranscriptPauses } from './speechCleanup';
@@ -14,7 +14,7 @@ const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three',
  * keeps the click/edit handlers stable (useCallback) and passes index+word
  * back through them, so this component's props stay referentially stable.
  */
-const Word = React.memo(function Word({ index, word, isActive, suppressHighlight, isCut, inSel, onWordClick, onEdit }) {
+const Word = React.memo(function Word({ index, word, isActive, suppressHighlight, isCut, captionHidden, inSel, onWordClick, onEdit }) {
     const displayText = word.emoji ? `${word.text} ${word.emoji}` : word.text;
     const colorClass = word.highlight ? 'text-[#04f827]' : 'text-white';
     return (
@@ -26,15 +26,25 @@ const Word = React.memo(function Word({ index, word, isActive, suppressHighlight
                 if (isCut) return;
                 onEdit(index, word);
             }}
-            title="Click to seek. Double-click to edit text or add emoji."
+            title={
+                isCut
+                    ? 'Removed from the clip'
+                    : captionHidden
+                      ? "Caption hidden (still in the video). Click to restore."
+                      : 'Click to edit or remove. Double-click to edit text.'
+            }
             className={`cursor-pointer text-sm leading-7 rounded px-0.5 transition-colors ${
                 isCut
                     ? 'line-through text-zinc-600 hover:text-zinc-400'
                     : inSel
                       ? 'bg-lime-300 text-black'
-                      : isActive && !suppressHighlight
-                        ? 'bg-lime-300/35 text-fg'
-                        : `${colorClass} hover:bg-white/10`
+                      : captionHidden
+                        // caption removed but video kept: dimmed + dashed underline,
+                        // distinct from the struck-through "removed from clip" look.
+                        ? 'text-zinc-500 italic underline decoration-dashed decoration-zinc-600 underline-offset-4 hover:text-zinc-300'
+                        : isActive && !suppressHighlight
+                          ? 'bg-lime-300/35 text-fg'
+                          : `${colorClass} hover:bg-white/10`
             }`}
         >
             {displayText}{' '}
@@ -71,11 +81,15 @@ const PauseChip = React.memo(function PauseChip({ pause, selected, isCut, onPaus
  * content (splits the owning clip(s) and drops the middle). Removed words
  * render struck through; use Undo to bring them back.
  */
-export default function TranscriptPanel({ captions, framing, playerRef, onEditWord, dispatch, onOpenExtend, extending, clipStartSec }) {
+export default function TranscriptPanel({ captions, framing, playerRef, onEditWord, onSetCaptionHidden, dispatch, onOpenExtend, extending, clipStartSec }) {
     const [currentMs, setCurrentMs] = useState(0);
     const [editingIndex, setEditingIndex] = useState(null);
     const [draft, setDraft] = useState('');
     const [sel, setSel] = useState(null); // {anchor, focus} word indices
+    // Caption index the floating toolbar anchors to (the last-clicked word);
+    // popupTick is bumped on scroll/resize so its screen position recomputes.
+    const [anchorIdx, setAnchorIdx] = useState(null);
+    const [popupTick, setPopupTick] = useState(0);
     const [selectedPause, setSelectedPause] = useState(null);
     const [emojiOpen, setEmojiOpen] = useState(false);
     const [emojiQuery, setEmojiQuery] = useState('');
@@ -322,10 +336,12 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
             if (isCutByWord[index]) {
                 // removed content: nothing to seek/select (use Undo to restore)
                 setSel(null);
+                setAnchorIdx(null);
                 return;
             }
             const cur = selRef.current;
             setSelectedPause(null);
+            setAnchorIdx(index); // toolbar anchors to the just-clicked word
             if (e.shiftKey && cur) {
                 setSel({ anchor: cur.anchor, focus: index });
             } else {
@@ -339,6 +355,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     // Stable double-click -> edit handler for memoized <Word> children.
     const onEdit = useCallback((index, word) => {
         setSel(null);
+        setAnchorIdx(null);
         setSelectedPause(null);
         setEditingIndex(index);
         setDraft(word.text);
@@ -350,14 +367,16 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     // the selection itself is a range in DISPLAY position space (posByIndex),
     // since displayed order no longer matches array-index order once a clip
     // has been reordered or Extend-inserted elsewhere (see rows/wordRows above).
-    const selRange = sel
-        ? (() => {
-              const a = posByIndex.get(sel.anchor);
-              const f = posByIndex.get(sel.focus);
-              if (a == null || f == null) return null;
-              return { lo: Math.min(a, f), hi: Math.max(a, f) };
-          })()
-        : null;
+    // Memoized so its identity is stable across renders where the selection
+    // hasn't changed — otherwise selCaptionIndices (which depends on it) would
+    // recompute every render.
+    const selRange = useMemo(() => {
+        if (!sel) return null;
+        const a = posByIndex.get(sel.anchor);
+        const f = posByIndex.get(sel.focus);
+        if (a == null || f == null) return null;
+        return { lo: Math.min(a, f), hi: Math.max(a, f) };
+    }, [sel, posByIndex]);
 
     const handleCut = () => {
         if (!selRange) return;
@@ -386,7 +405,79 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         if (curClipId != null) ranges.push({ startFrame: curStart, endFrame: curEnd });
         if (ranges.length > 0) dispatch({ type: 'CUT_SOURCE_RANGE', ranges });
         setSel(null);
+        setAnchorIdx(null);
     };
+
+    // Caption ARRAY indices covered by the current selection (display order).
+    const selCaptionIndices = useMemo(
+        () => (selRange ? wordRows.slice(selRange.lo, selRange.hi + 1).map((r) => r.index) : []),
+        [selRange, wordRows]
+    );
+    // When every selected word already has its caption hidden, the toolbar
+    // offers "Restore caption" instead of "Remove caption".
+    const allHidden = selCaptionIndices.length > 0
+        && selCaptionIndices.every((i) => captions[i]?.captionHidden);
+
+    const handleToggleCaption = () => {
+        if (selCaptionIndices.length === 0) return;
+        onSetCaptionHidden?.(selCaptionIndices, !allHidden);
+        setSel(null);
+        setAnchorIdx(null);
+    };
+
+    const dismissToolbar = useCallback(() => {
+        setSel(null);
+        setAnchorIdx(null);
+    }, []);
+
+    // Toolbar position: recompute the anchor word's on-screen rect whenever the
+    // selection, the transcript scroll, or the window size changes (popupTick).
+    // Kept in state (not derived in render) so we read the DOM ref in an effect.
+    // Depends on `sel` (stable state), NOT the derived selRange (new object each
+    // render, which would re-run this every render).
+    const [toolbarPos, setToolbarPos] = useState(null);
+    useEffect(() => {
+        if (anchorIdx == null || !sel) { setToolbarPos(null); return; }
+        const scroll = containerRef.current;
+        const el = scroll?.querySelector(`[data-transcript-word="${anchorIdx}"]`);
+        if (!el || !scroll) { setToolbarPos(null); return; }
+        const r = el.getBoundingClientRect();
+        const bounds = scroll.getBoundingClientRect();
+        // Hide the toolbar if the anchor word scrolled out of the visible list.
+        setToolbarPos(r.bottom < bounds.top || r.top > bounds.bottom ? null : { top: r.top, left: r.left });
+    }, [anchorIdx, sel, popupTick]);
+
+    // Bump popupTick on transcript scroll and window resize so the toolbar
+    // tracks its anchor word instead of floating in a stale spot.
+    useEffect(() => {
+        const scroll = containerRef.current;
+        if (!scroll) return;
+        const bump = () => setPopupTick((t) => t + 1);
+        scroll.addEventListener('scroll', bump, { passive: true });
+        window.addEventListener('resize', bump);
+        return () => {
+            scroll.removeEventListener('scroll', bump);
+            window.removeEventListener('resize', bump);
+        };
+    }, []);
+
+    // Escape, or a mousedown anywhere that isn't a transcript word or the
+    // toolbar itself, dismisses the toolbar/selection (when not editing a word).
+    // The toolbar stops its own mousedown from propagating, so its buttons fire.
+    useEffect(() => {
+        if (!sel) return;
+        const onKey = (e) => { if (e.key === 'Escape') dismissToolbar(); };
+        const onDown = (e) => {
+            if (e.target.closest?.('[data-transcript-word],[data-transcript-toolbar]')) return;
+            dismissToolbar();
+        };
+        window.addEventListener('keydown', onKey);
+        document.addEventListener('mousedown', onDown);
+        return () => {
+            window.removeEventListener('keydown', onKey);
+            document.removeEventListener('mousedown', onDown);
+        };
+    }, [sel, dismissToolbar]);
 
     const seekToPause = useCallback(
         (pause) => {
@@ -593,6 +684,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                 isActive={row.index === activeIndex}
                                 suppressHighlight={!!selectedPause}
                                 isCut={isCutByWord[row.index]}
+                                captionHidden={!!row.word.captionHidden}
                                 inSel={!!(selRange && row.pos >= selRange.lo && row.pos <= selRange.hi)}
                                 onWordClick={onWordClick}
                                 onEdit={onEdit}
@@ -602,20 +694,36 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                 )}
             </div>
 
-            {/* Action bar: Cut the selected words */}
-            {selCount > 0 && (
-                <div className="shrink-0 border-t border-edge p-2.5 flex items-center gap-2">
+            {/* Floating Opus-style toolbar: appears above the selected word(s).
+                Edit (single word), Remove/Restore caption, Remove caption+video. */}
+            {selCount > 0 && toolbarPos && editingIndex === null && (
+                <div
+                    data-transcript-toolbar=""
+                    className="fixed z-[130] flex items-center gap-0.5 -translate-y-full -translate-x-0 rounded-lg border border-edge bg-[#17171b] shadow-2xl p-1"
+                    style={{ top: toolbarPos.top - 8, left: toolbarPos.left }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                >
+                    {selCount === 1 && (
+                        <button
+                            onClick={() => onEdit(selCaptionIndices[0], captions[selCaptionIndices[0]])}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-zinc-200 hover:bg-white/10 transition-colors"
+                        >
+                            <Pencil size={13} /> Edit
+                        </button>
+                    )}
                     <button
-                        onClick={handleCut}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/15 border border-red-500/40 text-xs text-red-300 hover:bg-red-500/25 transition-colors"
+                        onClick={handleToggleCaption}
+                        title={allHidden ? 'Show this caption again' : 'Hide the caption but keep the video'}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-zinc-200 hover:bg-white/10 transition-colors"
                     >
-                        <Scissors size={13} /> Cut {selCount} word{selCount > 1 ? 's' : ''}
+                        {allHidden ? <><Eye size={13} /> Restore caption</> : <><EyeOff size={13} /> Remove caption</>}
                     </button>
                     <button
-                        onClick={() => setSel(null)}
-                        className="text-[11px] text-muted hover:text-fg px-2 py-1"
+                        onClick={handleCut}
+                        title="Remove these words from the video and the caption"
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-red-300 hover:bg-red-500/20 transition-colors"
                     >
-                        Cancel
+                        <Scissors size={13} /> Remove caption &amp; video
                     </button>
                 </div>
             )}

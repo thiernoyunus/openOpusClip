@@ -195,6 +195,22 @@ export const editorReducer = (state, action) => {
                 subtitles: { ...subs, captions },
             });
         }
+        case 'SET_CAPTION_HIDDEN': {
+            // "Remove caption only" / "Restore caption": flag a set of word
+            // indices captionHidden (kept in the video/audio, dropped from the
+            // burned-in captions by remapCaptions). Batched into ONE history
+            // entry so hiding a whole selection is a single undo.
+            const subs = state.framing.subtitles;
+            if (!subs) return state;
+            const hide = new Set(action.indices);
+            const captions = subs.captions.map((w, i) =>
+                hide.has(i) ? { ...w, captionHidden: action.hidden } : w
+            );
+            return withHistory({
+                ...state.framing,
+                subtitles: { ...subs, captions },
+            });
+        }
         case 'SPLIT_CLIP': {
             // Razor split: divide one clip into two adjacent independent clips
             // at a SOURCE frame inside it, so each half can get its own
