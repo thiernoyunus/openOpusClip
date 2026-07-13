@@ -485,6 +485,10 @@ export const captionWordSchema = z.object({
   highlight: z.boolean().optional(),
   accentColor: z.string().optional(),
   language: z.string().optional(),
+  // Must be listed here or Zod strips it when the render worker parses props,
+  // and remapCaptions would never see it — hidden captions would reappear in
+  // the exported video.
+  captionHidden: z.boolean().optional(),
 });
 
 export const subtitleStyleSchema = z.object({

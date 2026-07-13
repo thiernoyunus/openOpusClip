@@ -367,14 +367,16 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     // the selection itself is a range in DISPLAY position space (posByIndex),
     // since displayed order no longer matches array-index order once a clip
     // has been reordered or Extend-inserted elsewhere (see rows/wordRows above).
-    const selRange = sel
-        ? (() => {
-              const a = posByIndex.get(sel.anchor);
-              const f = posByIndex.get(sel.focus);
-              if (a == null || f == null) return null;
-              return { lo: Math.min(a, f), hi: Math.max(a, f) };
-          })()
-        : null;
+    // Memoized so its identity is stable across renders where the selection
+    // hasn't changed — otherwise selCaptionIndices (which depends on it) would
+    // recompute every render.
+    const selRange = useMemo(() => {
+        if (!sel) return null;
+        const a = posByIndex.get(sel.anchor);
+        const f = posByIndex.get(sel.focus);
+        if (a == null || f == null) return null;
+        return { lo: Math.min(a, f), hi: Math.max(a, f) };
+    }, [sel, posByIndex]);
 
     const handleCut = () => {
         if (!selRange) return;
