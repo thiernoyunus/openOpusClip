@@ -428,6 +428,22 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         [state.framing, captions, dispatch]
     );
 
+    // "Remove caption only" / "Restore caption": flag word(s) captionHidden so
+    // the burned-in captions drop them while the video/audio stays. Mirrors the
+    // flag onto the local transcript (dimmed display) and the subtitle track (by
+    // index) exactly like a per-word edit. Enabling captions first if needed so
+    // the flag persists into the framing.
+    const handleSetCaptionHidden = useCallback((indices, hidden) => {
+        const set = new Set(indices);
+        setCaptions((prev) => prev.map((w, i) => (set.has(i) ? { ...w, captionHidden: hidden } : w)));
+        if (state.framing?.subtitles) {
+            dispatch({ type: 'SET_CAPTION_HIDDEN', indices, hidden });
+        } else if (state.framing) {
+            const edited = captions.map((w, i) => (set.has(i) ? { ...w, captionHidden: hidden } : w));
+            dispatch({ type: 'SET_SUBTITLES', subtitles: defaultSubtitleConfig(edited) });
+        }
+    }, [state.framing, captions, dispatch]);
+
     // AI enhance / clear writes emoji+highlight onto the subtitle config; mirror
     // it onto the transcript captions (by index) so the transcript shows what the
     // AI added, exactly like a manual per-word emoji edit does.
@@ -761,6 +777,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                             framing={framing}
                             playerRef={playerRef}
                             onEditWord={handleEditWord}
+                            onSetCaptionHidden={handleSetCaptionHidden}
                             dispatch={dispatch}
                             clipStartSec={typeof clip.start === 'number' ? clip.start : null}
                             onOpenExtend={(ctx) => {
