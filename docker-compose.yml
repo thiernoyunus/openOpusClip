@@ -8,6 +8,8 @@ services:
       - .:/app
       - /app/__pycache__
       - ./output:/app/output
+    environment:
+      - RENDER_SERVICE_URL=http://renderer:3100
     restart: unless-stopped
 
   frontend:

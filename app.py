@@ -1321,17 +1321,22 @@ async def get_clip_transcript(job_id: str, clip_index: int):
 
 
 # --- Remotion Render Proxy ---
-RENDER_SERVICE_URL = os.getenv("RENDER_SERVICE_URL", "http://renderer:3100")
+# Default suits running everything on one machine; docker-compose overrides
+# this with the container hostname (http://renderer:3100).
+RENDER_SERVICE_URL = os.getenv("RENDER_SERVICE_URL", "http://localhost:3100")
 
 @app.post("/api/render")
 async def proxy_render(request: Request):
     """Proxy render requests to the Node.js Remotion render service."""
     import httpx
+    from fastapi.responses import JSONResponse
     body = await request.json()
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(f"{RENDER_SERVICE_URL}/render", json=body)
-            return resp.json()
+            # Pass the renderer's status code through — wrapping errors in a
+            # 200 would make the editor treat failures as progress forever.
+            return JSONResponse(content=resp.json(), status_code=resp.status_code)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Render service unavailable: {e}")
 
@@ -1339,10 +1344,11 @@ async def proxy_render(request: Request):
 async def proxy_render_status(render_id: str):
     """Proxy render status polling to the Node.js Remotion render service."""
     import httpx
+    from fastapi.responses import JSONResponse
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{RENDER_SERVICE_URL}/render/{render_id}")
-            return resp.json()
+            return JSONResponse(content=resp.json(), status_code=resp.status_code)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Render service unavailable: {e}")
 
@@ -2762,4 +2768,15 @@ async def thumbnail_publish_status(publish_id: str):
     if publish_id not in publish_jobs:
         raise HTTPException(status_code=404, detail="Publish job not found")
     return publish_jobs[publish_id]
+
+
+# Serve the built dashboard (must be registered last — Starlette matches routes
+# in registration order, and a "/" mount would shadow every @app.get route
+# defined above it). Hash-based routing (#app, #trailer) means index.html at
+# "/" is sufficient; no catch-all fallback route is needed.
+_DASHBOARD_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "dist")
+if os.path.isdir(_DASHBOARD_DIST):
+    app.mount("/", StaticFiles(directory=_DASHBOARD_DIST, html=True), name="dashboard")
+else:
+    print("🚀 No dashboard/dist found — skipping static UI mount (run `npm run build` in dashboard/ to enable it).")
 

@@ -42,3 +42,6 @@ output/
 skills/
 skills-lock.json
 
+# Electron shell
+electron/node_modules/
+

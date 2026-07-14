@@ -9,7 +9,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const backendTarget = env.VITE_PROXY_BACKEND || 'http://localhost:8000'
-  const rendererTarget = env.VITE_PROXY_RENDERER || 'http://localhost:3100'
 
   return {
     plugins: [react()],
@@ -41,10 +40,6 @@ export default defineConfig(({ mode }) => {
           target: backendTarget,
           changeOrigin: true,
         },
-        '/render': {
-          target: rendererTarget,
-          changeOrigin: true,
-        }
       }
     }
   }

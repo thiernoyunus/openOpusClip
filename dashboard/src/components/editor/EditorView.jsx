@@ -539,7 +539,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
             if (state.dirty) await saveFraming();
 
             const durationInFrames = outputDurationFrames(state.framing, EDITOR_FPS);
-            const res = await fetch(getApiUrl('/render'), {
+            const res = await fetch(getApiUrl('/api/render'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -566,7 +566,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
             let outputUrl = null;
             for (;;) {
                 await new Promise((r) => setTimeout(r, 1500));
-                const statusRes = await fetch(getApiUrl(`/render/${renderId}`));
+                const statusRes = await fetch(getApiUrl(`/api/render/${renderId}`));
                 if (!statusRes.ok) throw new Error('Lost contact with the render service.');
                 const status = await statusRes.json();
                 setExportProgress(status.progress ?? 0);
