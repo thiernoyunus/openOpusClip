@@ -1329,11 +1329,14 @@ RENDER_SERVICE_URL = os.getenv("RENDER_SERVICE_URL", "http://localhost:3100")
 async def proxy_render(request: Request):
     """Proxy render requests to the Node.js Remotion render service."""
     import httpx
+    from fastapi.responses import JSONResponse
     body = await request.json()
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(f"{RENDER_SERVICE_URL}/render", json=body)
-            return resp.json()
+            # Pass the renderer's status code through — wrapping errors in a
+            # 200 would make the editor treat failures as progress forever.
+            return JSONResponse(content=resp.json(), status_code=resp.status_code)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Render service unavailable: {e}")
 
@@ -1341,10 +1344,11 @@ async def proxy_render(request: Request):
 async def proxy_render_status(render_id: str):
     """Proxy render status polling to the Node.js Remotion render service."""
     import httpx
+    from fastapi.responses import JSONResponse
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{RENDER_SERVICE_URL}/render/{render_id}")
-            return resp.json()
+            return JSONResponse(content=resp.json(), status_code=resp.status_code)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Render service unavailable: {e}")
 

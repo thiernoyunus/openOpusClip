@@ -78,13 +78,14 @@ function runPreflightChecks() {
 
 // --- Step 2: health check -------------------------------------------------
 
-// Does a plain GET to url and resolves true/false depending on whether we
-// got a response at all (any HTTP status counts as "something is there").
+// Does a plain GET to url and resolves true only on HTTP 200 — anything
+// else means whatever is on that port is not a healthy OpenShorts backend
+// (e.g. some unrelated app that happens to occupy port 8000).
 function checkUrlIsUp(url, timeoutMs) {
   return new Promise((resolve) => {
     const req = http.get(url, { timeout: timeoutMs }, (res) => {
       res.resume(); // drain, we don't care about the body
-      resolve(true);
+      resolve(res.statusCode === 200);
     });
     req.on('timeout', () => {
       req.destroy();
