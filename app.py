@@ -2763,3 +2763,14 @@ async def thumbnail_publish_status(publish_id: str):
         raise HTTPException(status_code=404, detail="Publish job not found")
     return publish_jobs[publish_id]
 
+
+# Serve the built dashboard (must be registered last — Starlette matches routes
+# in registration order, and a "/" mount would shadow every @app.get route
+# defined above it). Hash-based routing (#app, #trailer) means index.html at
+# "/" is sufficient; no catch-all fallback route is needed.
+_DASHBOARD_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "dist")
+if os.path.isdir(_DASHBOARD_DIST):
+    app.mount("/", StaticFiles(directory=_DASHBOARD_DIST, html=True), name="dashboard")
+else:
+    print("🚀 No dashboard/dist found — skipping static UI mount (run `npm run build` in dashboard/ to enable it).")
+
