@@ -106,12 +106,18 @@ function spawnStack() {
 
   // On darwin/linux, run children in their own process group (detached)
   // so we can kill the whole group later instead of just the immediate
-  // child (uvicorn/npm often spawn their own children).
-  const groupOpts = process.platform === 'win32' ? {} : { detached: true };
+  // child (uvicorn/npm often spawn their own children). On Windows, npm
+  // is a shell script (npm.cmd), so spawning it needs shell: true.
+  const groupOpts = process.platform === 'win32' ? { shell: true } : { detached: true };
+
+  // Virtual environments put python in a different folder per platform.
+  const pythonBin = process.platform === 'win32'
+    ? path.join(ROOT, '.venv', 'Scripts', 'python.exe')
+    : path.join(ROOT, '.venv', 'bin', 'python');
 
   console.log('Starting backend on ' + BACKEND_URL);
   const backend = spawn(
-    path.join(ROOT, '.venv', 'bin', 'python'),
+    pythonBin,
     ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', '8000'],
     {
       cwd: ROOT,
@@ -141,7 +147,28 @@ function spawnStack() {
     ...groupOpts,
   });
   renderer.stdout.on('data', (d) => process.stdout.write('[renderer] ' + d));
-  renderer.stderr.on('data', (d) => process.stderr.write('[renderer] ' + d));
+  const rendererStderrTail = [];
+  renderer.stderr.on('data', (d) => {
+    process.stderr.write('[renderer] ' + d);
+    for (const line of d.toString().split('\n').filter(Boolean)) {
+      rendererStderrTail.push(line);
+      if (rendererStderrTail.length > 20) rendererStderrTail.shift();
+    }
+  });
+  // We deliberately don't block the window on the renderer being ready
+  // (its first startup can take a while bundling, and exports happen much
+  // later) — but if it dies outright, say so instead of leaving the user
+  // with a mysteriously broken Export button.
+  renderer.on('exit', (code) => {
+    spawned.renderer = null;
+    if (quitting || code === 0) return;
+    dialog.showErrorBox(
+      'OpenShorts: video renderer stopped',
+      'The video render service exited unexpectedly (code ' + code + ').\n' +
+        'Exporting clips will not work until you restart the app.\n\nLast renderer output:\n\n' +
+        (rendererStderrTail.join('\n') || '(no output captured)')
+    );
+  });
   spawned.renderer = renderer;
 }
 
@@ -189,7 +216,9 @@ function killProcessGroup(child) {
   if (!child || child.killed || child.pid == null) return;
   try {
     if (process.platform === 'win32') {
-      child.kill();
+      // child.kill() would only kill the wrapper shell and orphan the real
+      // servers (leaking ports 8000/3100); taskkill removes the whole tree.
+      spawn('taskkill', ['/pid', String(child.pid), '/f', '/t']);
     } else {
       // Negative pid = kill the whole process group we created with
       // `detached: true` above.
@@ -200,7 +229,9 @@ function killProcessGroup(child) {
   }
 }
 
+let quitting = false;
 app.on('will-quit', () => {
+  quitting = true;
   // Only kill what we actually spawned. If the stack was already
   // running before we started, leave it alone.
   killProcessGroup(spawned.backend);
@@ -210,6 +241,13 @@ app.on('will-quit', () => {
 app.on('window-all-closed', () => {
   app.quit();
 });
+
+// A Ctrl+C / kill from a terminal doesn't run Electron's quit events by
+// itself, which would orphan the backend + renderer and leak their ports.
+// Route those signals through the normal quit path so cleanup always runs.
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => app.quit());
+}
 
 let starting = false;
 app.on('activate', () => {

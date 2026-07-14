@@ -1321,7 +1321,9 @@ async def get_clip_transcript(job_id: str, clip_index: int):
 
 
 # --- Remotion Render Proxy ---
-RENDER_SERVICE_URL = os.getenv("RENDER_SERVICE_URL", "http://renderer:3100")
+# Default suits running everything on one machine; docker-compose overrides
+# this with the container hostname (http://renderer:3100).
+RENDER_SERVICE_URL = os.getenv("RENDER_SERVICE_URL", "http://localhost:3100")
 
 @app.post("/api/render")
 async def proxy_render(request: Request):
