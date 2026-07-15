@@ -222,7 +222,11 @@ function buildPackagedPlan() {
   fs.chmodSync(nodeShim, 0o755);
 
   const bundledBin = path.join(RES, 'bin'); // static ffmpeg + ffprobe
-  const packagedPath = [bundledBin, binDir, process.env.PATH || ''].join(path.delimiter);
+  // Drop empty segments so an unset process.env.PATH can't leave a trailing
+  // delimiter — POSIX shells read that as "also search the current directory".
+  const packagedPath = [bundledBin, binDir, process.env.PATH]
+    .filter(Boolean)
+    .join(path.delimiter);
 
   const chromeExecutable = path.join(
     RES,
@@ -289,6 +293,17 @@ function spawnStack() {
     process.stderr.write('[backend] ' + d);
     rememberBackendStderr(d);
   });
+  // If the executable itself can't be launched (missing/corrupt/bad perms),
+  // Node emits 'error' — unhandled it would crash the whole app. The backend
+  // is essential, so report it and quit cleanly instead of waiting out the
+  // 60s health-check timeout.
+  backend.on('error', (err) => {
+    fatal(
+      'OpenShorts: backend failed to start',
+      'Could not launch the backend process:\n\n  ' + err.message +
+        '\n\nThe app may be damaged. Please reinstall OpenShorts.'
+    );
+  });
   spawned.backend = backend;
 
   console.log('Starting renderer on http://127.0.0.1:' + RENDERER_PORT);
@@ -314,16 +329,26 @@ function spawnStack() {
   // We deliberately don't block the window on the renderer being ready
   // (its first startup can take a while bundling, and exports happen much
   // later) — but if it dies outright, say so instead of leaving the user
-  // with a mysteriously broken Export button.
-  renderer.on('exit', (code) => {
+  // with a mysteriously broken Export button. A failed launch fires 'error'
+  // (possibly followed by 'exit'); reportRendererDown de-dupes the two.
+  let rendererReported = false;
+  function reportRendererDown(detail) {
     spawned.renderer = null;
-    if (quitting || code === 0) return;
+    if (quitting || rendererReported) return;
+    rendererReported = true;
     dialog.showErrorBox(
       'OpenShorts: video renderer stopped',
-      'The video render service exited unexpectedly (code ' + code + ').\n' +
-        'Exporting clips will not work until you restart the app.\n\nLast renderer output:\n\n' +
+      detail + '\nExporting clips will not work until you restart the app.\n\n' +
+        'Last renderer output:\n\n' +
         (rendererStderrTail.join('\n') || '(no output captured)')
     );
+  }
+  renderer.on('error', (err) => {
+    reportRendererDown('The video render service could not be launched:\n\n  ' + err.message + '\n');
+  });
+  renderer.on('exit', (code) => {
+    if (code === 0) { spawned.renderer = null; return; }
+    reportRendererDown('The video render service exited unexpectedly (code ' + code + ').\n');
   });
   spawned.renderer = renderer;
 }
