@@ -200,11 +200,16 @@ info "ffmpeg/ffprobe verified: arm64, libx264 + videotoolbox, no Homebrew deps"
 
 # --- g. chrome-headless-shell ------------------------------------------------
 log "g. Staging chrome-headless-shell"
-SHELL_SRC="${REPO_ROOT}/render-service/node_modules/.remotion/chrome-headless-shell/mac-arm64"
-if [[ ! -f "$(find "${SHELL_SRC}" -name chrome-headless-shell -type f 2>/dev/null | head -1)" ]]; then
-  info "chrome-headless-shell not found; running 'npx remotion browser ensure' ..."
-  ( cd "${REPO_ROOT}/render-service" && npx --yes remotion browser ensure )
-fi
+# Always let the remotion/ project's CLI resolve the browser rather than trusting
+# whatever is cached under render-service/. Two reasons: (1) render-service depends
+# on remotion as a library only, so `npx remotion` there fails with "could not
+# determine executable to run"; (2) `browser ensure` verifies the cached browser
+# matches the Remotion version and re-downloads if it's stale — a presence-only
+# check would happily stage an incompatible browser from an older Remotion. It's
+# idempotent and cheap when the correct browser is already cached.
+info "ensuring chrome-headless-shell via remotion/ CLI ..."
+( cd "${REPO_ROOT}/remotion" && npx --yes remotion browser ensure )
+SHELL_SRC="${REPO_ROOT}/remotion/node_modules/.remotion/chrome-headless-shell/mac-arm64"
 SHELL_BIN="$(find "${SHELL_SRC}" -name chrome-headless-shell -type f 2>/dev/null | head -1)"
 [[ -n "${SHELL_BIN}" ]] || die "chrome-headless-shell binary not found under ${SHELL_SRC}"
 rm -rf "${STAGE}/chrome-headless-shell"
