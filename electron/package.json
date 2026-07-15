@@ -31,6 +31,18 @@
         "dir"
       ],
       "identity": null
+    },
+    "dmg": {
+      "title": "OpenShorts ${version}",
+      "icon": "build/icon.icns",
+      "window": {
+        "width": 540,
+        "height": 400
+      },
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ]
     }
   }
 }

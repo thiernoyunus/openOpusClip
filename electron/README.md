@@ -39,7 +39,15 @@ scripts/desktop/build-stage.sh     # produces desktop-stage/ (~2.7 GB)
 cd electron && npm run package      # -> electron/dist/mac-arm64/OpenShorts.app
 ```
 
-`npm run package:dmg` makes a `.dmg` installer instead of a plain `.app`.
+`npm run package:dmg` makes a `.dmg` installer instead of a plain `.app` — this
+is what you'd hand someone to install the app.
+
+The app icon lives at `electron/build/icon.png` / `icon.icns`. Regenerate it
+after changing the logo with:
+
+```bash
+.venv/bin/python scripts/desktop/make-icon.py
+```
 
 ### First launch notes
 
