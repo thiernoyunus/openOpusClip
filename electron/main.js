@@ -315,7 +315,11 @@ function spawnStack() {
   // in use, a Python import error, etc. Fail fast with its output instead of
   // waiting out the 60s health-check timeout. (Our own shutdown sets quitting.)
   backend.on('exit', (code, signal) => {
-    if (quitting || code === 0) return;
+    // Ignore clean exits and "please stop" signals (our shutdown, OS logout,
+    // an external terminate) — only a real crash (non-zero code or fault
+    // signal) should fail the app fast with its output.
+    if (quitting || code === 0 ||
+        signal === 'SIGTERM' || signal === 'SIGINT' || signal === 'SIGHUP') return;
     fatal(
       'OpenShorts: backend stopped',
       'The backend exited unexpectedly (' + (signal ? 'signal ' + signal : 'code ' + code) + ').\n\n' +
@@ -365,9 +369,12 @@ function spawnStack() {
     reportRendererDown('The video render service could not be launched:\n\n  ' + err.message + '\n');
   });
   renderer.on('exit', (code, signal) => {
-    if (code === 0) { spawned.renderer = null; return; }
-    // A signal kill reports code null — name the signal so the dialog isn't
-    // a confusing "code null".
+    spawned.renderer = null;
+    // Clean exit, or a "please stop" signal — our own shutdown kill, an OS
+    // logout/restart, or someone terminating the process. None of these is a
+    // renderer *crash*, so don't alarm the user. A real crash shows up as a
+    // non-zero exit code or a fault signal (SIGSEGV/SIGABRT/SIGKILL-on-OOM).
+    if (code === 0 || signal === 'SIGTERM' || signal === 'SIGINT' || signal === 'SIGHUP') return;
     const how = signal ? 'signal ' + signal : 'code ' + code;
     reportRendererDown('The video render service exited unexpectedly (' + how + ').\n');
   });
