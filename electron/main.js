@@ -61,6 +61,13 @@ function rememberBackendStderr(chunk) {
 }
 
 function fatal(title, message) {
+  // Kill children FIRST (before the modal blocks), then inform the user. The
+  // process.exit() below skips the 'will-quit' handler, so without this a
+  // fatal after spawnStack() leaks the backend/renderer process groups
+  // (orphaned uvicorn/node holding ports 8000/3100).
+  quitting = true;
+  killProcessGroup(spawned.backend);
+  killProcessGroup(spawned.renderer);
   dialog.showErrorBox(title, message);
   app.quit();
   process.exit(1);
@@ -304,6 +311,17 @@ function spawnStack() {
         '\n\nThe app may be damaged. Please reinstall OpenShorts.'
     );
   });
+  // The backend can also launch fine but exit immediately — port 8000 already
+  // in use, a Python import error, etc. Fail fast with its output instead of
+  // waiting out the 60s health-check timeout. (Our own shutdown sets quitting.)
+  backend.on('exit', (code, signal) => {
+    if (quitting || code === 0) return;
+    fatal(
+      'OpenShorts: backend stopped',
+      'The backend exited unexpectedly (' + (signal ? 'signal ' + signal : 'code ' + code) + ').\n\n' +
+        'Last backend output:\n\n' + (backendStderrTail.join('\n') || '(no output captured)')
+    );
+  });
   spawned.backend = backend;
 
   console.log('Starting renderer on http://127.0.0.1:' + RENDERER_PORT);
@@ -346,9 +364,12 @@ function spawnStack() {
   renderer.on('error', (err) => {
     reportRendererDown('The video render service could not be launched:\n\n  ' + err.message + '\n');
   });
-  renderer.on('exit', (code) => {
+  renderer.on('exit', (code, signal) => {
     if (code === 0) { spawned.renderer = null; return; }
-    reportRendererDown('The video render service exited unexpectedly (code ' + code + ').\n');
+    // A signal kill reports code null — name the signal so the dialog isn't
+    // a confusing "code null".
+    const how = signal ? 'signal ' + signal : 'code ' + code;
+    reportRendererDown('The video render service exited unexpectedly (' + how + ').\n');
   });
   spawned.renderer = renderer;
 }
