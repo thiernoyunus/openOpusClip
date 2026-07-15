@@ -1,5 +1,5 @@
 {
-  "name": "openshorts-desktop",
+  "name": "openopusclip-desktop",
   "version": "1.0.0",
   "private": true,
   "main": "main.js",
@@ -13,8 +13,8 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.openshorts.desktop",
-    "productName": "OpenShorts",
+    "appId": "com.openopusclip.desktop",
+    "productName": "openOpusClip",
     "asar": true,
     "files": [
       "main.js",
@@ -31,6 +31,18 @@
         "dir"
       ],
       "identity": null
+    },
+    "dmg": {
+      "title": "openOpusClip ${version}",
+      "icon": "build/icon.icns",
+      "window": {
+        "width": 540,
+        "height": 400
+      },
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ]
     }
   }
 }

@@ -1,7 +1,7 @@
-// OpenShorts desktop shell
+// openOpusClip desktop shell
 //
 // Plain language version of what this file does:
-//   OpenShorts is really three things: a Python backend server, a video
+//   openOpusClip is really three things: a Python backend server, a video
 //   render service, and a web dashboard. Normally you'd start each by hand
 //   and open a browser tab. This file starts them for you and opens a
 //   normal desktop window instead, so one app does everything.
@@ -11,7 +11,7 @@
 //       project's .venv Python and `npm run dev` renderer, exactly like
 //       start-local.sh. This mirrors start-local.sh — if you change how the
 //       backend or renderer are started there, update this file too.
-//     * PACKAGED mode (the built OpenShorts.app): everything it needs —
+//     * PACKAGED mode (the built openOpusClip.app): everything it needs —
 //       a portable Python, ffmpeg, the renderer, a headless browser — is
 //       bundled inside the app. Nothing needs to be installed first.
 //
@@ -32,13 +32,13 @@ const RENDERER_PORT = 3100;
 // In the built app, the staged runtime (Python, ffmpeg, renderer, browser,
 // etc.) lands at Contents/Resources/stage — see the electron-builder
 // extraResources mapping in package.json. RES points there; DATA is the
-// user's writable app-data folder (~/Library/Application Support/OpenShorts
+// user's writable app-data folder (~/Library/Application Support/openOpusClip
 // on macOS). Both are only meaningful in packaged mode.
 const PACKAGED = app.isPackaged;
 // Without this, userData would be named after package.json's "name"
-// (openshorts-desktop); set it before the first getPath call so user data
-// lives at ~/Library/Application Support/OpenShorts from the very first run.
-app.setName('OpenShorts');
+// (openopusclip-desktop); set it before the first getPath call so user data
+// lives at ~/Library/Application Support/openOpusClip from the very first run.
+app.setName('openOpusClip');
 const RES = path.join(process.resourcesPath, 'stage');
 const DATA = app.getPath('userData');
 
@@ -82,20 +82,20 @@ function runPreflightChecks() {
     const appPy = path.join(RES, 'backend', 'app.py');
     if (!fs.existsSync(appPy)) {
       fatal(
-        'OpenShorts: incomplete installation',
+        'openOpusClip: incomplete installation',
         'A required file is missing from the app bundle:\n\n' +
           '  ' + appPy + '\n\n' +
-          'The app may be damaged. Please reinstall OpenShorts.'
+          'The app may be damaged. Please reinstall openOpusClip.'
       );
       return false;
     }
     const py = path.join(RES, 'python', 'bin', 'python3');
     if (!fs.existsSync(py)) {
       fatal(
-        'OpenShorts: incomplete installation',
+        'openOpusClip: incomplete installation',
         'The bundled Python runtime is missing:\n\n' +
           '  ' + py + '\n\n' +
-          'The app may be damaged. Please reinstall OpenShorts.'
+          'The app may be damaged. Please reinstall openOpusClip.'
       );
       return false;
     }
@@ -105,7 +105,7 @@ function runPreflightChecks() {
   const venvDir = path.join(ROOT, '.venv');
   if (!fs.existsSync(venvDir)) {
     fatal(
-      'OpenShorts: missing Python environment',
+      'openOpusClip: missing Python environment',
       'The Python virtual environment (.venv) was not found.\n\n' +
         'To fix this, open a terminal in the project folder and run:\n\n' +
         '  python3.11 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt'
@@ -116,7 +116,7 @@ function runPreflightChecks() {
   const dashboardIndex = path.join(ROOT, 'dashboard', 'dist', 'index.html');
   if (!fs.existsSync(dashboardIndex)) {
     fatal(
-      'OpenShorts: dashboard not built',
+      'openOpusClip: dashboard not built',
       'The dashboard has not been built yet (dashboard/dist/index.html is missing).\n\n' +
         'To fix this, open a terminal in the project folder and run:\n\n' +
         '  cd dashboard && npm run build'
@@ -130,7 +130,7 @@ function runPreflightChecks() {
 // --- Step 2: health check -------------------------------------------------
 
 // Does a plain GET to url and resolves true only on HTTP 200 — anything
-// else means whatever is on that port is not a healthy OpenShorts backend
+// else means whatever is on that port is not a healthy openOpusClip backend
 // (e.g. some unrelated app that happens to occupy port 8000).
 function checkUrlIsUp(url, timeoutMs) {
   return new Promise((resolve) => {
@@ -306,9 +306,9 @@ function spawnStack() {
   // 60s health-check timeout.
   backend.on('error', (err) => {
     fatal(
-      'OpenShorts: backend failed to start',
+      'openOpusClip: backend failed to start',
       'Could not launch the backend process:\n\n  ' + err.message +
-        '\n\nThe app may be damaged. Please reinstall OpenShorts.'
+        '\n\nThe app may be damaged. Please reinstall openOpusClip.'
     );
   });
   // The backend can also launch fine but exit immediately — port 8000 already
@@ -321,14 +321,14 @@ function spawnStack() {
     if (quitting || code === 0 ||
         signal === 'SIGTERM' || signal === 'SIGINT' || signal === 'SIGHUP') return;
     // A non-zero exit can just mean port 8000 was already held by another valid
-    // OpenShorts backend our 1.5s startup probe missed under load. Re-check
+    // openOpusClip backend our 1.5s startup probe missed under load. Re-check
     // health before giving up: if a backend is answering, drop our dead
     // duplicate and let the wait loop attach to the existing one instead of
     // killing the app.
     checkUrlIsUp(BACKEND_URL + '/api/config', 2000).then((up) => {
       if (up) { spawned.backend = null; return; }
       fatal(
-        'OpenShorts: backend stopped',
+        'openOpusClip: backend stopped',
         'The backend exited unexpectedly (' + (signal ? 'signal ' + signal : 'code ' + code) + ').\n\n' +
           'Last backend output:\n\n' + (backendStderrTail.join('\n') || '(no output captured)')
       );
@@ -366,7 +366,7 @@ function spawnStack() {
     if (quitting || rendererReported) return;
     rendererReported = true;
     dialog.showErrorBox(
-      'OpenShorts: video renderer stopped',
+      'openOpusClip: video renderer stopped',
       detail + '\nExporting clips will not work until you restart the app.\n\n' +
         'Last renderer output:\n\n' +
         (rendererStderrTail.join('\n') || '(no output captured)')
@@ -427,7 +427,7 @@ async function waitForBackendThenShowWindow() {
     ? backendStderrTail.join('\n')
     : '(no backend output captured)';
   fatal(
-    'OpenShorts: backend did not start',
+    'openOpusClip: backend did not start',
     'Timed out after 60 seconds waiting for the backend at ' +
       BACKEND_URL +
       '/api/config.\n\nLast backend output:\n\n' +
@@ -440,7 +440,7 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
-    title: 'OpenShorts',
+    title: 'openOpusClip',
   });
   win.loadURL(BACKEND_URL);
 }
@@ -504,7 +504,7 @@ app.on('activate', () => {
 });
 
 // --- Single instance ---------------------------------------------------
-// Only one OpenShorts may run at a time. A second launch focuses the existing
+// Only one openOpusClip may run at a time. A second launch focuses the existing
 // window and quits immediately. This is the structural guarantee that makes
 // the rest of startup simple: we never race another copy of ourselves for
 // ports 8000/3100, so the only stack that can already be running is a dev one
