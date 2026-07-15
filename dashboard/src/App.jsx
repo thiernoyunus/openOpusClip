@@ -59,6 +59,9 @@ const TikTokIcon = ({ size = 16, className = "" }) => (
 
 const SESSION_KEY = 'openshorts_session';
 const LEGACY_SESSION_KEY = 'openshorts_session_v1';
+// sessionStorage flag so the "session recovered" banner shows once per launch,
+// not on every in-app navigation that remounts the App view.
+const RECOVERY_SHOWN_KEY = 'openshorts_recovery_shown';
 // Sanity backstop for a genuinely ancient localStorage blob (e.g. months-old
 // browser tab) — NOT a job-expiry timer. The server is the source of truth for
 // whether a job still exists (see pollJob's 404/410 -> JobExpiredError below);
@@ -184,8 +187,16 @@ function App() {
               durationSeconds: data.duration_seconds ?? (recoveredDone ? fallbackDurationSeconds(session.jobId) : null),
               elapsedSeconds: data.elapsed_seconds ?? null,
             }));
-            setSessionRecovered(true);
-            setTimeout(() => setSessionRecovered(false), 5000);
+            // Show the "recovered" banner once per app launch, not on every
+            // in-app navigation. The App view remounts when you switch pages or
+            // close the editor, which re-runs this restore — but sessionStorage
+            // survives those reloads and only clears when the app truly closes,
+            // so the banner greets you once and then stays quiet.
+            if (!sessionStorage.getItem(RECOVERY_SHOWN_KEY)) {
+              sessionStorage.setItem(RECOVERY_SHOWN_KEY, '1');
+              setSessionRecovered(true);
+              setTimeout(() => setSessionRecovered(false), 5000);
+            }
           })
           .catch((e) => {
             if (cancelled) return;
