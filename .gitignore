@@ -44,9 +44,4 @@ skills-lock.json
 
 # Electron shell
 electron/node_modules/
-electron/dist/
-
-# Desktop packaging (Step A): staged runtime + download cache
-desktop-stage/
-.desktop-build-cache/
 

@@ -1,23 +1,18 @@
-// OpenShorts desktop shell
+// OpenShorts desktop shell (phase 1: "dev shell")
 //
 // Plain language version of what this file does:
-//   OpenShorts is really three things: a Python backend server, a video
-//   render service, and a web dashboard. Normally you'd start each by hand
-//   and open a browser tab. This file starts them for you and opens a
-//   normal desktop window instead, so one app does everything.
+//   Today you start OpenShorts by hand: activate the Python virtual
+//   environment, start the backend server, start the video-render
+//   service, then open a browser tab. This file does the same three
+//   steps automatically and opens a normal desktop window instead of
+//   a browser tab, so double-clicking one app does everything.
 //
-//   There are two modes:
-//     * DEV mode (you run `npm start` from a source checkout): it uses your
-//       project's .venv Python and `npm run dev` renderer, exactly like
-//       start-local.sh. This mirrors start-local.sh — if you change how the
-//       backend or renderer are started there, update this file too.
-//     * PACKAGED mode (the built OpenShorts.app): everything it needs —
-//       a portable Python, ffmpeg, the renderer, a headless browser — is
-//       bundled inside the app. Nothing needs to be installed first.
-//
-//   In both modes, if the stack is already running (e.g. you started it in
-//   a terminal), this shell notices and just opens a window pointed at it
+//   If you already have the stack running (e.g. via start-local.sh),
+//   this shell notices that and just opens a window pointed at it,
 //   instead of starting a second copy.
+//
+// This file intentionally mirrors start-local.sh. If you change how
+// the backend or renderer are started there, update this file too.
 
 const { app, BrowserWindow, dialog } = require('electron');
 const path = require('path');
@@ -28,19 +23,6 @@ const { spawn } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const BACKEND_URL = 'http://127.0.0.1:8000';
 const RENDERER_PORT = 3100;
-
-// In the built app, the staged runtime (Python, ffmpeg, renderer, browser,
-// etc.) lands at Contents/Resources/stage — see the electron-builder
-// extraResources mapping in package.json. RES points there; DATA is the
-// user's writable app-data folder (~/Library/Application Support/OpenShorts
-// on macOS). Both are only meaningful in packaged mode.
-const PACKAGED = app.isPackaged;
-// Without this, userData would be named after package.json's "name"
-// (openshorts-desktop); set it before the first getPath call so user data
-// lives at ~/Library/Application Support/OpenShorts from the very first run.
-app.setName('OpenShorts');
-const RES = path.join(process.resourcesPath, 'stage');
-const DATA = app.getPath('userData');
 
 // Children we spawned ourselves. If we didn't spawn something (because
 // it was already running), we must never try to kill it on quit.
@@ -69,32 +51,6 @@ function fatal(title, message) {
 // --- Step 1: preflight checks -------------------------------------------
 
 function runPreflightChecks() {
-  if (PACKAGED) {
-    // In the built app the runtime is bundled; the only way these are
-    // missing is a corrupt/incomplete build, so point the user at that.
-    const appPy = path.join(RES, 'backend', 'app.py');
-    if (!fs.existsSync(appPy)) {
-      fatal(
-        'OpenShorts: incomplete installation',
-        'A required file is missing from the app bundle:\n\n' +
-          '  ' + appPy + '\n\n' +
-          'The app may be damaged. Please reinstall OpenShorts.'
-      );
-      return false;
-    }
-    const py = path.join(RES, 'python', 'bin', 'python3');
-    if (!fs.existsSync(py)) {
-      fatal(
-        'OpenShorts: incomplete installation',
-        'The bundled Python runtime is missing:\n\n' +
-          '  ' + py + '\n\n' +
-          'The app may be damaged. Please reinstall OpenShorts.'
-      );
-      return false;
-    }
-    return true;
-  }
-
   const venvDir = path.join(ROOT, '.venv');
   if (!fs.existsSync(venvDir)) {
     fatal(
@@ -141,134 +97,17 @@ function checkUrlIsUp(url, timeoutMs) {
   });
 }
 
-// --- Step 3: spawn backend + renderer -------------------------------------
+// --- Step 3: spawn backend + renderer (mirrors start-local.sh 43-60) ------
 
-// Build the two child-process descriptions for the current mode. Dev mode
-// mirrors start-local.sh; packaged mode wires the bundled runtime. Keeping
-// this in one place means the spawn/logging/cleanup plumbing below is shared.
-function buildStackPlan() {
-  if (PACKAGED) {
-    return buildPackagedPlan();
-  }
-  return buildDevPlan();
-}
-
-function buildDevPlan() {
+function spawnStack() {
   // Honor OPENSHORTS_OUTPUT_DIR so the backend (which reads the same var) and
   // the renderer write to and serve from the same folder — they'd diverge if
   // only one side saw the override.
   const outputDir = process.env.OPENSHORTS_OUTPUT_DIR
     ? path.resolve(process.env.OPENSHORTS_OUTPUT_DIR)
     : path.join(ROOT, 'output');
-
-  // Virtual environments put python in a different folder per platform.
-  const pythonBin = process.platform === 'win32'
-    ? path.join(ROOT, '.venv', 'Scripts', 'python.exe')
-    : path.join(ROOT, '.venv', 'bin', 'python');
-
-  return {
-    outputDir,
-    backend: {
-      command: pythonBin,
-      args: ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', '8000'],
-      cwd: ROOT,
-      env: Object.assign({}, process.env, {
-        RENDER_SERVICE_URL: 'http://127.0.0.1:' + RENDERER_PORT,
-      }),
-    },
-    // In dev, the renderer is `npm run dev` (tsx watch). On Windows npm is a
-    // shell script, so it needs a shell to run (handled in spawnStack).
-    renderer: {
-      command: 'npm',
-      args: ['run', 'dev'],
-      cwd: path.join(ROOT, 'render-service'),
-      env: Object.assign({}, process.env, {
-        OUTPUT_DIR: outputDir,
-        REMOTION_BUNDLE_PATH: path.join(ROOT, 'remotion'),
-        PORT: String(RENDERER_PORT),
-      }),
-      shellOnWindows: true,
-    },
-  };
-}
-
-function buildPackagedPlan() {
-  const outputDir = path.join(DATA, 'output');
-  const uploadsDir = path.join(DATA, 'uploads');
-  const hfHome = path.join(DATA, 'hf-cache');
-  const binDir = path.join(DATA, 'bin');
-
-  // Writable folders the backend/renderer need. The bundled resources are
-  // read-only (inside the .app), so all runtime output goes under DATA.
-  for (const dir of [outputDir, uploadsDir, hfHome, binDir]) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  // yt-dlp shells out to `node` (>= 22) to solve YouTube's JS challenges.
-  // We don't bundle a separate Node — Electron *is* Node when launched with
-  // ELECTRON_RUN_AS_NODE=1. Drop a tiny `node` shim on PATH that re-invokes
-  // this app in that mode. Rewritten every launch because process.execPath
-  // moves when the app updates or is relocated.
-  const nodeShim = path.join(binDir, 'node');
-  // Single-quote and escape the path so an install location containing
-  // shell-active characters (spaces are fine either way, but '$' or '`'
-  // inside double quotes would otherwise be expanded/interpreted) is passed
-  // through literally.
-  const shellSafeExecPath = "'" + process.execPath.replace(/'/g, "'\\''") + "'";
-  fs.writeFileSync(
-    nodeShim,
-    '#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexec ' + shellSafeExecPath + ' "$@"\n'
-  );
-  fs.chmodSync(nodeShim, 0o755);
-
-  const bundledBin = path.join(RES, 'bin'); // static ffmpeg + ffprobe
-  const packagedPath = [bundledBin, binDir, process.env.PATH || ''].join(path.delimiter);
-
-  const chromeExecutable = path.join(
-    RES,
-    'chrome-headless-shell',
-    'chrome-headless-shell-mac-arm64',
-    'chrome-headless-shell'
-  );
-
-  return {
-    outputDir,
-    backend: {
-      command: path.join(RES, 'python', 'bin', 'python3'),
-      args: ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', '8000'],
-      cwd: path.join(RES, 'backend'),
-      env: Object.assign({}, process.env, {
-        // ffmpeg/ffprobe (bundled bin) + the yt-dlp node shim, ahead of the
-        // inherited PATH.
-        PATH: packagedPath,
-        OPENSHORTS_OUTPUT_DIR: outputDir,
-        OPENSHORTS_UPLOAD_DIR: uploadsDir,
-        HF_HOME: hfHome, // whisper model cache
-        RENDER_SERVICE_URL: 'http://127.0.0.1:' + RENDERER_PORT,
-      }),
-    },
-    // The renderer is plain Node (@remotion/renderer is pure JS + a browser
-    // subprocess), so run its built server.js through Electron-as-Node.
-    renderer: {
-      command: process.execPath,
-      args: [path.join(RES, 'render-service', 'dist', 'server.js')],
-      cwd: path.join(RES, 'render-service'),
-      env: Object.assign({}, process.env, {
-        ELECTRON_RUN_AS_NODE: '1',
-        PORT: String(RENDERER_PORT),
-        OUTPUT_DIR: outputDir,
-        REMOTION_PREBUILT_BUNDLE: path.join(RES, 'remotion-bundle'),
-        REMOTION_BROWSER_EXECUTABLE: chromeExecutable,
-      }),
-    },
-  };
-}
-
-function spawnStack() {
-  const plan = buildStackPlan();
-
-  if (!fs.existsSync(plan.outputDir)) {
-    fs.mkdirSync(plan.outputDir, { recursive: true });
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
   }
 
   // On darwin/linux, run children in their own process group (detached)
@@ -277,13 +116,24 @@ function spawnStack() {
   // is a shell script (npm.cmd), so spawning it needs shell: true.
   const groupOpts = process.platform === 'win32' ? { shell: true } : { detached: true };
 
+  // Virtual environments put python in a different folder per platform.
+  const pythonBin = process.platform === 'win32'
+    ? path.join(ROOT, '.venv', 'Scripts', 'python.exe')
+    : path.join(ROOT, '.venv', 'bin', 'python');
+
   console.log('Starting backend on ' + BACKEND_URL);
-  const backend = spawn(plan.backend.command, plan.backend.args, {
-    cwd: plan.backend.cwd,
-    env: plan.backend.env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    ...groupOpts,
-  });
+  const backend = spawn(
+    pythonBin,
+    ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', '8000'],
+    {
+      cwd: ROOT,
+      env: Object.assign({}, process.env, {
+        RENDER_SERVICE_URL: 'http://127.0.0.1:' + RENDERER_PORT,
+      }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...groupOpts,
+    }
+  );
   backend.stdout.on('data', (d) => process.stdout.write('[backend] ' + d));
   backend.stderr.on('data', (d) => {
     process.stderr.write('[backend] ' + d);
@@ -292,15 +142,15 @@ function spawnStack() {
   spawned.backend = backend;
 
   console.log('Starting renderer on http://127.0.0.1:' + RENDERER_PORT);
-  const rendererGroupOpts =
-    process.platform === 'win32' && plan.renderer.shellOnWindows
-      ? { shell: true }
-      : groupOpts;
-  const renderer = spawn(plan.renderer.command, plan.renderer.args, {
-    cwd: plan.renderer.cwd,
-    env: plan.renderer.env,
+  const renderer = spawn('npm', ['run', 'dev'], {
+    cwd: path.join(ROOT, 'render-service'),
+    env: Object.assign({}, process.env, {
+      OUTPUT_DIR: outputDir,
+      REMOTION_BUNDLE_PATH: path.join(ROOT, 'remotion'),
+      PORT: String(RENDERER_PORT),
+    }),
     stdio: ['ignore', 'pipe', 'pipe'],
-    ...rendererGroupOpts,
+    ...groupOpts,
   });
   renderer.stdout.on('data', (d) => process.stdout.write('[renderer] ' + d));
   const rendererStderrTail = [];
