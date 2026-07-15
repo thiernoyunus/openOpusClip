@@ -1,6 +1,6 @@
-# OpenShorts desktop shell
+# openOpusClip desktop shell
 
-This wraps OpenShorts as a normal desktop app window. It starts the same
+This wraps openOpusClip as a normal desktop app window. It starts the same
 backend and video renderer the project uses, then shows them in a window.
 It runs in one of two modes automatically.
 
@@ -28,7 +28,7 @@ pointed at it instead of starting a second copy.
 
 ## Packaged mode (the built app)
 
-The built `OpenShorts.app` bundles everything it needs — a portable Python,
+The built `openOpusClip.app` bundles everything it needs — a portable Python,
 ffmpeg, the renderer, and a headless browser — so nothing has to be
 installed first.
 
@@ -36,7 +36,7 @@ Build the bundled runtime, then package it:
 
 ```bash
 scripts/desktop/build-stage.sh     # produces desktop-stage/ (~2.7 GB)
-cd electron && npm run package      # -> electron/dist/mac-arm64/OpenShorts.app
+cd electron && npm run package      # -> electron/dist/mac-arm64/openOpusClip.app
 ```
 
 `npm run package:dmg` makes a `.dmg` installer instead of a plain `.app` — this
@@ -46,7 +46,7 @@ The app icon lives at `electron/build/icon.png` / `icon.icns`. Regenerate it
 after changing the logo with:
 
 ```bash
-.venv/bin/python scripts/desktop/make-icon.py
+.venv/bin/python scripts/desktop/make-icon-from-image.py electron/build/source-logo.webp
 ```
 
 ### First launch notes
@@ -55,7 +55,7 @@ after changing the logo with:
   the first time. Right-click the app and choose **Open**, then confirm — you
   only need to do this once.
 - Your videos, uploads, and settings live in
-  `~/Library/Application Support/OpenShorts` (output/, uploads/, hf-cache/).
+  `~/Library/Application Support/openOpusClip` (output/, uploads/, hf-cache/).
   Deleting the app does not delete these.
 - The first time you transcribe a video, the speech model downloads into
   `hf-cache/`. That first run is slower; later runs reuse the cached model.
