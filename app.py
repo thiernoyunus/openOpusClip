@@ -25,8 +25,8 @@ load_dotenv()
 # Constants
 # Overridable so the app can run inside a read-only packaged bundle (e.g. a
 # desktop app) where "uploads"/"output" relative to cwd wouldn't be writable.
-UPLOAD_DIR = os.getenv("OPENSHORTS_UPLOAD_DIR", "uploads")
-OUTPUT_DIR = os.getenv("OPENSHORTS_OUTPUT_DIR", "output")
+UPLOAD_DIR = os.getenv("OPENSHORTS_UPLOAD_DIR") or "uploads"
+OUTPUT_DIR = os.getenv("OPENSHORTS_OUTPUT_DIR") or "output"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 

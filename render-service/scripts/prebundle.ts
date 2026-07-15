@@ -1,5 +1,9 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { bundle } from "@remotion/bundler";
+
+// import.meta.dirname needs Node >= 20.11 (the Docker image runs Node 18).
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Pre-builds the Remotion bundle at build time instead of at server startup.
@@ -17,11 +21,11 @@ async function main(): Promise<void> {
   const outDir =
     process.argv[2] ||
     process.env.REMOTION_PREBUILT_BUNDLE ||
-    path.resolve(import.meta.dirname, "../dist/remotion-bundle");
+    path.resolve(HERE, "../dist/remotion-bundle");
 
   const remotionRoot = process.env.REMOTION_BUNDLE_PATH
     ? path.resolve(process.env.REMOTION_BUNDLE_PATH)
-    : path.resolve(import.meta.dirname, "../../remotion");
+    : path.resolve(HERE, "../../remotion");
 
   const entryPoint = path.join(remotionRoot, "src", "index.ts");
 

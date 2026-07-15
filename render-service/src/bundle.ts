@@ -1,5 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+// import.meta.dirname needs Node >= 20.11 (the Docker image runs Node 18).
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 let bundleLocation: string | null = null;
 
@@ -15,7 +19,14 @@ let bundleLocation: string | null = null;
  */
 export async function initBundle(): Promise<void> {
   const prebuilt = process.env.REMOTION_PREBUILT_BUNDLE;
-  if (prebuilt && fs.existsSync(prebuilt)) {
+  if (prebuilt) {
+    // Fail fast on a bad path — a packaged app may not ship @remotion/bundler,
+    // so silently falling through would surface as a confusing import error.
+    if (!fs.existsSync(prebuilt)) {
+      throw new Error(
+        `REMOTION_PREBUILT_BUNDLE is set but the directory does not exist: ${prebuilt}`
+      );
+    }
     bundleLocation = path.resolve(prebuilt);
     console.log(`[bundle] Using prebuilt bundle at: ${bundleLocation} (skipping bundling)`);
     return;
@@ -25,7 +36,7 @@ export async function initBundle(): Promise<void> {
 
   const remotionRoot = process.env.REMOTION_BUNDLE_PATH
     ? path.resolve(process.env.REMOTION_BUNDLE_PATH)
-    : path.resolve(import.meta.dirname, "../../remotion");
+    : path.resolve(HERE, "../../remotion");
 
   const entryPoint = path.join(remotionRoot, "src", "index.ts");
 
