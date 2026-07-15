@@ -374,12 +374,15 @@ function spawnStack() {
   }
   function reportRendererDown(detail) {
     if (quitting || rendererReported) return;
-    // Before the window opens, a dead renderer while a backend is answering
-    // means we're attaching to an already-running instance (whose renderer
-    // owns port 3100) — a duplicate-launch conflict, not a crash. Once the
-    // window is open, a renderer death is a genuine in-session crash.
+    // Before the window opens, probe the RENDERER's own health — not the
+    // backend's. A responding renderer on 3100 means an already-running
+    // instance owns the port and we're attaching to it (duplicate launch), so
+    // our dead duplicate is harmless. If nothing answers 3100, our renderer
+    // really did fail (e.g. a port conflict with an unrelated process) and the
+    // user needs to know exports are broken. After the window is open, any
+    // renderer death is a genuine in-session crash.
     if (!windowOpen) {
-      checkUrlIsUp(BACKEND_URL + '/api/config', 2000).then((up) => {
+      checkUrlIsUp('http://127.0.0.1:' + RENDERER_PORT + '/health', 2000).then((up) => {
         if (!up) showRendererDown(detail);
       });
       return;
