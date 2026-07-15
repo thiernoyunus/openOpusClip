@@ -100,7 +100,12 @@ function checkUrlIsUp(url, timeoutMs) {
 // --- Step 3: spawn backend + renderer (mirrors start-local.sh 43-60) ------
 
 function spawnStack() {
-  const outputDir = path.join(ROOT, 'output');
+  // Honor OPENSHORTS_OUTPUT_DIR so the backend (which reads the same var) and
+  // the renderer write to and serve from the same folder — they'd diverge if
+  // only one side saw the override.
+  const outputDir = process.env.OPENSHORTS_OUTPUT_DIR
+    ? path.resolve(process.env.OPENSHORTS_OUTPUT_DIR)
+    : path.join(ROOT, 'output');
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }

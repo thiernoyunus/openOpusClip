@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "prebundle": "tsx scripts/prebundle.ts"
   },
   "dependencies": {
     "@remotion/bundler": "^4.0.468",

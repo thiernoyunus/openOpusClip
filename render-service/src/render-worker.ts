@@ -40,6 +40,10 @@ const RENDER_JPEG_QUALITY: number = (() => {
   return 80;
 })();
 
+// Pin a specific Chrome/Chromium binary instead of Remotion's downloaded one —
+// e.g. a packaged app bundling its own browser. Unset = default behavior.
+const RENDER_BROWSER_EXECUTABLE = process.env.REMOTION_BROWSER_EXECUTABLE || undefined;
+
 export interface RenderParams {
   renderId: string;
   jobId: string;
@@ -86,6 +90,7 @@ export async function executeRender(params: RenderParams): Promise<void> {
       serveUrl: bundleLocation,
       id: "ShortVideo",
       inputProps: props,
+      browserExecutable: RENDER_BROWSER_EXECUTABLE,
     });
 
     // Determine output directory and file path
@@ -122,6 +127,7 @@ export async function executeRender(params: RenderParams): Promise<void> {
       jpegQuality: RENDER_JPEG_QUALITY,
       // Faster x264 preset than the "medium" default (see RENDER_X264_PRESET).
       x264Preset: RENDER_X264_PRESET,
+      browserExecutable: RENDER_BROWSER_EXECUTABLE,
       onProgress: ({ progress }) => {
         const percent = Math.round(progress * 100);
         job.progress = percent;

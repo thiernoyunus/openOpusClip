@@ -23,8 +23,10 @@ from transcription import WHISPER_MODELS
 load_dotenv()
 
 # Constants
-UPLOAD_DIR = "uploads"
-OUTPUT_DIR = "output"
+# Overridable so the app can run inside a read-only packaged bundle (e.g. a
+# desktop app) where "uploads"/"output" relative to cwd wouldn't be writable.
+UPLOAD_DIR = os.getenv("OPENSHORTS_UPLOAD_DIR") or "uploads"
+OUTPUT_DIR = os.getenv("OPENSHORTS_OUTPUT_DIR") or "output"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -2631,7 +2633,8 @@ async def thumbnail_generate(
             bg_path,
             extra_prompt,
             count,
-            video_context
+            video_context,
+            OUTPUT_DIR
         )
 
         if not thumbnails:

@@ -5,7 +5,6 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends chromium ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV REMOTION_BUNDLE_PATH=/app/remotion
 ENV OUTPUT_DIR=/output
 
