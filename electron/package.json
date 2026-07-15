@@ -4,9 +4,33 @@
   "private": true,
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "package": "electron-builder --mac dir --arm64",
+    "package:dmg": "electron-builder --mac dmg --arm64"
   },
   "devDependencies": {
-    "electron": "^43.0.0"
+    "electron": "^43.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.openshorts.desktop",
+    "productName": "OpenShorts",
+    "asar": true,
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../desktop-stage",
+        "to": "stage"
+      }
+    ],
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "identity": null
+    }
   }
 }
