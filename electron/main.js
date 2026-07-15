@@ -320,11 +320,19 @@ function spawnStack() {
     // signal) should fail the app fast with its output.
     if (quitting || code === 0 ||
         signal === 'SIGTERM' || signal === 'SIGINT' || signal === 'SIGHUP') return;
-    fatal(
-      'OpenShorts: backend stopped',
-      'The backend exited unexpectedly (' + (signal ? 'signal ' + signal : 'code ' + code) + ').\n\n' +
-        'Last backend output:\n\n' + (backendStderrTail.join('\n') || '(no output captured)')
-    );
+    // A non-zero exit can just mean port 8000 was already held by another valid
+    // OpenShorts backend our 1.5s startup probe missed under load. Re-check
+    // health before giving up: if a backend is answering, drop our dead
+    // duplicate and let the wait loop attach to the existing one instead of
+    // killing the app.
+    checkUrlIsUp(BACKEND_URL + '/api/config', 2000).then((up) => {
+      if (up) { spawned.backend = null; return; }
+      fatal(
+        'OpenShorts: backend stopped',
+        'The backend exited unexpectedly (' + (signal ? 'signal ' + signal : 'code ' + code) + ').\n\n' +
+          'Last backend output:\n\n' + (backendStderrTail.join('\n') || '(no output captured)')
+      );
+    });
   });
   spawned.backend = backend;
 
@@ -354,8 +362,7 @@ function spawnStack() {
   // with a mysteriously broken Export button. A failed launch fires 'error'
   // (possibly followed by 'exit'); reportRendererDown de-dupes the two.
   let rendererReported = false;
-  function reportRendererDown(detail) {
-    spawned.renderer = null;
+  function showRendererDown(detail) {
     if (quitting || rendererReported) return;
     rendererReported = true;
     dialog.showErrorBox(
@@ -365,7 +372,22 @@ function spawnStack() {
         (rendererStderrTail.join('\n') || '(no output captured)')
     );
   }
+  function reportRendererDown(detail) {
+    if (quitting || rendererReported) return;
+    // Before the window opens, a dead renderer while a backend is answering
+    // means we're attaching to an already-running instance (whose renderer
+    // owns port 3100) — a duplicate-launch conflict, not a crash. Once the
+    // window is open, a renderer death is a genuine in-session crash.
+    if (!windowOpen) {
+      checkUrlIsUp(BACKEND_URL + '/api/config', 2000).then((up) => {
+        if (!up) showRendererDown(detail);
+      });
+      return;
+    }
+    showRendererDown(detail);
+  }
   renderer.on('error', (err) => {
+    spawned.renderer = null;
     reportRendererDown('The video render service could not be launched:\n\n  ' + err.message + '\n');
   });
   renderer.on('exit', (code, signal) => {
@@ -411,6 +433,7 @@ async function waitForBackendThenShowWindow() {
 }
 
 function createWindow() {
+  windowOpen = true;
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -437,6 +460,11 @@ function killProcessGroup(child) {
     // Process may already be gone; nothing more we can do.
   }
 }
+
+// Flips true once the app window is showing. Before that we may be racing a
+// duplicate launch (an existing instance holds the ports); after it, a child
+// dying is a genuine in-session failure.
+let windowOpen = false;
 
 let quitting = false;
 app.on('will-quit', () => {
