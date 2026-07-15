@@ -503,9 +503,29 @@ app.on('activate', () => {
   }
 });
 
+// --- Single instance ---------------------------------------------------
+// Only one OpenShorts may run at a time. A second launch focuses the existing
+// window and quits immediately. This is the structural guarantee that makes
+// the rest of startup simple: we never race another copy of ourselves for
+// ports 8000/3100, so the only stack that can already be running is a dev one
+// (start-local.sh), which the attach check below handles.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+  });
+}
+
 // --- Entry point ------------------------------------------------------
 
 app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) return; // duplicate launch — already quit above
   if (!runPreflightChecks()) return;
 
   const alreadyUp = await checkUrlIsUp(BACKEND_URL + '/api/config', 1500);
