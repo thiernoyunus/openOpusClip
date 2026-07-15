@@ -70,9 +70,11 @@ def main():
             for scale in (1, 2):
                 px = base * scale
                 name = f"icon_{base}x{base}{'@2x' if scale == 2 else ''}.png"
+                # stdout kept quiet, but let stderr through so a sips failure
+                # is debuggable instead of a bare non-zero exit.
                 subprocess.run(
                     ["sips", "-z", str(px), str(px), png_path, "--out", os.path.join(iconset, name)],
-                    check=True, capture_output=True,
+                    check=True, stdout=subprocess.DEVNULL,
                 )
         icns_path = os.path.join(BUILD, "icon.icns")
         subprocess.run(["iconutil", "-c", "icns", iconset, "-o", icns_path], check=True)
