@@ -210,14 +210,19 @@ function buildPackagedPlan() {
   // this app in that mode. Rewritten every launch because process.execPath
   // moves when the app updates or is relocated.
   const nodeShim = path.join(binDir, 'node');
+  // Single-quote and escape the path so an install location containing
+  // shell-active characters (spaces are fine either way, but '$' or '`'
+  // inside double quotes would otherwise be expanded/interpreted) is passed
+  // through literally.
+  const shellSafeExecPath = "'" + process.execPath.replace(/'/g, "'\\''") + "'";
   fs.writeFileSync(
     nodeShim,
-    '#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexec "' + process.execPath + '" "$@"\n'
+    '#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexec ' + shellSafeExecPath + ' "$@"\n'
   );
   fs.chmodSync(nodeShim, 0o755);
 
   const bundledBin = path.join(RES, 'bin'); // static ffmpeg + ffprobe
-  const packagedPath = bundledBin + ':' + binDir + ':' + (process.env.PATH || '');
+  const packagedPath = [bundledBin, binDir, process.env.PATH || ''].join(path.delimiter);
 
   const chromeExecutable = path.join(
     RES,

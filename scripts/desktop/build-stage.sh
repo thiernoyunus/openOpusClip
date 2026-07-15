@@ -72,7 +72,10 @@ log "Staging into: ${STAGE}"
 log "a. Building dashboard (Vite)"
 cd "${REPO_ROOT}/dashboard"
 [[ -d node_modules ]] || { info "installing dashboard deps..."; npm install; }
-npm run build
+# The desktop app always talks to the backend it starts itself on
+# 127.0.0.1:8000 — force a relative API base so a VITE_API_URL left over in
+# the shell or dashboard/.env can't get baked into the packaged dashboard.
+VITE_API_URL= npm run build
 rm -rf "${STAGE}/dashboard"
 cp -R "${REPO_ROOT}/dashboard/dist" "${STAGE}/dashboard"
 info "dashboard -> ${STAGE}/dashboard"

@@ -41,6 +41,13 @@ log()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 CHROME_BIN="$(find "${STAGE}/chrome-headless-shell" -name chrome-headless-shell -type f 2>/dev/null | head -1)"
 [[ -n "${CHROME_BIN}" ]]   || { echo "ERROR: staged chrome-headless-shell binary not found." >&2; exit 1; }
 
+# Refuse to run if our ports are already taken — cleanup below force-kills
+# whatever ends up on them, which must never be a process we didn't start.
+for p in "${BACKEND_PORT}" "${RENDER_PORT}"; do
+  existing="$(lsof -ti tcp:"${p}" 2>/dev/null || true)"
+  [[ -z "${existing}" ]] || { echo "ERROR: port ${p} is already in use (pid ${existing}); free it before running this script." >&2; exit 1; }
+done
+
 # Temp workspace: output/upload dirs + log files.
 TMP="$(mktemp -d)"
 OUT_DIR="${TMP}/out"; UP_DIR="${TMP}/up"
