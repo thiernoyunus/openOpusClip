@@ -61,6 +61,13 @@ function rememberBackendStderr(chunk) {
 }
 
 function fatal(title, message) {
+  // Kill children FIRST (before the modal blocks), then inform the user. The
+  // process.exit() below skips the 'will-quit' handler, so without this a
+  // fatal after spawnStack() leaks the backend/renderer process groups
+  // (orphaned uvicorn/node holding ports 8000/3100).
+  quitting = true;
+  killProcessGroup(spawned.backend);
+  killProcessGroup(spawned.renderer);
   dialog.showErrorBox(title, message);
   app.quit();
   process.exit(1);
@@ -222,7 +229,11 @@ function buildPackagedPlan() {
   fs.chmodSync(nodeShim, 0o755);
 
   const bundledBin = path.join(RES, 'bin'); // static ffmpeg + ffprobe
-  const packagedPath = [bundledBin, binDir, process.env.PATH || ''].join(path.delimiter);
+  // Drop empty segments so an unset process.env.PATH can't leave a trailing
+  // delimiter — POSIX shells read that as "also search the current directory".
+  const packagedPath = [bundledBin, binDir, process.env.PATH]
+    .filter(Boolean)
+    .join(path.delimiter);
 
   const chromeExecutable = path.join(
     RES,
@@ -289,6 +300,40 @@ function spawnStack() {
     process.stderr.write('[backend] ' + d);
     rememberBackendStderr(d);
   });
+  // If the executable itself can't be launched (missing/corrupt/bad perms),
+  // Node emits 'error' — unhandled it would crash the whole app. The backend
+  // is essential, so report it and quit cleanly instead of waiting out the
+  // 60s health-check timeout.
+  backend.on('error', (err) => {
+    fatal(
+      'OpenShorts: backend failed to start',
+      'Could not launch the backend process:\n\n  ' + err.message +
+        '\n\nThe app may be damaged. Please reinstall OpenShorts.'
+    );
+  });
+  // The backend can also launch fine but exit immediately — port 8000 already
+  // in use, a Python import error, etc. Fail fast with its output instead of
+  // waiting out the 60s health-check timeout. (Our own shutdown sets quitting.)
+  backend.on('exit', (code, signal) => {
+    // Ignore clean exits and "please stop" signals (our shutdown, OS logout,
+    // an external terminate) — only a real crash (non-zero code or fault
+    // signal) should fail the app fast with its output.
+    if (quitting || code === 0 ||
+        signal === 'SIGTERM' || signal === 'SIGINT' || signal === 'SIGHUP') return;
+    // A non-zero exit can just mean port 8000 was already held by another valid
+    // OpenShorts backend our 1.5s startup probe missed under load. Re-check
+    // health before giving up: if a backend is answering, drop our dead
+    // duplicate and let the wait loop attach to the existing one instead of
+    // killing the app.
+    checkUrlIsUp(BACKEND_URL + '/api/config', 2000).then((up) => {
+      if (up) { spawned.backend = null; return; }
+      fatal(
+        'OpenShorts: backend stopped',
+        'The backend exited unexpectedly (' + (signal ? 'signal ' + signal : 'code ' + code) + ').\n\n' +
+          'Last backend output:\n\n' + (backendStderrTail.join('\n') || '(no output captured)')
+      );
+    });
+  });
   spawned.backend = backend;
 
   console.log('Starting renderer on http://127.0.0.1:' + RENDERER_PORT);
@@ -314,16 +359,49 @@ function spawnStack() {
   // We deliberately don't block the window on the renderer being ready
   // (its first startup can take a while bundling, and exports happen much
   // later) — but if it dies outright, say so instead of leaving the user
-  // with a mysteriously broken Export button.
-  renderer.on('exit', (code) => {
-    spawned.renderer = null;
-    if (quitting || code === 0) return;
+  // with a mysteriously broken Export button. A failed launch fires 'error'
+  // (possibly followed by 'exit'); reportRendererDown de-dupes the two.
+  let rendererReported = false;
+  function showRendererDown(detail) {
+    if (quitting || rendererReported) return;
+    rendererReported = true;
     dialog.showErrorBox(
       'OpenShorts: video renderer stopped',
-      'The video render service exited unexpectedly (code ' + code + ').\n' +
-        'Exporting clips will not work until you restart the app.\n\nLast renderer output:\n\n' +
+      detail + '\nExporting clips will not work until you restart the app.\n\n' +
+        'Last renderer output:\n\n' +
         (rendererStderrTail.join('\n') || '(no output captured)')
     );
+  }
+  function reportRendererDown(detail) {
+    if (quitting || rendererReported) return;
+    // Before the window opens, probe the RENDERER's own health — not the
+    // backend's. A responding renderer on 3100 means an already-running
+    // instance owns the port and we're attaching to it (duplicate launch), so
+    // our dead duplicate is harmless. If nothing answers 3100, our renderer
+    // really did fail (e.g. a port conflict with an unrelated process) and the
+    // user needs to know exports are broken. After the window is open, any
+    // renderer death is a genuine in-session crash.
+    if (!windowOpen) {
+      checkUrlIsUp('http://127.0.0.1:' + RENDERER_PORT + '/health', 2000).then((up) => {
+        if (!up) showRendererDown(detail);
+      });
+      return;
+    }
+    showRendererDown(detail);
+  }
+  renderer.on('error', (err) => {
+    spawned.renderer = null;
+    reportRendererDown('The video render service could not be launched:\n\n  ' + err.message + '\n');
+  });
+  renderer.on('exit', (code, signal) => {
+    spawned.renderer = null;
+    // Clean exit, or a "please stop" signal — our own shutdown kill, an OS
+    // logout/restart, or someone terminating the process. None of these is a
+    // renderer *crash*, so don't alarm the user. A real crash shows up as a
+    // non-zero exit code or a fault signal (SIGSEGV/SIGABRT/SIGKILL-on-OOM).
+    if (code === 0 || signal === 'SIGTERM' || signal === 'SIGINT' || signal === 'SIGHUP') return;
+    const how = signal ? 'signal ' + signal : 'code ' + code;
+    reportRendererDown('The video render service exited unexpectedly (' + how + ').\n');
   });
   spawned.renderer = renderer;
 }
@@ -358,6 +436,7 @@ async function waitForBackendThenShowWindow() {
 }
 
 function createWindow() {
+  windowOpen = true;
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -384,6 +463,11 @@ function killProcessGroup(child) {
     // Process may already be gone; nothing more we can do.
   }
 }
+
+// Flips true once the app window is showing. Before that we may be racing a
+// duplicate launch (an existing instance holds the ports); after it, a child
+// dying is a genuine in-session failure.
+let windowOpen = false;
 
 let quitting = false;
 app.on('will-quit', () => {
@@ -419,9 +503,29 @@ app.on('activate', () => {
   }
 });
 
+// --- Single instance ---------------------------------------------------
+// Only one OpenShorts may run at a time. A second launch focuses the existing
+// window and quits immediately. This is the structural guarantee that makes
+// the rest of startup simple: we never race another copy of ourselves for
+// ports 8000/3100, so the only stack that can already be running is a dev one
+// (start-local.sh), which the attach check below handles.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+  });
+}
+
 // --- Entry point ------------------------------------------------------
 
 app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) return; // duplicate launch — already quit above
   if (!runPreflightChecks()) return;
 
   const alreadyUp = await checkUrlIsUp(BACKEND_URL + '/api/config', 1500);
