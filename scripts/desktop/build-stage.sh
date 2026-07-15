@@ -202,8 +202,13 @@ info "ffmpeg/ffprobe verified: arm64, libx264 + videotoolbox, no Homebrew deps"
 log "g. Staging chrome-headless-shell"
 SHELL_SRC="${REPO_ROOT}/render-service/node_modules/.remotion/chrome-headless-shell/mac-arm64"
 if [[ ! -f "$(find "${SHELL_SRC}" -name chrome-headless-shell -type f 2>/dev/null | head -1)" ]]; then
-  info "chrome-headless-shell not found; running 'npx remotion browser ensure' ..."
-  ( cd "${REPO_ROOT}/render-service" && npx --yes remotion browser ensure )
+  # render-service only depends on remotion as a library (no CLI binary there —
+  # `npx remotion` fails with "could not determine executable to run"). The
+  # sibling remotion/ project has the real `remotion` package with its CLI,
+  # and both projects share the same browser cache convention.
+  info "chrome-headless-shell not found; running 'npx remotion browser ensure' (via remotion/) ..."
+  ( cd "${REPO_ROOT}/remotion" && npx --yes remotion browser ensure )
+  SHELL_SRC="${REPO_ROOT}/remotion/node_modules/.remotion/chrome-headless-shell/mac-arm64"
 fi
 SHELL_BIN="$(find "${SHELL_SRC}" -name chrome-headless-shell -type f 2>/dev/null | head -1)"
 [[ -n "${SHELL_BIN}" ]] || die "chrome-headless-shell binary not found under ${SHELL_SRC}"
