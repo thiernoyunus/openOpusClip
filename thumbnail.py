@@ -171,14 +171,17 @@ OUTPUT JSON:
         return {"titles": ["Could not refine titles - please try again"]}
 
 
-def generate_thumbnail(api_key, title, session_id, face_image_path=None, bg_image_path=None, extra_prompt="", count=3, video_context=""):
+def generate_thumbnail(api_key, title, session_id, face_image_path=None, bg_image_path=None, extra_prompt="", count=3, video_context="", output_base="output"):
     """
     Generates YouTube thumbnails using Gemini image generation.
     Returns list of saved image paths (relative URLs).
+
+    output_base must match the server's OUTPUT_DIR so the files land where
+    /thumbnails is served from (they diverge if OPENSHORTS_OUTPUT_DIR is set).
     """
     client = genai.Client(api_key=api_key)
 
-    output_dir = os.path.join("output", "thumbnails", session_id)
+    output_dir = os.path.join(output_base, "thumbnails", session_id)
     os.makedirs(output_dir, exist_ok=True)
 
     prompt_parts = []

@@ -52,7 +52,7 @@ sleep 2
 echo "Starting renderer on http://localhost:3100"
 (
   cd "$ROOT_DIR/render-service"
-  OUTPUT_DIR="$ROOT_DIR/output" \
+  OUTPUT_DIR="${OPENSHORTS_OUTPUT_DIR:-$ROOT_DIR/output}" \
   REMOTION_BUNDLE_PATH="$ROOT_DIR/remotion" \
   PORT=3100 \
   exec npm run dev

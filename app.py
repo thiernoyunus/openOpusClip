@@ -2633,7 +2633,8 @@ async def thumbnail_generate(
             bg_path,
             extra_prompt,
             count,
-            video_context
+            video_context,
+            OUTPUT_DIR
         )
 
         if not thumbnails:
