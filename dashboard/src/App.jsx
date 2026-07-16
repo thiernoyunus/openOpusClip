@@ -192,8 +192,19 @@ function App() {
             // close the editor, which re-runs this restore — but sessionStorage
             // survives those reloads and only clears when the app truly closes,
             // so the banner greets you once and then stays quiet.
-            if (!sessionStorage.getItem(RECOVERY_SHOWN_KEY)) {
-              sessionStorage.setItem(RECOVERY_SHOWN_KEY, '1');
+            //
+            // Guard the storage access: it can throw in restricted environments
+            // (private mode, blocked storage). Left unguarded, that throw would
+            // propagate to the .catch below and wrongly delete the saved
+            // session. On failure we just fall back to showing the banner.
+            let recoveryAlreadyShown = false;
+            try {
+              recoveryAlreadyShown = !!sessionStorage.getItem(RECOVERY_SHOWN_KEY);
+              if (!recoveryAlreadyShown) sessionStorage.setItem(RECOVERY_SHOWN_KEY, '1');
+            } catch {
+              recoveryAlreadyShown = false;
+            }
+            if (!recoveryAlreadyShown) {
               setSessionRecovered(true);
               setTimeout(() => setSessionRecovered(false), 5000);
             }
