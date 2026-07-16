@@ -2725,6 +2725,17 @@ if __name__ == '__main__':
                 print("🛑 Stopping job. Not converting the whole video as a fallback.")
                 sys.exit(2)
 
+        # --num-clips is a hard cap, not a suggestion. The prompt asks for at
+        # most N, but we don't trust prompt obedience (same reason the overlap
+        # filter exists) — enforce it here so we never cut/reframe more clips
+        # than the caller asked for. Keep the strongest picks.
+        if args.num_clips and len(clips_data['shorts']) > args.num_clips:
+            over = len(clips_data['shorts'])
+            clips_data['shorts'].sort(
+                key=lambda s: s.get('virality_score') or 0, reverse=True)
+            clips_data['shorts'] = clips_data['shorts'][:args.num_clips]
+            print(f"✂️  Capped {over} returned moment(s) to the {args.num_clips} requested (kept the highest-scoring).")
+
         print(f"🔥 Found {len(clips_data['shorts'])} viral clips!")
 
         # Save metadata

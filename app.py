@@ -860,6 +860,14 @@ def _more_clips_worker(job_id: str, count, api_key: str):
 
         added = _merge_more_clips(job_id, output_dir, meta_path, scratch_dir)
         _log(f"Added {added} new clip(s)." if added else "No new clips were added.")
+        if added:
+            # Back up the appended clips + rewritten metadata, same as run_job's
+            # completion path — otherwise the bucket keeps stale metadata that
+            # omits the new clips. Fire-and-forget (no-ops when S3 is unset) so
+            # the user sees results without waiting on the upload.
+            threading.Thread(
+                target=upload_job_artifacts, args=(output_dir, job_id), daemon=True
+            ).start()
     except Exception as e:
         # The original metadata/result is untouched on any failure (merge is
         # all-or-nothing and raises before rewriting metadata).
