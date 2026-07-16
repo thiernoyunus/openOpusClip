@@ -191,6 +191,8 @@ def _soniox_tokens_to_transcript(tokens):
             word["probability"] = min(cur["confs"])  # only as confident as the weakest piece
         if cur["langs"]:
             word["language"] = max(set(cur["langs"]), key=cur["langs"].count)
+        if cur["spks"]:
+            word["speaker"] = max(set(cur["spks"]), key=cur["spks"].count)
         return word
 
     def _script(s):
@@ -223,11 +225,14 @@ def _soniox_tokens_to_transcript(tokens):
         end = (tok.get("end_ms") or 0) / 1000.0
         conf = tok.get("confidence")
         lang = tok.get("language")
+        spk = tok.get("speaker")                  # diarization label (string), if enabled
         is_punct = not any(ch.isalnum() for ch in piece)
         if cur is None:
             new_word = True
         elif is_punct:
             new_word = False                      # punctuation attaches to the word, no space
+        elif spk is not None and cur["spks"] and spk != cur["spks"][-1]:
+            new_word = True                       # a speaker change is always a word boundary
         else:
             # Word boundaries are marked by a leading space on the starting token.
             # But Soniox sometimes drops the space at a LANGUAGE/SCRIPT switch
@@ -262,6 +267,7 @@ def _soniox_tokens_to_transcript(tokens):
                 "end": end,
                 "confs": [conf] if conf is not None else [],
                 "langs": [lang] if lang else [],
+                "spks": [spk] if spk is not None else [],
             }
         else:
             cur["text"] += piece                  # concat sub-word / attach punctuation, no space
@@ -270,10 +276,13 @@ def _soniox_tokens_to_transcript(tokens):
                 cur["confs"].append(conf)
             if lang:
                 cur["langs"].append(lang)
+            if spk is not None:
+                cur["spks"].append(spk)
     if cur is not None:
         words.append(_finish(cur))
 
-    # Group whole words into segments on sentence punctuation or a >=0.8s pause.
+    # Group whole words into segments on sentence punctuation, a >=0.8s pause,
+    # or a speaker change (so a segment never mixes two voices).
     segments = []
     current = []
     for i, w in enumerate(words):
@@ -281,13 +290,17 @@ def _soniox_tokens_to_transcript(tokens):
         ends_sentence = bool(w["word"]) and w["word"][-1] in SONIOX_SENTENCE_END
         nxt = words[i + 1] if i + 1 < len(words) else None
         big_pause = nxt is not None and (nxt["start"] - w["end"]) >= 0.8
-        if ends_sentence or big_pause or nxt is None:
-            segments.append({
+        spk_change = nxt is not None and nxt.get("speaker") != w.get("speaker")
+        if ends_sentence or big_pause or spk_change or nxt is None:
+            seg = {
                 "text": " ".join(x["word"] for x in current),
                 "start": current[0]["start"],
                 "end": current[-1]["end"],
                 "words": current,
-            })
+            }
+            if current[0].get("speaker") is not None:
+                seg["speaker"] = current[0]["speaker"]  # single-voice by construction
+            segments.append(seg)
             current = []
 
     langs = [w["language"] for w in words if w.get("language")]
@@ -340,6 +353,7 @@ def _transcribe_soniox(video_path, strip_words=False):
                 "model": SONIOX_MODEL,
                 "file_id": file_id,
                 "enable_language_identification": True,
+                "enable_speaker_diarization": True,
             })
             created.raise_for_status()
             transcription_id = created.json()["id"]
