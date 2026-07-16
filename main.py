@@ -1724,11 +1724,14 @@ def _build_sentence_transcript(transcript_result):
 
 
 # Question punctuation across the languages we transcribe: ASCII '?', Arabic
-# '؟' (U+061F), fullwidth '？' (U+FF1F, CJK), Greek ';' (U+037E). Keep in sync
-# with the question marks in transcription.SONIOX_SENTENCE_END — the host of an
-# interview is identified by question COUNT, so a missing mark would report 0
-# questions for every speaker and silently kill host detection in that language.
-QUESTION_MARKS = ('?', '؟', '？', ';')
+# '؟' (U+061F), fullwidth '？' (U+FF1F, CJK). Keep in sync with the question
+# marks in transcription.SONIOX_SENTENCE_END — the host of an interview is
+# identified by question COUNT, so a missing mark would report 0 questions for
+# every speaker and silently kill host detection in that language.
+# ponytail: no Greek ';' (U+037E) — it NFC-normalizes to ASCII ';' (U+003B), so
+# matching it would count every English semicolon as a question. Add it only if
+# Greek transcripts show up, and gate it on the detected language.
+QUESTION_MARKS = ('?', '؟', '？')
 
 
 def _trailer_speaker_context(sentences):

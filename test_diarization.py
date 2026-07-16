@@ -6,6 +6,8 @@ never spanning two voices, and the speaker-context prompt block picking the
 right conversation shape (monologue / interview / panel) — or vanishing
 entirely when the transcript has no labels (local Whisper).
 """
+import re
+
 from transcription import _soniox_tokens_to_transcript
 from main import (
     TRAILER_PROMPT_TEMPLATE,
@@ -99,10 +101,20 @@ def test_speaker_stats_count_non_ascii_questions():
     assert "speaker 2" in ar and "0 questions asked" in ar   # guest asked none
 
     # every supported question mark counts
-    for mark in ("?", "؟", "？", ";"):
+    for mark in ("?", "؟", "？"):
         ctx = _trailer_speaker_context([sent("1", f"Why{mark}", 0, 1),
                                         sent("2", "Because.", 1, 5)])
         assert "1 questions asked" in ctx, f"missed question mark {mark!r}"
+
+    # ...and a sentence ENDING in an ASCII semicolon is NOT a question. (A
+    # sentence can end mid-clause on the pause/word-cap split, so this is
+    # reachable.) ';' is not the Greek U+037E — which NFC-normalizes to it, so
+    # matching Greek would flag ordinary English clauses as questions.
+    # Assert on speaker 1's OWN stat line — a bare "0 questions asked" substring
+    # would match speaker 2's line and pass even when speaker 1 is miscounted.
+    semi = _trailer_speaker_context([sent("1", "I left the UK;", 0, 3),
+                                     sent("2", "Understood.", 3, 6)])
+    assert re.search(r"speaker 1: \d+% of talk time, 0 questions asked", semi), semi
 
 
 def test_prompt_formats_with_and_without_speaker_block():
