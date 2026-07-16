@@ -1546,6 +1546,81 @@ def get_gemini_retry_delay(error, fallback_seconds):
             return min(120, max(1, int(float(match.group(1))) + 1))
     return fallback_seconds
 
+def build_more_clips_prompt(exclude_ranges, num_clips=None, base_prompt=""):
+    """Compose the moment_prompt for 'generate more clips'.
+
+    Lists the already-used [start, end] ranges (mm:ss for readability + raw
+    seconds) and demands NEW, NON-OVERLAPPING moments. When num_clips is given
+    it acts as an upper bound; otherwise the model decides how many strong
+    moments remain — same 3–15 quality bar as a first pass, no padding.
+    """
+    def _fmt(t):
+        t = max(0, int(round(float(t))))
+        return f"{t // 60}:{t % 60:02d}"
+
+    lines = []
+    for r in exclude_ranges:
+        s, e = float(r[0]), float(r[1])
+        lines.append(f"  - {_fmt(s)}–{_fmt(e)} (seconds {s:.2f}–{e:.2f})")
+    ranges_block = "\n".join(lines) if lines else "  (none)"
+
+    if num_clips:
+        cap = f"Return AT MOST {num_clips} new moment(s)."
+    else:
+        cap = (
+            "Find ALL remaining genuinely viral moments OUTSIDE those ranges. "
+            "Apply the same quality bar as a first pass — if only a few strong "
+            "moments remain, return fewer; do NOT pad with weak picks."
+        )
+
+    instruction = (
+        "GENERATE MORE CLIPS — the time ranges below were ALREADY turned into "
+        "clips and MUST NOT be reused. Choose only NEW moments that do NOT "
+        "overlap any of them:\n"
+        f"{ranges_block}\n"
+        f"{cap}"
+    )
+
+    if base_prompt and base_prompt.strip():
+        return f"{base_prompt.strip()}\n\n{instruction}"
+    return instruction
+
+
+def filter_excluded_overlaps(shorts, exclude_ranges, overlap_threshold=0.2):
+    """Drop shorts overlapping any excluded [start, end] range by more than
+    overlap_threshold (fraction of the SHORT's own duration).
+
+    Prompt-level exclusion isn't reliable, so this is the hard guarantee.
+    Returns (kept_shorts, dropped_count).
+    """
+    kept, dropped = [], 0
+    for s in shorts:
+        try:
+            s_start, s_end = float(s['start']), float(s['end'])
+        except (KeyError, TypeError, ValueError):
+            kept.append(s)  # malformed entry: leave it for downstream to handle
+            continue
+        s_dur = s_end - s_start
+        if s_dur <= 0:
+            kept.append(s)
+            continue
+        worst = 0.0
+        for r in exclude_ranges:
+            try:
+                r_start, r_end = float(r[0]), float(r[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            overlap = max(0.0, min(s_end, r_end) - max(s_start, r_start))
+            frac = overlap / s_dur
+            if frac > worst:
+                worst = frac
+        if worst > overlap_threshold:
+            dropped += 1
+        else:
+            kept.append(s)
+    return kept, dropped
+
+
 def get_viral_clips(transcript_result, video_duration, max_retries=3,
                     min_clip_length=15, max_clip_length=60, moment_prompt=""):
     print("🤖  Analyzing with Gemini...")
@@ -2477,6 +2552,10 @@ if __name__ == '__main__':
     parser.add_argument('--trailer-pace', choices=sorted(TRAILER_PACE_PRESETS), default='standard', help="Trailer length/cut-density preset (trailer mode): punchy ~35s, standard ~60s, extended ~90s.")
     parser.add_argument('--smart-placement', action='store_true', help="Trailer mode: auto-position captions to avoid the speaker's face (DOAC smart placement; effective on wide/square output).")
 
+    parser.add_argument('--transcript-file', type=str, default=None, help="More-clips mode: load the transcript from this JSON file instead of transcribing (requires -i). Skips download + transcription; re-runs viral detection on a completed job's saved transcript.")
+    parser.add_argument('--exclude-ranges', type=str, default=None, help="More-clips mode: path to a JSON file holding [[start,end],...] ranges already turned into clips. New moments must not overlap these.")
+    parser.add_argument('--num-clips', type=int, default=None, help="More-clips mode: OPTIONAL cap on how many new moments to request. Default: the AI decides (like the normal pipeline).")
+
     parser.add_argument('--analyze-start', type=int, default=None, help="Analysis-only mode: first frame of the window to reframe (requires -i, --analyze-end, --analysis-out).")
     parser.add_argument('--analyze-end', type=int, default=None, help="Analysis-only mode: end frame (exclusive) of the window.")
     parser.add_argument('--analysis-out', type=str, default=None, help="Analysis-only mode: write framing decisions (segments + faceTracks) for the window to this JSON file and exit.")
@@ -2538,8 +2617,17 @@ if __name__ == '__main__':
         print(f"❌ Input file not found: {input_video}")
         exit(1)
 
-    # 2. Transcribe (captions need word-level timestamps in BOTH modes)
-    transcript = transcribe_video(input_video, args.whisper_model)
+    # 2. Transcribe (captions need word-level timestamps in BOTH modes).
+    #    "More clips" mode instead reuses a completed job's SAVED transcript:
+    #    it re-runs viral detection on the same original.mp4, so transcribing
+    #    again would be wasted work. Loading it here also proves download +
+    #    transcription were skipped for this mode.
+    if args.transcript_file:
+        with open(args.transcript_file) as f:
+            transcript = json.load(f)
+        print(f"📄 More-clips mode: loaded transcript from {args.transcript_file} (skipped download + transcription).")
+    else:
+        transcript = transcribe_video(input_video, args.whisper_model)
 
     # Get duration (guard against a corrupt/unreadable video reporting fps 0)
     cap = cv2.VideoCapture(input_video)
@@ -2572,6 +2660,14 @@ if __name__ == '__main__':
         sys.exit(0)
 
     # 3. Pick moments: AI viral detection, or one synthetic moment ("Don't clip")
+    # More-clips mode: load the already-used ranges so we can both steer Gemini
+    # away from them AND hard-filter any overlaps it returns anyway.
+    exclude_ranges = []
+    if args.exclude_ranges:
+        with open(args.exclude_ranges) as f:
+            exclude_ranges = json.load(f)
+        print(f"🧭 More-clips mode: excluding {len(exclude_ranges)} already-used range(s).")
+
     if args.skip_analysis:
         seg_start = max(0.0, float(args.trim_start)) if args.trim_start is not None else 0.0
         seg_end = min(duration, float(args.trim_end)) if args.trim_end is not None else duration
@@ -2588,12 +2684,15 @@ if __name__ == '__main__':
         }]}
     else:
         # 4. Gemini Analysis
+        moment_prompt = args.moment_prompt or ""
+        if exclude_ranges:
+            moment_prompt = build_more_clips_prompt(exclude_ranges, args.num_clips, moment_prompt)
         try:
             clips_data = get_viral_clips(
                 transcript, duration,
                 min_clip_length=args.min_clip_length,
                 max_clip_length=args.max_clip_length,
-                moment_prompt=args.moment_prompt or "",
+                moment_prompt=moment_prompt,
             )
         except ClipAnalysisError as e:
             print(f"❌ Clip detection failed: {e}")
@@ -2605,6 +2704,19 @@ if __name__ == '__main__':
         print("🛑 Stopping job. Not converting the whole video as a fallback.")
         sys.exit(2)
     else:
+        # More-clips mode: prompt-level exclusion isn't reliable, so drop any
+        # returned moment overlapping an already-used range by >20% of its own
+        # duration before we cut anything.
+        if exclude_ranges:
+            kept, dropped = filter_excluded_overlaps(clips_data['shorts'], exclude_ranges)
+            if dropped:
+                print(f"🚫 Dropped {dropped} new moment(s) overlapping already-used ranges by >20%.")
+            clips_data['shorts'] = kept
+            if not clips_data['shorts']:
+                print("❌ No non-overlapping new moments remained after filtering.")
+                print("🛑 Stopping job. Not converting the whole video as a fallback.")
+                sys.exit(2)
+
         print(f"🔥 Found {len(clips_data['shorts'])} viral clips!")
 
         # Save metadata
