@@ -59,9 +59,11 @@ const TikTokIcon = ({ size = 16, className = "" }) => (
 
 const SESSION_KEY = 'openshorts_session';
 const LEGACY_SESSION_KEY = 'openshorts_session_v1';
-// sessionStorage flag so the "session recovered" banner shows once per launch,
-// not on every in-app navigation that remounts the App view.
-const RECOVERY_SHOWN_KEY = 'openshorts_recovery_shown';
+// Remembers the last recovered jobId we greeted, so the "session recovered"
+// banner shows at most once per job instead of on every in-app navigation that
+// remounts the App view. localStorage (not sessionStorage) so it survives the
+// app's page reloads.
+const RECOVERY_GREETED_KEY = 'openshorts_recovery_greeted';
 // Sanity backstop for a genuinely ancient localStorage blob (e.g. months-old
 // browser tab) — NOT a job-expiry timer. The server is the source of truth for
 // whether a job still exists (see pollJob's 404/410 -> JobExpiredError below);
@@ -187,26 +189,22 @@ function App() {
               durationSeconds: data.duration_seconds ?? (recoveredDone ? fallbackDurationSeconds(session.jobId) : null),
               elapsedSeconds: data.elapsed_seconds ?? null,
             }));
-            // Show the "recovered" banner once per app launch, not on every
-            // in-app navigation. The App view remounts when you switch pages or
-            // close the editor, which re-runs this restore — but sessionStorage
-            // survives those reloads and only clears when the app truly closes,
-            // so the banner greets you once and then stays quiet.
-            //
-            // Guard the storage access: it can throw in restricted environments
-            // (private mode, blocked storage). Left unguarded, that throw would
-            // propagate to the .catch below and wrongly delete the saved
-            // session. On failure we just fall back to showing the banner.
-            let recoveryAlreadyShown = false;
+            // Greet with the "recovered" banner at most once per recovered
+            // job. The App view remounts on every in-app navigation (switching
+            // pages, closing the editor) and re-runs this restore, so without a
+            // guard the banner flashes each time even though nothing was lost.
+            // We track the greeted job in localStorage (which reliably persists
+            // across this app's reloads/navigations — sessionStorage did not).
+            // Guard the storage calls so a throw can't fall through to the
+            // .catch below and wrongly delete the saved session.
             try {
-              recoveryAlreadyShown = !!sessionStorage.getItem(RECOVERY_SHOWN_KEY);
-              if (!recoveryAlreadyShown) sessionStorage.setItem(RECOVERY_SHOWN_KEY, '1');
+              if (localStorage.getItem(RECOVERY_GREETED_KEY) !== session.jobId) {
+                localStorage.setItem(RECOVERY_GREETED_KEY, session.jobId);
+                setSessionRecovered(true);
+                setTimeout(() => setSessionRecovered(false), 5000);
+              }
             } catch {
-              recoveryAlreadyShown = false;
-            }
-            if (!recoveryAlreadyShown) {
-              setSessionRecovered(true);
-              setTimeout(() => setSessionRecovered(false), 5000);
+              // storage unavailable — skip the banner rather than risk the session
             }
           })
           .catch((e) => {
