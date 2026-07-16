@@ -83,6 +83,28 @@ def test_speaker_context_shapes():
     assert "MULTI-VOICE" in panel and "3 speakers" in panel
 
 
+def test_speaker_stats_count_non_ascii_questions():
+    """Arabic '؟' is a question mark the Soniox segmenter already splits on
+    (SONIOX_SENTENCE_END). Counting only ASCII '?' would report 0 questions for
+    every speaker, killing host detection on Arabic interviews."""
+    def sent(sp, text, s, e):
+        return {"i": 0, "s": s, "e": e, "text": text, "sp": sp}
+
+    ar = _trailer_speaker_context([
+        sent("1", "لماذا غادرت المملكة المتحدة؟", 0, 2),
+        sent("2", "أغلقوا حسابي المصرفي وكنت أواجه السجن المؤبد.", 2, 12),
+    ])
+    assert "INTERVIEW" in ar
+    assert "speaker 1" in ar and "1 questions asked" in ar   # host found
+    assert "speaker 2" in ar and "0 questions asked" in ar   # guest asked none
+
+    # every supported question mark counts
+    for mark in ("?", "؟", "？", ";"):
+        ctx = _trailer_speaker_context([sent("1", f"Why{mark}", 0, 1),
+                                        sent("2", "Because.", 1, 5)])
+        assert "1 questions asked" in ctx, f"missed question mark {mark!r}"
+
+
 def test_prompt_formats_with_and_without_speaker_block():
     for ctx in ("", "\nSPEAKERS: test block\n"):
         p = TRAILER_PROMPT_TEMPLATE.format(
@@ -97,5 +119,6 @@ if __name__ == "__main__":
     test_soniox_no_speaker_means_no_field()
     test_sentences_split_on_speaker_change_and_carry_sp()
     test_speaker_context_shapes()
+    test_speaker_stats_count_non_ascii_questions()
     test_prompt_formats_with_and_without_speaker_block()
     print("✅ all diarization plumbing checks passed")

@@ -1723,6 +1723,14 @@ def _build_sentence_transcript(transcript_result):
     return sentences
 
 
+# Question punctuation across the languages we transcribe: ASCII '?', Arabic
+# '؟' (U+061F), fullwidth '？' (U+FF1F, CJK), Greek ';' (U+037E). Keep in sync
+# with the question marks in transcription.SONIOX_SENTENCE_END — the host of an
+# interview is identified by question COUNT, so a missing mark would report 0
+# questions for every speaker and silently kill host detection in that language.
+QUESTION_MARKS = ('?', '؟', '？', ';')
+
+
 def _trailer_speaker_context(sentences):
     """Build the SPEAKERS block for the trailer prompt, or '' when the
     transcript carries no diarization labels (local Whisper is speaker-blind,
@@ -1743,7 +1751,7 @@ def _trailer_speaker_context(sentences):
         if sp is None:
             continue
         talk[sp] = talk.get(sp, 0.0) + (s['e'] - s['s'])
-        if s['text'].rstrip().endswith('?'):
+        if s['text'].rstrip().endswith(QUESTION_MARKS):
             questions[sp] = questions.get(sp, 0) + 1
     if not talk:
         return ""
