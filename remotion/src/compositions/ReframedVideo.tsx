@@ -474,10 +474,14 @@ const RangeContent: React.FC<{
   // non-content panel carries audio.
   const panels = panelsForLayout(segment.layout, width, height);
   const firstFacePanel = panels.findIndex((p) => !p.content);
+  const panelCrops = segment.panelCrops;
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
       {panels.map((panel, i) => {
-        if (panel.content) {
+        // A per-tile manual crop pins this panel to a fixed source region — no
+        // tracking, no contain — for both face and content (screen/gameplay) panels.
+        const pinned = panelCrops?.[i] ?? null;
+        if (panel.content && !pinned) {
           return (
             <ContentPanel
               key={i}
@@ -489,13 +493,18 @@ const RangeContent: React.FC<{
             />
           );
         }
-        const trackId = segment.trackedFaceIds[i];
-        const track = trackId != null ? faceTrackById.get(trackId) : undefined;
-        const face = smoothedFaceRect(track, sourceFrame);
-        const panelAspect = panel.width / panel.height;
-        const crop = face
-          ? cropForFace(face, panelAspect, source.width, source.height)
-          : centerCrop(panelAspect, source.width, source.height);
+        let crop: CropRect;
+        if (pinned) {
+          crop = pinned;
+        } else {
+          const trackId = segment.trackedFaceIds[i];
+          const track = trackId != null ? faceTrackById.get(trackId) : undefined;
+          const face = smoothedFaceRect(track, sourceFrame);
+          const panelAspect = panel.width / panel.height;
+          crop = face
+            ? cropForFace(face, panelAspect, source.width, source.height)
+            : centerCrop(panelAspect, source.width, source.height);
+        }
         return (
           <CroppedVideo
             key={i}

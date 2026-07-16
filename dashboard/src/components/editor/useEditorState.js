@@ -1,5 +1,5 @@
 import { useReducer } from 'react';
-import { cropForFace, smoothedFaceRect } from '@remotion-src/compositions/ReframedVideo';
+import { cropForFace, smoothedFaceRect, panelsForLayout } from '@remotion-src/compositions/ReframedVideo';
 import { framingToClips, outputDurationFrames } from '@remotion-src/lib/edl';
 
 const HISTORY_LIMIT = 50;
@@ -14,6 +14,10 @@ const EDITOR_FPS = 30;
 // tick (e.g. a multi-range cut that splits several clips at once).
 let _clipSeq = 0;
 const newClipId = () => `clip-${Date.now().toString(36)}-${(_clipSeq++).toString(36)}`;
+
+// Real on-screen panel count for a layout (screenshare/gameplay have 2 tiles).
+// Sizes panelCrops arrays so serialization never carries holes.
+const panelCount = (layout) => panelsForLayout(layout, 1, 1).length;
 
 /**
  * Editor state: the framing config being edited (docs/video-editor-plan.md §2),
@@ -58,7 +62,7 @@ export const editorReducer = (state, action) => {
             const targetIds = new Set(action.clipIds || state.selectedIds);
             const clips = state.framing.clips.map((c) =>
                 action.global || targetIds.has(c.id)
-                    ? { ...c, layout: action.layout, manualCrop: null }
+                    ? { ...c, layout: action.layout, manualCrop: null, panelCrops: null }
                     : c
             );
             return withHistory({ ...state.framing, clips });
@@ -95,6 +99,21 @@ export const editorReducer = (state, action) => {
             const clips = state.framing.clips.map((c) =>
                 c.id === action.clipId ? { ...c, manualCrop: action.crop } : c
             );
+            return withHistory({ ...state.framing, clips });
+        }
+        case 'SET_PANEL_CROP': {
+            // Per-tile manual crop on a multi-panel clip. crop=null clears that
+            // tile (back to auto framing). Stored as a dense array sized to the
+            // layout's panel count so it serializes without holes.
+            const { clipId, panelIndex, crop } = action;
+            const clips = state.framing.clips.map((c) => {
+                if (c.id !== clipId) return c;
+                const count = panelCount(c.layout);
+                const next = Array.from({ length: count }, (_, i) =>
+                    i === panelIndex ? (crop || null) : (c.panelCrops?.[i] ?? null)
+                );
+                return { ...c, panelCrops: next.every((p) => p == null) ? null : next };
+            });
             return withHistory({ ...state.framing, clips });
         }
         case 'SET_SUBTITLES': {
@@ -430,6 +449,13 @@ export const editorReducer = (state, action) => {
                         }
                     }
                     faceIds[action.panelIdx] = action.trackId;
+                    // Picking a new person for this tile returns it to auto-framing.
+                    let panelCrops = c.panelCrops;
+                    if (panelCrops && panelCrops[action.panelIdx] != null) {
+                        panelCrops = panelCrops.map((p, i) => (i === action.panelIdx ? null : p));
+                        if (panelCrops.every((p) => p == null)) panelCrops = null;
+                        return { ...c, trackedFaceIds: faceIds, panelCrops };
+                    }
                     return { ...c, trackedFaceIds: faceIds };
                 }
                 return {

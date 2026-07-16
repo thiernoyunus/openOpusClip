@@ -75,6 +75,7 @@ export const framingToClips = (framing: FramingConfig): TimelineClip[] => {
         trackedFaceIds: [...s.trackedFaceIds],
         cameraKeyframes: s.cameraKeyframes,
         manualCrop: s.manualCrop,
+        panelCrops: s.panelCrops,
         captionPlacement: s.captionPlacement,
       });
     }
@@ -91,6 +92,7 @@ export const framingToClips = (framing: FramingConfig): TimelineClip[] => {
       trackedFaceIds: s ? [...s.trackedFaceIds] : [],
       cameraKeyframes: s?.cameraKeyframes ?? [],
       manualCrop: s?.manualCrop ?? null,
+      panelCrops: s?.panelCrops ?? null,
       captionPlacement: s?.captionPlacement,
     });
   }

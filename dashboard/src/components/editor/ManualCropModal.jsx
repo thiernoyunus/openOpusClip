@@ -6,16 +6,35 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 /**
  * Manual reframe window (Opus parity: crop icon / double-click → precise
- * framing). Shows the 16:9 SOURCE at the segment's first frame with a
- * draggable, resizable crop rect locked to the output aspect — working
- * directly in source coordinates, so no inverse-crop math is needed.
+ * framing). Shows the 16:9 SOURCE at a chosen frame with a draggable, resizable
+ * crop rect locked to a target aspect — working directly in source coordinates,
+ * so no inverse-crop math is needed.
+ *
+ * Two modes, same component:
+ * - Whole-clip (default): aspect 9:16, initial = the clip's manualCrop.
+ * - Per-tile: pass `aspect` (the panel's crop aspect), `initialCrop` (the tile's
+ *   current crop), `previewSec` (the live playhead), and `onReset` (clear tile).
  */
-export default function ManualCropModal({ sourceUrl, source, segment, onApply, onClose }) {
-    const outputAspect = 9 / 16; // crop rect pixel aspect (w/h)
+export default function ManualCropModal({
+    sourceUrl,
+    source,
+    segment,
+    onApply,
+    onClose,
+    aspect = 9 / 16,
+    initialCrop = null,
+    previewSec = null,
+    title = 'Manual reframe',
+    subtitle = null,
+    aspectLabel = '9:16',
+    applyLabel = 'Apply crop',
+    onReset = null,
+}) {
+    const outputAspect = aspect; // crop rect pixel aspect (w/h)
     const containerRef = useRef(null);
     const dragRef = useRef(null); // {mode: 'move'|'resize', startX, startY, startCrop}
     const [crop, setCrop] = useState(
-        segment.manualCrop || centerCropRect(outputAspect, source.width, source.height)
+        initialCrop || segment.manualCrop || centerCropRect(outputAspect, source.width, source.height)
     );
 
     const srcAspect = source.width / source.height;
@@ -84,9 +103,12 @@ export default function ManualCropModal({ sourceUrl, source, segment, onApply, o
     return (
         <div className="fixed inset-0 z-[140] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6 animate-[fadeIn_0.15s_ease-out]">
             <div className="bg-surface border border-edge rounded-2xl p-5 w-full max-w-3xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
-                <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-sm font-medium text-fg">Manual reframe</h3>
-                    <button onClick={onClose} className="w-8 h-8 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5" aria-label="Close">
+                <div className="flex items-start justify-between mb-4">
+                    <div>
+                        <h3 className="text-sm font-medium text-fg">{title}</h3>
+                        {subtitle && <p className="text-xs text-muted mt-0.5 max-w-md leading-snug">{subtitle}</p>}
+                    </div>
+                    <button onClick={onClose} className="w-8 h-8 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 shrink-0" aria-label="Close">
                         <X size={16} />
                     </button>
                 </div>
@@ -100,7 +122,7 @@ export default function ManualCropModal({ sourceUrl, source, segment, onApply, o
                     onPointerLeave={endDrag}
                 >
                     <video
-                        src={`${sourceUrl}#t=${((segment.sourceStart ?? segment.startFrame ?? 0) / source.fps).toFixed(2)}`}
+                        src={`${sourceUrl}#t=${(previewSec != null ? previewSec : (segment.sourceStart ?? segment.startFrame ?? 0) / source.fps).toFixed(2)}`}
                         preload="auto"
                         muted
                         playsInline
@@ -117,7 +139,7 @@ export default function ManualCropModal({ sourceUrl, source, segment, onApply, o
                         }}
                         onPointerDown={(e) => startDrag(e, 'move')}
                     >
-                        <span className="absolute -top-6 left-0 text-[10px] text-fg bg-black/60 px-1.5 py-0.5 rounded">9:16</span>
+                        <span className="absolute -top-6 left-0 text-[10px] text-fg bg-black/60 px-1.5 py-0.5 rounded">{aspectLabel}</span>
                         <div
                             className="absolute -bottom-1.5 -right-1.5 w-4 h-4 rounded-full bg-fg cursor-nwse-resize"
                             onPointerDown={(e) => startDrag(e, 'resize')}
@@ -126,6 +148,14 @@ export default function ManualCropModal({ sourceUrl, source, segment, onApply, o
                 </div>
 
                 <div className="flex items-center justify-end gap-2 mt-4">
+                    {onReset && (
+                        <button
+                            onClick={onReset}
+                            className="mr-auto px-3.5 py-2 rounded-lg text-xs font-medium text-muted border border-edge hover:bg-white/5 transition-colors"
+                        >
+                            Reset to auto
+                        </button>
+                    )}
                     <button
                         onClick={onClose}
                         className="px-3.5 py-2 rounded-lg text-xs font-medium text-muted border border-edge hover:bg-white/5 transition-colors"
@@ -141,7 +171,7 @@ export default function ManualCropModal({ sourceUrl, source, segment, onApply, o
                         })}
                         className="px-3.5 py-2 rounded-lg text-xs font-medium bg-fg text-[#18181b] hover:bg-white transition-colors"
                     >
-                        Apply crop
+                        {applyLabel}
                     </button>
                 </div>
             </div>

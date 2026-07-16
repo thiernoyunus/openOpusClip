@@ -1677,6 +1677,14 @@ def _crop_rect_valid(rect) -> bool:
             return False
     return True
 
+def _panel_crops_valid(panel_crops) -> bool:
+    """Per-tile crops: null, or a list (max 6) of null-or-crop-rect entries."""
+    if panel_crops is None:
+        return True
+    if not isinstance(panel_crops, list) or len(panel_crops) > 6:
+        return False
+    return all(pc is None or _crop_rect_valid(pc) for pc in panel_crops)
+
 def _validate_framing_features(framing: dict) -> Optional[str]:
     """Optional feature payloads shared by all framing versions — light shape
     checks (the composition tolerates missing fields, so only reject obviously
@@ -1726,6 +1734,8 @@ def _validate_framing_clips(framing: dict, duration: int) -> Optional[str]:
         manual = clip.get("manualCrop")
         if manual is not None and not _crop_rect_valid(manual):
             return f"clips[{i}].manualCrop is out of bounds"
+        if not _panel_crops_valid(clip.get("panelCrops")):
+            return f"clips[{i}].panelCrops is invalid"
     return None
 
 def _validate_framing(framing: dict) -> Optional[str]:
@@ -1808,6 +1818,8 @@ def _validate_framing(framing: dict) -> Optional[str]:
         manual = seg.get("manualCrop")
         if manual is not None and not _crop_rect_valid(manual):
             return f"segments[{i}].manualCrop is out of bounds"
+        if not _panel_crops_valid(seg.get("panelCrops")):
+            return f"segments[{i}].panelCrops is invalid"
     if prev_end != clip_out:
         return "segments must cover the clip bounds exactly"
 

@@ -291,6 +291,10 @@ export interface FramingSegment {
   trackedFaceIds: number[]; // one per panel, reading order
   cameraKeyframes: CameraKeyframe[];
   manualCrop: CropRect | null; // user override; wins over keyframes/tracks
+  // Per-tile manual crop for multi-panel layouts, indexed like trackedFaceIds'
+  // panels. A non-null entry pins that panel to a fixed source region (no
+  // tracking); null/absent → auto framing. Optional → old files stay valid.
+  panelCrops?: (CropRect | null)[] | null;
   captionPlacement?: CaptionPlacement; // per-segment caption position (carried to clips on migration)
 }
 
@@ -310,6 +314,8 @@ export interface TimelineClip {
   trackedFaceIds: number[]; // one per panel, reading order
   cameraKeyframes: CameraKeyframe[];
   manualCrop: CropRect | null;
+  // Per-tile manual crop for multi-panel layouts (see FramingSegment.panelCrops).
+  panelCrops?: (CropRect | null)[] | null;
   captionPlacement?: CaptionPlacement; // per-clip caption position; absent → global subtitle position
 }
 
@@ -670,6 +676,7 @@ export const framingSegmentSchema = z.object({
   trackedFaceIds: z.array(z.number().int()),
   cameraKeyframes: z.array(cameraKeyframeSchema),
   manualCrop: cropRectSchema.nullable(),
+  panelCrops: z.array(cropRectSchema.nullable()).nullable().optional(),
   captionPlacement: captionPlacementSchema.optional(),
 });
 
@@ -681,6 +688,7 @@ export const timelineClipSchema = z.object({
   trackedFaceIds: z.array(z.number().int()),
   cameraKeyframes: z.array(cameraKeyframeSchema),
   manualCrop: cropRectSchema.nullable(),
+  panelCrops: z.array(cropRectSchema.nullable()).nullable().optional(),
   captionPlacement: captionPlacementSchema.optional(),
 });
 
