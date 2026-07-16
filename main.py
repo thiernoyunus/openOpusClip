@@ -96,8 +96,10 @@ The virality_score MUST be consistent with the ordering (higher score = earlier 
 # the very end. (The old "rapid 2-4s fragment montage" prompt produced
 # unintelligible word-salad; see docs/trailer-doac-alignment-plan.md.)
 # Format placeholders: {transcript} {duration} {min_moments} {max_moments}
-# {target_seconds}. The JSON shape is described in words (no literal braces) so
-# .format() can never raise KeyError on stray { }.
+# {target_seconds} {speaker_context}. speaker_context is the diarization-aware
+# SPEAKERS block from _trailer_speaker_context ('' when the transcript has no
+# speaker labels, e.g. local Whisper). The JSON shape is described in words (no
+# literal braces) so .format() can never raise KeyError on stray { }.
 TRAILER_PROMPT_TEMPLATE = """You are the trailer editor for 'The Diary of a CEO'. From ONE podcast transcript you build a single gripping cold-open trailer of about {target_seconds} seconds by selecting and RE-ORDERING moments. The order is a deliberate narrative, NOT chronological.
 
 WORK IN TWO STEPS.
@@ -105,7 +107,7 @@ WORK IN TWO STEPS.
 STEP 1 — WRITE THE SCRIPT. Draft the trailer as one continuous script using ONLY verbatim spans copied from the transcript (you may re-order them, but never invent or paraphrase words). Then READ IT BACK: it must read as ONE coherent, gripping piece a listener can follow with NO video. If it reads like disconnected fragments, fix it before continuing.
 
 STEP 2 — MAP TO TIMESTAMPS. Turn each script line into a moment with start/end seconds taken from the transcript.
-
+{speaker_context}
 RULES FOR MOMENTS:
 - Each moment is a COMPLETE THOUGHT — a full clause or sentence(s), normally 3 to 10 seconds. Hold up to ~15s only for one emotionally heavy story. NEVER sub-second word-splinters. Pace comes from dialogue volleys, not machine-gun cuts. Aim for {min_moments} to {max_moments} moments total.
 - QUESTION -> ANSWER STAY TOGETHER: if you include a host question, the guest's ACTUAL answer must be the very next moment. Never leave a question with no answer, or an answer with no question.
@@ -1674,8 +1676,11 @@ def _build_sentence_transcript(transcript_result):
 
     Returns a list of {i, s, e, text}: sentence index, start sec, end sec, and
     the verbatim joined text. A sentence ends on a word carrying terminal
-    punctuation (.?!…), after a >1.2s pause, or after ~22 words (so a rambling
-    unpunctuated ASR stream still splits). Feeding sentences instead of raw word
+    punctuation (.?!…), after a >1.2s pause, after ~22 words (so a rambling
+    unpunctuated ASR stream still splits), or on a speaker change. When the
+    transcript carries diarization labels (Soniox), each sentence also gets
+    'sp' — its speaker id — so the trailer model knows who said what; a
+    sentence never spans two voices. Feeding sentences instead of raw word
     timings nudges the model to pick coherent, boundary-aligned spans and cuts
     prompt tokens ~10x.
     """
@@ -1687,12 +1692,15 @@ def _build_sentence_transcript(transcript_result):
             return
         text = ' '.join(w['word'].strip() for w in cur).strip()
         if text:
-            sentences.append({
+            sentence = {
                 'i': len(sentences),
                 's': round(float(cur[0]['start']), 2),
                 'e': round(float(cur[-1]['end']), 2),
                 'text': text,
-            })
+            }
+            if cur[0].get('speaker') is not None:
+                sentence['sp'] = cur[0]['speaker']  # single-voice by construction
+            sentences.append(sentence)
         cur.clear()
 
     TERM = ('.', '?', '!', '…')
@@ -1703,6 +1711,9 @@ def _build_sentence_transcript(transcript_result):
                 continue  # skip words with missing timestamps (bad ASR output)
             if cur and prev_end is not None and float(w['start']) - prev_end > 1.2:
                 flush()
+            if cur and w.get('speaker') is not None and cur[-1].get('speaker') is not None \
+                    and w['speaker'] != cur[-1]['speaker']:
+                flush()
             cur.append(w)
             prev_end = float(w['end'])
             tok = w['word'].strip()
@@ -1710,6 +1721,74 @@ def _build_sentence_transcript(transcript_result):
                 flush()
     flush()
     return sentences
+
+
+def _trailer_speaker_context(sentences):
+    """Build the SPEAKERS block for the trailer prompt, or '' when the
+    transcript carries no diarization labels (local Whisper is speaker-blind,
+    so the prompt then reads exactly as before — graceful degradation).
+
+    Gives the model ground truth it previously had to guess from text alone:
+    how many voices there are, each voice's talk share and question count
+    (the host is reliably the low-talk-share, high-question voice), plus
+    conversation-shape rules keyed to the speaker count. The 1- and 2-speaker
+    rules are grounded in real DOAC intro analysis
+    (docs/trailer-doac-alignment-plan.md); the 3+ panel rule is our own
+    extrapolation — no published breakdown of panel cold-opens exists.
+    """
+    talk = {}
+    questions = {}
+    for s in sentences:
+        sp = s.get('sp')
+        if sp is None:
+            continue
+        talk[sp] = talk.get(sp, 0.0) + (s['e'] - s['s'])
+        if s['text'].rstrip().endswith('?'):
+            questions[sp] = questions.get(sp, 0) + 1
+    if not talk:
+        return ""
+    total = sum(talk.values()) or 1.0
+    stats = ", ".join(
+        f"speaker {sp}: {100 * secs / total:.0f}% of talk time, "
+        f"{questions.get(sp, 0)} questions asked"
+        for sp, secs in sorted(talk.items(), key=lambda kv: -kv[1]))
+    n = len(talk)
+    if n == 1:
+        shape = (
+            "This is a MONOLOGUE — one voice, no interview dynamics. The "
+            "QUESTION -> ANSWER rule does not apply (there is no second voice). "
+            "Rhetorical questions the speaker poses to themselves are your open "
+            "loops: include the question and its striking answer, or — for the "
+            "final moment only — the question with the answer withheld. The arc "
+            "comes from the speaker's own contrast: confident claim -> "
+            "vulnerable admission -> stakes -> withheld payoff.")
+    elif n == 2:
+        shape = (
+            "This is an INTERVIEW. The HOST is the voice with less talk time "
+            "and more questions (see the stats above); sanity-check that "
+            "against content. The trailer's voice is the GUEST: the hook, the "
+            "identity card, every confession and claim, and the cliffhanger all "
+            "come from the guest. Host lines are CONNECTIVE TISSUE ONLY — a "
+            "short punchy question that sets up the guest line right after it. "
+            "Use the sp labels to enforce QUESTION -> ANSWER literally: a "
+            "host-question moment must be immediately followed by the guest's "
+            "actual reply from the transcript (the sp MUST change between "
+            "them). Never include a host monologue, a host opinion, or two "
+            "host lines in a row.")
+    else:
+        shape = (
+            f"This is a MULTI-VOICE conversation ({n} speakers). Anchor the "
+            "trailer on ONE dominant voice — the guest with the most gripping "
+            "material — so a listener who cannot see the room is never lost "
+            "about who is talking. Other voices appear only as short "
+            "connective questions or ONE sharp interjection; a genuine "
+            "disagreement between two guests is trailer gold and makes the "
+            "best rollercoaster turn. QUESTION -> ANSWER pairs must be real "
+            "cross-speaker pairs per the sp labels — never stitch a question "
+            "from one exchange onto an answer from another.")
+    return (
+        f"\nSPEAKERS: every sentence carries sp — its diarized speaker id. "
+        f"{n} distinct voice(s) detected ({stats}).\n{shape}\n")
 
 
 def _refine_trailer_moments(moments, words, duration):
@@ -2042,12 +2121,22 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
     print(f"   🧩 Grouped transcript into {len(sentences)} sentences "
           f"from {len(refine_words)} words.")
 
+    speaker_context = _trailer_speaker_context(sentences)
+    if speaker_context:
+        n_speakers = len({s['sp'] for s in sentences if 'sp' in s})
+        print(f"   🗣️  Diarization: {n_speakers} speaker(s) detected — "
+              f"using speaker-aware trailer rules.")
+    else:
+        print("   🗣️  No speaker labels in transcript (local Whisper?) — "
+              "model will infer host/guest from text alone.")
+
     prompt = TRAILER_PROMPT_TEMPLATE.format(
         transcript=json.dumps(sentences),
         duration=video_duration,
         min_moments=min_moments,
         max_moments=max_moments,
         target_seconds=target_seconds,
+        speaker_context=speaker_context,
     )
 
     # lo/hi guard against DEGENERATE responses, not the exact pace window — the
