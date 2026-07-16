@@ -748,13 +748,18 @@ def _merge_more_clips(job_id: str, output_dir: str, meta_path: str, scratch_dir:
     data["shorts"] = existing + new_shorts
     # Sum token cost when both runs reported it in the expected shape.
     ec, nc = data.get("cost_analysis"), scratch_data.get("cost_analysis")
-    if isinstance(ec, dict) and isinstance(nc, dict):
-        for k in ("input_tokens", "output_tokens", "input_cost", "output_cost", "total_cost"):
-            if k in ec and k in nc:
-                try:
-                    ec[k] = ec[k] + nc[k]
-                except TypeError:
-                    pass
+    if isinstance(nc, dict):
+        if not isinstance(ec, dict):
+            # Legacy/failed original had no cost block — adopt the new run's
+            # rather than dropping it on the floor.
+            data["cost_analysis"] = nc
+        else:
+            for k in ("input_tokens", "output_tokens", "input_cost", "output_cost", "total_cost"):
+                if k in nc:
+                    try:
+                        ec[k] = ec.get(k, 0) + nc[k]
+                    except TypeError:
+                        pass
     tmp = meta_path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
@@ -801,11 +806,15 @@ def _more_clips_worker(job_id: str, count, api_key: str):
         with open(meta_path) as f:
             meta = json.load(f)
         transcript = meta.get("transcript")
-        exclude_ranges = [
-            [float(s["start"]), float(s["end"])]
-            for s in meta.get("shorts", [])
-            if s.get("start") is not None and s.get("end") is not None
-        ]
+        # Parse defensively: one malformed clip shouldn't abort the whole run.
+        # A range we fail to parse just isn't excluded (the overlap post-filter
+        # in main.py is the backstop).
+        exclude_ranges = []
+        for s in meta.get("shorts", []):
+            try:
+                exclude_ranges.append([float(s["start"]), float(s["end"])])
+            except (KeyError, TypeError, ValueError):
+                continue
 
         transcript_path = os.path.join(scratch_dir, "transcript.json")
         exclude_path = os.path.join(scratch_dir, "exclude_ranges.json")
@@ -839,6 +848,7 @@ def _more_clips_worker(job_id: str, count, api_key: str):
         while proc.poll() is None:
             if time.time() > deadline:
                 proc.kill()
+                proc.wait()  # reap it; a killed-but-unwaited child lingers as a zombie
                 _log("More-clips run timed out; existing clips are unchanged.")
                 return
             time.sleep(1)
@@ -914,9 +924,16 @@ async def more_clips(job_id: str, request: Request):
     if not meta.get("transcript"):
         raise HTTPException(status_code=400, detail="This project was created before transcripts were saved, so more clips can't be generated. Process the video again.")
 
+    # Reject a second run while one is in flight. Two concurrent workers would
+    # both renumber new clips from the same existing count and clobber each
+    # other's files/metadata — the frontend button guards one tab, but this is
+    # the trust boundary (two tabs, a retry, or a direct API call).
+    job = jobs.get(job_id)
+    if job is not None and job.get("status") in ("queued", "processing"):
+        raise HTTPException(status_code=409, detail="This project is already processing. Wait for it to finish, then try again.")
+
     # Resurrect / patch the in-memory job (it may be gone after a restart) so it
     # keeps showing the existing clips while the new ones are generated.
-    job = jobs.get(job_id)
     if job is None:
         snap = _load_persisted_result(job_id)
         job = {"status": "completed", "logs": [], "result": (snap or {}).get("result")}

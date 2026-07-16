@@ -1560,7 +1560,12 @@ def build_more_clips_prompt(exclude_ranges, num_clips=None, base_prompt=""):
 
     lines = []
     for r in exclude_ranges:
-        s, e = float(r[0]), float(r[1])
+        # Skip malformed entries rather than crash: filter_excluded_overlaps
+        # applies the same tolerance and is the hard backstop either way.
+        try:
+            s, e = float(r[0]), float(r[1])
+        except (TypeError, ValueError, IndexError, KeyError):
+            continue
         lines.append(f"  - {_fmt(s)}–{_fmt(e)} (seconds {s:.2f}–{e:.2f})")
     ranges_block = "\n".join(lines) if lines else "  (none)"
 
@@ -1608,7 +1613,7 @@ def filter_excluded_overlaps(shorts, exclude_ranges, overlap_threshold=0.2):
         for r in exclude_ranges:
             try:
                 r_start, r_end = float(r[0]), float(r[1])
-            except (TypeError, ValueError, IndexError):
+            except (TypeError, ValueError, IndexError, KeyError):
                 continue
             overlap = max(0.0, min(s_end, r_end) - max(s_start, r_start))
             frac = overlap / s_dur
@@ -2665,7 +2670,10 @@ if __name__ == '__main__':
     exclude_ranges = []
     if args.exclude_ranges:
         with open(args.exclude_ranges) as f:
-            exclude_ranges = json.load(f)
+            loaded = json.load(f)
+        if not isinstance(loaded, list):
+            parser.error("--exclude-ranges must contain a JSON list of [start, end] pairs")
+        exclude_ranges = loaded
         print(f"🧭 More-clips mode: excluding {len(exclude_ranges)} already-used range(s).")
 
     if args.skip_analysis:
