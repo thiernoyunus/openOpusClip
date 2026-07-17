@@ -74,6 +74,22 @@ const ASPECT_RATIOS = [
     { value: '16:9', label: '16:9 · Landscape' },
 ];
 
+// Quick-tool modes turn this card into a focused, single-purpose flow (no AI
+// clipping). Copy is plain-language on purpose — the product's user is not an
+// engineer.
+const TOOL_META = {
+    captions: {
+        title: 'AI Captions',
+        desc: 'Add styled captions to a video you already have, then fine-tune in the editor.',
+        cta: 'Add captions',
+    },
+    editor: {
+        title: 'Video Editor',
+        desc: 'Open your video in the editor, no AI clipping.',
+        cta: 'Open in editor',
+    },
+};
+
 function fmtTime(s) {
     if (!Number.isFinite(s)) return '0:00';
     const sec = Math.max(0, Math.round(s));
@@ -83,7 +99,9 @@ function fmtTime(s) {
     return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
 }
 
-export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = false }) {
+export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = false, tool = null, onExitTool }) {
+    const inTool = tool === 'captions' || tool === 'editor';
+    const toolMeta = inTool ? TOOL_META[tool] : null;
     const [youtubeUrlEnabled, setYoutubeUrlEnabled] = useState(true);
     const [mode, setMode] = useState('url'); // 'url' | 'file'
     const [url, setUrl] = useState('');
@@ -164,7 +182,25 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
         saveDefaultCaptionStyle('bottom', { ...tpl.defaultStyle, template: tpl.id }, true);
     };
 
+    // Progressive disclosure: options only appear once there's something to
+    // process. State is preserved when input is removed (we only hide the UI).
+    const hasInput = mode === 'url' ? url.trim().length > 0 : files.length > 0;
+
+    // In the Captions tool a caption style is the whole point, so block submit
+    // until one is chosen.
+    const captionsBlocked = tool === 'captions' && captionTemplate === 'none';
+
     const buildClipSettings = () => {
+        // Quick-tool modes always process the full video with no viral
+        // detection — everything lands in the editor with one clip.
+        if (inTool) {
+            return {
+                clipMode: 'none',
+                skipAnalysis: true,
+                aspectRatio,
+                captionTemplate: captionTemplate === 'none' ? null : captionTemplate,
+            };
+        }
         const length = CLIP_LENGTHS.find((c) => c.value === clipLength) ?? CLIP_LENGTHS[0];
         const settings = {
             clipMode,
@@ -192,17 +228,17 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!acknowledged || sonioxBlocked || submitting) return;
+        if (!acknowledged || sonioxBlocked || captionsBlocked || submitting) return;
         const clip = buildClipSettings();
         if (mode === 'url' && url) {
-            onProcess({ type: 'url', payload: url, acknowledged: true, whisperModel, transcriptionEngine, ...clip });
+            onProcess({ type: 'url', payload: url, acknowledged: true, whisperModel, transcriptionEngine, tool, ...clip });
         } else if (mode === 'file' && files.length > 0) {
             // Hold a submitting guard while we await: files stay in state until
             // the job is accepted (so a failed submit keeps the selection), but
             // the button is disabled so a double-click can't re-upload them.
             setSubmitting(true);
             try {
-                const ok = await onProcess({ type: 'files', payload: files, acknowledged: true, whisperModel, transcriptionEngine, ...clip });
+                const ok = await onProcess({ type: 'files', payload: files, acknowledged: true, whisperModel, transcriptionEngine, tool, ...clip });
                 if (ok !== false) setFiles([]);
             } finally {
                 setSubmitting(false);
@@ -224,6 +260,22 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
 
     return (
         <div className="bg-surface border border-edge rounded-xl p-5 animate-[fadeIn_0.6s_ease-out]">
+            {inTool && (
+                <div className="flex items-start justify-between gap-3 mb-4">
+                    <div>
+                        <h3 className="text-sm font-semibold text-fg">{toolMeta.title}</h3>
+                        <p className="text-xs text-muted mt-0.5">{toolMeta.desc}</p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={onExitTool}
+                        aria-label="Exit tool"
+                        className="p-1.5 rounded-full text-muted hover:text-fg hover:bg-white/5 transition-colors shrink-0"
+                    >
+                        <X size={16} />
+                    </button>
+                </div>
+            )}
             <div className="flex gap-5 mb-5 border-b border-edge pb-3 text-sm">
                 {youtubeUrlEnabled && (
                     <button
@@ -319,14 +371,20 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
                     </div>
                 )}
 
+                {/* Options appear once there's a video to work with (state is
+                    preserved when input is removed — we only hide the UI). */}
+                {hasInput && (
+                <div className="animate-[optionsReveal_0.28s_ease-out]">
                 {/* Clip mode */}
                 <div className="mt-5 bg-black/20 border border-edge rounded-xl p-4">
-                    <div className="flex gap-1 mb-4 p-1 bg-black/30 rounded-lg w-fit">
-                        <ClipTab active={clipMode === 'ai'} onClick={() => setClipMode('ai')} icon={Scissors} label="AI clipping" />
-                        <ClipTab active={clipMode === 'none'} onClick={() => setClipMode('none')} icon={Captions} label="Don't clip" />
-                    </div>
+                    {!inTool && (
+                        <div className="flex gap-1 mb-4 p-1 bg-black/30 rounded-lg w-fit">
+                            <ClipTab active={clipMode === 'ai'} onClick={() => setClipMode('ai')} icon={Scissors} label="AI clipping" />
+                            <ClipTab active={clipMode === 'none'} onClick={() => setClipMode('none')} icon={Captions} label="Don't clip" />
+                        </div>
+                    )}
 
-                    <label className="block mb-4">
+                    <label className={inTool ? 'block' : 'block mb-4'}>
                         <span className="block text-xs font-medium text-zinc-400 mb-2">Aspect ratio</span>
                         <select
                             value={aspectRatio}
@@ -339,7 +397,7 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
                         </select>
                     </label>
 
-                    {clipMode === 'ai' ? (
+                    {!inTool && (clipMode === 'ai' ? (
                         <div className="space-y-4">
                             <label className="block">
                                 <span className="block text-xs font-medium text-zinc-400 mb-2">Clip length</span>
@@ -398,10 +456,12 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
                                 </p>
                             )}
                         </div>
-                    )}
+                    ))}
                 </div>
 
-                {/* Caption preset strip — two-row grid, paged horizontally */}
+                {/* Caption preset strip — two-row grid, paged horizontally.
+                    Hidden in the Editor tool (no captions there). */}
+                {(!inTool || tool === 'captions') && (
                 <div className="mt-4">
                     <div className="flex items-center justify-between mb-2.5">
                         <span className="text-xs font-medium text-zinc-400">
@@ -430,13 +490,16 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
                         ref={captionStripRef}
                         className="grid grid-rows-2 grid-flow-col auto-cols-max gap-2.5 overflow-x-auto custom-scrollbar pb-2 snap-x"
                     >
-                        <CaptionCell
-                            selected={captionTemplate === 'none'}
-                            label="No caption"
-                            onClick={() => pickCaption(null)}
-                        >
-                            <Ban size={20} className="text-muted" strokeWidth={1.75} />
-                        </CaptionCell>
+                        {/* Captions tool exists to add captions — hide "No caption" there. */}
+                        {tool !== 'captions' && (
+                            <CaptionCell
+                                selected={captionTemplate === 'none'}
+                                label="No caption"
+                                onClick={() => pickCaption(null)}
+                            >
+                                <Ban size={20} className="text-muted" strokeWidth={1.75} />
+                            </CaptionCell>
+                        )}
                         {CAPTION_TEMPLATES.map((tpl) => (
                             <CaptionCell
                                 key={tpl.id}
@@ -448,8 +511,13 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
                             </CaptionCell>
                         ))}
                     </div>
+                    {captionsBlocked && (
+                        <p className="text-[11px] text-amber-400/90 mt-1.5">Pick a caption style to continue.</p>
+                    )}
                 </div>
+                )}
 
+                {!inTool && (
                 <label className="block mt-5">
                     <span className="block text-xs font-medium text-zinc-400 mb-2">Transcription</span>
                     <select
@@ -482,6 +550,7 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
                         </span>
                     )}
                 </label>
+                )}
 
                 <label className="flex items-start gap-2 mt-5 text-xs text-zinc-400 cursor-pointer select-none">
                     <input
@@ -494,16 +563,20 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
                         I confirm I own this content or have the rights to process it. I am responsible for any content I submit. See our <a href="/#legal" target="_blank" rel="noopener noreferrer" className="text-primary underline" onClick={(e) => e.stopPropagation()}>Terms & Privacy</a>.
                     </span>
                 </label>
+                </div>
+                )}
 
                 <button
                     type="submit"
-                    disabled={!acknowledged || sonioxBlocked || submitting || (mode === 'url' && !url) || (mode === 'file' && files.length === 0)}
+                    disabled={!acknowledged || sonioxBlocked || captionsBlocked || submitting || (mode === 'url' && !url) || (mode === 'file' && files.length === 0)}
                     className="w-full mt-4 py-3 rounded-lg bg-fg text-[#18181b] font-medium text-sm hover:bg-white active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                     {isProcessing ? (
                         <>
                             Add to processing queue
                         </>
+                    ) : inTool ? (
+                        <>{toolMeta.cta}</>
                     ) : (
                         <>
                             {mode === 'file' && files.length > 1 ? `Generate clips for ${files.length} videos` : clipMode === 'none' ? 'Process video' : 'Generate clips'}

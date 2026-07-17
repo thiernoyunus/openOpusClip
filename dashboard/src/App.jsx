@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, FileVideo, Sparkles, Scissors, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Trash2, Film } from 'lucide-react';
+import { Upload, FileVideo, Sparkles, Scissors, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Trash2, Film, Captions } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
@@ -148,6 +148,11 @@ function App() {
   const [openClip, setOpenClip] = useState(null);
   const [editingClip, setEditingClip] = useState(null); // clip index being edited in EditorView
   const [framingVersion, setFramingVersion] = useState(0); // bumped on editor close so cards refetch framing
+  // Homescreen quick tools: focus the submit card on one job (captions / editor)
+  // instead of full AI clipping. quickToolJobId remembers which job to auto-open
+  // in the editor when it finishes (session-scoped — recovered jobs won't auto-open).
+  const [quickTool, setQuickTool] = useState(null); // null | 'captions' | 'editor'
+  const [quickToolJobId, setQuickToolJobId] = useState(null);
   const [processingJobIds, setProcessingJobIds] = useState(() => (
     getProjects().filter((p) => p.status === 'processing').map((p) => p.id)
   ));
@@ -339,6 +344,13 @@ function App() {
               setStatus('complete');
               if (data.result) setResults(data.result);
               setGeneratingMore(false);
+              // Quick-tool jobs land straight in the editor on the one clip.
+              if (id === quickToolJobId && data.result?.clips?.length) {
+                setShowProcessingModal(false);
+                setViewingResults(true);
+                setEditingClip(0);
+                setQuickToolJobId(null);
+              }
             }
           } else if (data.status === 'failed') {
             setProjects(updateProject(id, {
@@ -410,7 +422,7 @@ function App() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [processingJobIds, jobId]);
+  }, [processingJobIds, jobId, quickToolJobId]);
 
 
   const fetchSocialAccounts = async () => {
@@ -565,7 +577,11 @@ function App() {
     setViewingResults(false);
     setShowProcessingModal(true);
 
+    // Quick-tool jobs (captions / editor) skip the results grid and drop the
+    // user straight into the editor when they finish. Remember the active job id.
+    setQuickToolJobId(null);
     try {
+      let activeJobId = null;
       if (data.type === 'files') {
         const fileJobs = data.payload.map((file) => ({
           type: 'file',
@@ -582,12 +598,14 @@ function App() {
           aspectRatio: data.aspectRatio,
         }));
         for (let i = 0; i < fileJobs.length; i++) {
-          await startProcessJob(fileJobs[i], { makeActive: i === 0 });
+          const id = await startProcessJob(fileJobs[i], { makeActive: i === 0 });
+          if (i === 0) activeJobId = id;
         }
         setLogs([`Queued ${fileJobs.length} videos. They will process in parallel up to the server limit.`]);
       } else {
-        await startProcessJob(data, { makeActive: true });
+        activeJobId = await startProcessJob(data, { makeActive: true });
       }
+      if (data.tool && activeJobId) setQuickToolJobId(activeJobId);
       setShowProcessingModal(true);
       return true;
     } catch (e) {
@@ -756,10 +774,13 @@ function App() {
     </div>
   );
 
-  const ShortcutItem = ({ icon: Icon, color, label, onClick }) => (
-    <button onClick={onClick} className="group flex flex-col items-center gap-2.5 text-muted hover:text-fg transition-colors">
-      <span className={`w-14 h-14 rounded-full bg-surface border border-edge flex items-center justify-center ${color} group-hover:border-white/20 transition-colors`}>
+  const ShortcutItem = ({ icon: Icon, color, label, onClick, active = false, badge }) => (
+    <button onClick={onClick} className={`group flex flex-col items-center gap-2.5 transition-colors ${active ? 'text-fg' : 'text-muted hover:text-fg'}`}>
+      <span className={`relative w-14 h-14 rounded-full bg-surface border flex items-center justify-center ${color} transition-colors ${active ? 'border-white/40' : 'border-edge group-hover:border-white/20'}`}>
         <Icon size={22} />
+        {badge && (
+          <span className="absolute -top-1 -right-1 px-1.5 py-px rounded-full bg-viral/20 border border-viral/40 text-viral text-[9px] font-semibold leading-none">{badge}</span>
+        )}
       </span>
       <span className="text-xs">{label}</span>
     </button>
@@ -1268,13 +1289,21 @@ function App() {
                 </div>
 
                 <div className="relative max-w-lg mx-auto">
-                  <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'} hasSonioxKey={!!sonioxKey} />
+                  <MediaInput
+                    onProcess={handleProcess}
+                    isProcessing={status === 'processing'}
+                    hasSonioxKey={!!sonioxKey}
+                    tool={quickTool}
+                    onExitTool={() => setQuickTool(null)}
+                  />
                 </div>
 
-                {/* 3-tool shortcut row */}
+                {/* Quick-tool shortcut row */}
                 <div className="relative flex items-center justify-center gap-10 mt-12">
-                  <ShortcutItem icon={Scissors} color="text-viral" label="Clip Generator" onClick={() => setActiveTab('dashboard')} />
+                  <ShortcutItem icon={Scissors} color="text-viral" label="Clip Generator" onClick={() => setQuickTool(null)} />
                   <ShortcutItem icon={Youtube} color="text-red-300" label="YouTube Studio" onClick={() => setActiveTab('thumbnails')} />
+                  <ShortcutItem icon={Captions} color="text-sky-300" label="AI Captions" active={quickTool === 'captions'} badge="New" onClick={() => setQuickTool((t) => t === 'captions' ? null : 'captions')} />
+                  <ShortcutItem icon={Film} color="text-violet-300" label="Video Editor" active={quickTool === 'editor'} badge="New" onClick={() => setQuickTool((t) => t === 'editor' ? null : 'editor')} />
                 </div>
               </div>
 
