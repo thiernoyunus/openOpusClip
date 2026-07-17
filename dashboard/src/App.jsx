@@ -135,6 +135,7 @@ function App() {
   const [projects, setProjects] = useState(() => getProjects());
   const [showProcessingModal, setShowProcessingModal] = useState(false);
   const [viewingResults, setViewingResults] = useState(false);
+  const [generatingMore, setGeneratingMore] = useState(false);
   const [openClip, setOpenClip] = useState(null);
   const [editingClip, setEditingClip] = useState(null); // clip index being edited in EditorView
   const [processingJobIds, setProcessingJobIds] = useState(() => (
@@ -327,6 +328,7 @@ function App() {
             if (id === jobId) {
               setStatus('complete');
               if (data.result) setResults(data.result);
+              setGeneratingMore(false);
             }
           } else if (data.status === 'failed') {
             setProjects(updateProject(id, {
@@ -336,6 +338,7 @@ function App() {
             }));
             if (id === jobId) {
               setStatus('error');
+              setGeneratingMore(false);
               const errorMsg = data.error || (data.logs && data.logs.length > 0 ? data.logs[data.logs.length - 1] : "Process failed");
               setLogs(prev => [...prev, "Error: " + errorMsg]);
             }
@@ -498,6 +501,36 @@ function App() {
     }
 
     return newId;
+  };
+
+  // Generate more clips for the currently-open, completed project. The backend
+  // re-runs viral detection on the saved transcript and appends new clips; the
+  // existing poll loop then grows the grid (we stay on the results view — no
+  // global 'processing' status swap).
+  const handleGenerateMore = async () => {
+    if (!apiKey) {
+      setShowKeyModal(true);
+      return;
+    }
+    if (!jobId || generatingMore) return;
+    setGeneratingMore(true);
+    try {
+      const res = await fetch(getApiUrl(`/api/jobs/${jobId}/more-clips`), {
+        method: 'POST',
+        headers: { 'X-Gemini-Key': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        let detail = 'Could not generate more clips.';
+        try { detail = (await res.json()).detail || detail; } catch { /* non-JSON body */ }
+        throw new Error(detail);
+      }
+      setProjects(updateProject(jobId, { status: 'processing' }));
+      setProcessingJobIds((ids) => (ids.includes(jobId) ? ids : [...ids, jobId]));
+    } catch (e) {
+      setGeneratingMore(false);
+      alert(e.message || 'Could not generate more clips.');
+    }
   };
 
   const handleProcess = async (data) => {
@@ -1248,6 +1281,15 @@ function App() {
                       </button>
                     </div>
                   )}
+                  <button
+                    onClick={handleGenerateMore}
+                    disabled={generatingMore}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface2 hover:bg-white/10 border border-edge text-fg rounded-lg text-xs font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {generatingMore
+                      ? <><RotateCcw size={14} className="animate-spin" /> Generating…</>
+                      : <><Sparkles size={14} className="text-viral" /> Generate more clips</>}
+                  </button>
                   <button
                     onClick={() => setShowProcessingModal(true)}
                     className="flex items-center gap-1.5 text-xs text-muted hover:text-fg border border-edge hover:bg-white/5 px-2.5 py-1.5 rounded-lg transition-colors"

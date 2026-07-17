@@ -681,6 +681,283 @@ async def delete_job(job_id: str):
         pass
     return {"success": True, "removed": removed}
 
+# --- Generate more clips (post-hoc, on a COMPLETED job) ---------------------
+def _recover_aspect_ratio(output_dir: str) -> str:
+    """Recover the project's output aspect ratio from an existing clip's
+    framing.json (outputWidth/outputHeight -> nearest preset). Defaults to
+    '9:16' when nothing readable is found — new clips just use the standard.
+    Keep the preset ratios in sync with main.ASPECT_PRESETS."""
+    presets = {"9:16": 1080 / 1920, "1:1": 1.0, "4:5": 1080 / 1350, "16:9": 1920 / 1080}
+    for fp in sorted(glob.glob(os.path.join(output_dir, "*.framing.json"))):
+        try:
+            with open(fp) as f:
+                fr = json.load(f)
+            w, h = float(fr["outputWidth"]), float(fr["outputHeight"])
+            if w > 0 and h > 0:
+                target = w / h
+                return min(presets, key=lambda k: abs(presets[k] - target))
+        except (OSError, ValueError, KeyError, TypeError, ZeroDivisionError, json.JSONDecodeError):
+            continue
+    return "9:16"
+
+
+def _merge_more_clips(job_id: str, output_dir: str, meta_path: str, scratch_dir: str) -> int:
+    """Append the clips produced in scratch_dir to a completed job's results.
+
+    All-or-nothing for the metadata: every scratch artifact is verified to
+    exist and moved into place BEFORE the metadata is rewritten (atomic
+    .tmp + os.replace). A partial failure can therefore never leave the
+    metadata pointing at missing files — it raises before touching it, and the
+    original clips stay intact and usable. Returns the number of clips added."""
+    base_name = os.path.basename(meta_path).replace("_metadata.json", "")
+
+    with open(meta_path) as f:
+        data = json.load(f)
+    existing = data.get("shorts", [])
+    E = len(existing)
+
+    scratch_meta_files = glob.glob(os.path.join(scratch_dir, "*_metadata.json"))
+    if not scratch_meta_files:
+        raise RuntimeError("more-clips run produced no metadata")
+    with open(scratch_meta_files[0]) as f:
+        scratch_data = json.load(f)
+    scratch_base = os.path.basename(scratch_meta_files[0]).replace("_metadata.json", "")
+    new_shorts = scratch_data.get("shorts", [])
+    if not new_shorts:
+        return 0
+
+    # 1. Plan every rename and verify sources exist FIRST (fail before touching
+    #    the live metadata if anything is missing). The final .mp4 is required;
+    #    source/framing are best-effort but a fresh run always writes all three.
+    moves = []  # (src, dest)
+    for i in range(len(new_shorts)):
+        src_n, dest_n = i + 1, E + i + 1
+        for suffix in (".mp4", "_source.mp4", ".framing.json"):
+            src = os.path.join(scratch_dir, f"{scratch_base}_clip_{src_n}{suffix}")
+            dest = os.path.join(output_dir, f"{base_name}_clip_{dest_n}{suffix}")
+            if not os.path.exists(src):
+                if suffix == ".mp4":
+                    raise RuntimeError(f"missing new clip file: {os.path.basename(src)}")
+                continue
+            moves.append((src, dest))
+
+    # 2. Move all artifacts into place, then atomically rewrite the metadata.
+    for src, dest in moves:
+        shutil.move(src, dest)
+
+    data["shorts"] = existing + new_shorts
+    # Sum token cost when both runs reported it in the expected shape.
+    ec, nc = data.get("cost_analysis"), scratch_data.get("cost_analysis")
+    if isinstance(nc, dict):
+        if not isinstance(ec, dict):
+            # Legacy/failed original had no cost block — adopt the new run's
+            # rather than dropping it on the floor.
+            data["cost_analysis"] = nc
+        else:
+            for k in ("input_tokens", "output_tokens", "input_cost", "output_cost", "total_cost"):
+                if k in nc:
+                    try:
+                        ec[k] = ec.get(k, 0) + nc[k]
+                    except TypeError:
+                        pass
+    tmp = meta_path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, meta_path)
+
+    # 3. Rebuild the in-memory result from the full (merged) shorts list, exactly
+    #    like run_job's completion path — robust even if the job was resurrected
+    #    from disk with a partial/empty in-memory result.
+    job = jobs.get(job_id)
+    if job is not None:
+        clips = []
+        for i, clip in enumerate(data["shorts"]):
+            clip_filename = f"{base_name}_clip_{i + 1}.mp4"
+            clip["video_url"] = _video_url(job_id, clip_filename)
+            _attach_editor_urls(clip, job_id, output_dir, base_name, i + 1)
+            clips.append(clip)
+        job["result"] = {"clips": clips, "cost_analysis": data.get("cost_analysis")}
+
+    return len(new_shorts)
+
+
+def _more_clips_worker(job_id: str, count, api_key: str):
+    """Blocking worker (runs in an executor thread): spawn main.py in more-clips
+    mode, stream its logs into the job, then merge the new clips. Always lands
+    the job back on 'completed' — a failed run must never damage existing
+    results."""
+    output_dir = os.path.join(OUTPUT_DIR, job_id)
+    original_path = os.path.join(output_dir, "original.mp4")
+    scratch_dir = os.path.join(output_dir, f"more_{uuid.uuid4().hex[:8]}")
+
+    def _log(msg):
+        j = jobs.get(job_id)
+        if j is not None:
+            j.setdefault("logs", []).append(msg)
+        print(f"📝 [more-clips {job_id}] {msg}")
+
+    try:
+        os.makedirs(scratch_dir, exist_ok=True)
+        meta_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
+        if not meta_files:
+            _log("No metadata found; keeping existing clips unchanged.")
+            return
+        meta_path = meta_files[0]
+        with open(meta_path) as f:
+            meta = json.load(f)
+        transcript = meta.get("transcript")
+        # Parse defensively: one malformed clip shouldn't abort the whole run.
+        # A range we fail to parse just isn't excluded (the overlap post-filter
+        # in main.py is the backstop).
+        exclude_ranges = []
+        for s in meta.get("shorts", []):
+            try:
+                exclude_ranges.append([float(s["start"]), float(s["end"])])
+            except (KeyError, TypeError, ValueError):
+                continue
+
+        transcript_path = os.path.join(scratch_dir, "transcript.json")
+        exclude_path = os.path.join(scratch_dir, "exclude_ranges.json")
+        with open(transcript_path, "w") as f:
+            json.dump(transcript, f)
+        with open(exclude_path, "w") as f:
+            json.dump(exclude_ranges, f)
+
+        aspect_ratio = _recover_aspect_ratio(output_dir)
+        cmd = [
+            sys.executable, "-u", "main.py",
+            "-i", original_path,
+            "-o", scratch_dir,
+            "--transcript-file", transcript_path,
+            "--exclude-ranges", exclude_path,
+            "--aspect-ratio", aspect_ratio,
+        ]
+        if count:
+            cmd += ["--num-clips", str(count)]
+        env = os.environ.copy()
+        env["GEMINI_API_KEY"] = api_key
+
+        _log(f"Analyzing the transcript for new viral moments (excluding {len(exclude_ranges)} existing range(s))...")
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=os.getcwd())
+        # Reuse the run_job log pump: reads the child's merged stdout into logs.
+        t_log = threading.Thread(target=enqueue_output, args=(proc.stdout, job_id))
+        t_log.daemon = True
+        t_log.start()
+
+        deadline = time.time() + 15 * 60  # generous cap; heavy ffmpeg/detection work
+        while proc.poll() is None:
+            if time.time() > deadline:
+                proc.kill()
+                proc.wait()  # reap it; a killed-but-unwaited child lingers as a zombie
+                _log("More-clips run timed out; existing clips are unchanged.")
+                return
+            time.sleep(1)
+        t_log.join(timeout=5)
+
+        if proc.returncode != 0:
+            _log(f"More-clips run failed (exit {proc.returncode}); existing clips are unchanged.")
+            return
+
+        added = _merge_more_clips(job_id, output_dir, meta_path, scratch_dir)
+        _log(f"Added {added} new clip(s)." if added else "No new clips were added.")
+        if added:
+            # Back up the appended clips + rewritten metadata, same as run_job's
+            # completion path — otherwise the bucket keeps stale metadata that
+            # omits the new clips. Fire-and-forget (no-ops when S3 is unset) so
+            # the user sees results without waiting on the upload.
+            threading.Thread(
+                target=upload_job_artifacts, args=(output_dir, job_id), daemon=True
+            ).start()
+    except Exception as e:
+        # The original metadata/result is untouched on any failure (merge is
+        # all-or-nothing and raises before rewriting metadata).
+        _log(f"More-clips run error: {e}; existing clips are unchanged.")
+    finally:
+        job = jobs.get(job_id)
+        if job is not None:
+            job["status"] = "completed"
+            job["completed_at"] = time.time()
+        _persist_result(job_id)
+        shutil.rmtree(scratch_dir, ignore_errors=True)
+
+
+async def _run_more_clips_task(job_id: str, count, api_key: str):
+    # Acquire the SAME asyncio semaphore that gates run_job so a more-clips run
+    # counts against MAX_CONCURRENT_JOBS — a semaphore slot (vs. a bare thread)
+    # is the right fit here because this is heavy ffmpeg/detection work that
+    # must not oversubscribe the machine alongside a normal job. We stay in
+    # async land for the gate and offload the blocking subprocess+merge to a
+    # thread via run_in_executor.
+    async with concurrency_semaphore:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _more_clips_worker, job_id, count, api_key)
+
+
+@app.post("/api/jobs/{job_id}/more-clips")
+async def more_clips(job_id: str, request: Request):
+    """Generate additional viral clips for a COMPLETED job from its saved
+    transcript, excluding ranges already used, and append them to the results.
+    Returns 202 immediately; the frontend polls /api/status as usual."""
+    api_key = request.headers.get("X-Gemini-Key")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
+    if not _safe_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job id")
+
+    # Optional {"count": int} body, clamped 1..10; omitted => AI decides.
+    count = None
+    if "application/json" in request.headers.get("content-type", ""):
+        try:
+            body = await request.json()
+            if isinstance(body, dict) and body.get("count") is not None:
+                count = max(1, min(10, int(body["count"])))
+        except (ValueError, TypeError, json.JSONDecodeError):
+            count = None
+
+    output_dir = os.path.join(OUTPUT_DIR, job_id)
+    if not os.path.isdir(output_dir):
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if not os.path.isfile(os.path.join(output_dir, "original.mp4")):
+        raise HTTPException(status_code=400, detail="The original video is no longer available for this project. Process the video again to generate more clips.")
+
+    meta_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
+    if not meta_files:
+        raise HTTPException(status_code=400, detail="This project has no saved clip metadata to build on.")
+    try:
+        with open(meta_files[0]) as f:
+            meta = json.load(f)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not read this project's clip metadata.")
+    if not meta.get("transcript"):
+        raise HTTPException(status_code=400, detail="This project was created before transcripts were saved, so more clips can't be generated. Process the video again.")
+
+    # Reject a second run while one is in flight. Two concurrent workers would
+    # both renumber new clips from the same existing count and clobber each
+    # other's files/metadata — the frontend button guards one tab, but this is
+    # the trust boundary (two tabs, a retry, or a direct API call).
+    job = jobs.get(job_id)
+    if job is not None and job.get("status") in ("queued", "processing"):
+        raise HTTPException(status_code=409, detail="This project is already processing. Wait for it to finish, then try again.")
+
+    # Resurrect / patch the in-memory job (it may be gone after a restart) so it
+    # keeps showing the existing clips while the new ones are generated.
+    if job is None:
+        snap = _load_persisted_result(job_id)
+        job = {"status": "completed", "logs": [], "result": (snap or {}).get("result")}
+        jobs[job_id] = job
+    elif job.get("result") is None:
+        snap = _load_persisted_result(job_id)
+        if snap:
+            job["result"] = snap.get("result")
+    job.setdefault("logs", [])
+    job["status"] = "processing"
+    job["logs"].append("Generating more clips...")
+
+    asyncio.create_task(_run_more_clips_task(job_id, count, api_key))
+    return {"status": "processing"}
+
+
 from editor import VideoEditor
 from subtitles import generate_srt, burn_subtitles, generate_srt_from_video
 from hooks import add_hook_to_video
