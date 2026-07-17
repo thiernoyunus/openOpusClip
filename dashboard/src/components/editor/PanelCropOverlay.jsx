@@ -112,7 +112,7 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
                         <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); setModalOpen(true); }}
-                            className="pointer-events-auto absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-7 px-2.5 rounded-full bg-black/80 backdrop-blur-sm border border-white/15 text-xs text-white flex items-center gap-1.5 hover:bg-black transition-colors"
+                            className="pointer-events-auto absolute top-2 left-1/2 -translate-x-1/2 h-7 px-2.5 rounded-full bg-black/80 backdrop-blur-sm border border-white/15 text-xs text-white flex items-center gap-1.5 hover:bg-black transition-colors"
                         >
                             <Crop size={12} />
                             {currentCrop ? 'Adjust crop' : 'Crop'}
