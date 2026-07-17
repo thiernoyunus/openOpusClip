@@ -11,7 +11,7 @@ import sys
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from typing import Dict, Optional, List
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -2415,6 +2415,7 @@ async def translate_clip(
     }
 
 import httpx
+import ssl
 
 # --- Zernio social integration (https://docs.zernio.com) ---
 ZERNIO_API = "https://zernio.com/api/v1"
@@ -2464,20 +2465,38 @@ def _zernio_upload_media(api_key: str, file_path: str, content_type: str) -> str
     Sync on purpose: called from threads (BackgroundTasks) and from run_in_executor.
     """
     filename = os.path.basename(file_path)
-    with httpx.Client(timeout=600.0) as client:
-        presign = client.post(
-            f"{ZERNIO_API}/media/presign",
-            headers=_zernio_headers(api_key),
-            json={"filename": filename, "contentType": content_type},
-        )
-        if presign.status_code >= 400:
-            raise HTTPException(status_code=presign.status_code, detail=f"Zernio presign failed: {presign.text}")
-        info = presign.json()
-        with open(file_path, "rb") as f:
-            put = client.put(info["uploadUrl"], content=f, headers={"Content-Type": content_type})  # stream, don't buffer 2GB
-        if put.status_code >= 400:
-            raise HTTPException(status_code=put.status_code, detail=f"Zernio media upload failed: {put.text}")
-    return info["publicUrl"]
+    # A long upload over a flaky link dies with transport errors (TLS "bad record mac",
+    # reset connections, read timeouts). Those are retryable; HTTP errors are not.
+    # ponytail: 3 fixed-delay tries. Add backoff/resumable uploads only if this still fails.
+    size_mb = os.path.getsize(file_path) / 1024 / 1024
+    last_err = last_stage = None
+    for attempt in range(3):
+        stage = "presign"
+        try:
+            with httpx.Client(timeout=600.0) as client:
+                presign = client.post(
+                    f"{ZERNIO_API}/media/presign",
+                    headers=_zernio_headers(api_key),
+                    json={"filename": filename, "contentType": content_type},
+                )
+                if presign.status_code >= 400:
+                    raise HTTPException(status_code=presign.status_code, detail=f"Zernio presign failed: {presign.text}")
+                info = presign.json()
+                stage = f"upload of {size_mb:.0f}MB to {urlparse(info['uploadUrl']).hostname}"
+                with open(file_path, "rb") as f:
+                    put = client.put(info["uploadUrl"], content=f, headers={"Content-Type": content_type})  # stream, don't buffer 2GB
+                if put.status_code >= 400:
+                    raise HTTPException(status_code=put.status_code, detail=f"Zernio media upload failed: {put.text}")
+            return info["publicUrl"]
+        except (httpx.TransportError, ssl.SSLError) as e:
+            last_err, last_stage = e, stage
+            print(f"⚠️  Zernio {stage} failed on attempt {attempt + 1}/3 — {type(e).__name__}: {e}")
+            time.sleep(2)
+    raise HTTPException(
+        status_code=502,
+        detail=f"Couldn't reach Zernio — {last_stage} failed 3 times ({type(last_err).__name__}: {last_err}). "
+               "This is a network problem between you and Zernio, not your API key.",
+    )
 
 
 class SocialAccountTarget(BaseModel):
