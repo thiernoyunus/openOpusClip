@@ -2,6 +2,7 @@ import React, { forwardRef, useMemo, useRef, useState, useLayoutEffect } from 'r
 import { Player } from '@remotion/player';
 import { ShortVideo } from '@remotion-src/compositions/ShortVideo';
 import TrackerOverlay from './TrackerOverlay';
+import PanelCropOverlay from './PanelCropOverlay';
 import CaptionDragOverlay from './CaptionDragOverlay';
 import { getApiUrl } from '../../config';
 
@@ -109,8 +110,13 @@ const EditorCanvas = forwardRef(function EditorCanvas(
                     clickToPlay={false}
                     spaceKeyToPlayOrPause={false}
                 />
-                {trackerOn && (
+                {trackerOn ? (
                     <TrackerOverlay playerRef={playerRef} framing={framing} dispatch={dispatch} />
+                ) : (
+                    // Per-tile crop selection — mutually exclusive with the Tracker
+                    // (only one full-canvas click layer at a time). No-op unless the
+                    // active clip is a multi-panel 9:16 layout.
+                    <PanelCropOverlay playerRef={playerRef} framing={framing} dispatch={dispatch} sourceUrl={sourceUrl} />
                 )}
                 {/* Drag-to-reposition handle for captions. Only the handle itself
                     captures pointer events, so it coexists with the tracker layer. */}

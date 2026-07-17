@@ -130,6 +130,28 @@ export function sourceToCanvas(framing, segment, srcFrame, src) {
 }
 
 /**
+ * Normalized panel rects (0..1 over the output canvas) for a layout — the exact
+ * tile geometry the composition renders. Used by the per-tile crop overlay to
+ * hit-test clicks and draw the selection outline.
+ */
+export function panelRects(layout, framing) {
+    return panelGeometry(layout, framing);
+}
+
+/**
+ * The crop the composition would auto-apply to a panel at a source frame
+ * (tracked face crop, or center crop) — the starting rect for the per-tile
+ * crop modal when the tile has no manual crop yet.
+ */
+export function autoPanelCrop(framing, clip, panelIdx, srcFrame) {
+    const panels = panelGeometry(clip.layout, framing);
+    const panel = panels[panelIdx];
+    const { width: srcW, height: srcH } = framing.source;
+    if (!panel) return centerCrop(srcW / srcH, srcW, srcH);
+    return cropForPanel(framing, clip, panelIdx, panel, srcFrame);
+}
+
+/**
  * Face tracks visible near a source frame, with their current source-space
  * center. Used both to render markers and to resolve a tracker click.
  */
