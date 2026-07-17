@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { Loader2, AlertCircle, Captions, Crosshair, Sparkles, Type, Clapperboard, ChevronRight, ChevronDown, Check, Crop, Trash2 } from 'lucide-react';
+import { Loader2, AlertCircle, Captions, Crosshair, Sparkles, Type, Clapperboard, ChevronRight, ChevronDown, Check } from 'lucide-react';
 import { getApiUrl } from '../../config';
 import useEditorState, { defaultSubtitleConfig, loadDefaultCaptionStyle, tracksInClip, LAYOUT_PANELS } from './useEditorState';
 import { outputDurationFrames, outputToSource, placedClips } from '@remotion-src/lib/edl';
@@ -12,7 +12,6 @@ import CaptionsPanel from './CaptionsPanel';
 import TransitionsPanel from './TransitionsPanel';
 import TextPanel from './TextPanel';
 import MediaPanel from './MediaPanel';
-import ManualCropModal from './ManualCropModal';
 import ExtendClipModal from './ExtendClipModal';
 
 const LAYOUT_LABEL = {
@@ -82,11 +81,10 @@ function AspectIcon({ width, height }) {
     );
 }
 
-function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker, dispatch, sourceUrl, playerRef }) {
+function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker, dispatch, playerRef }) {
     const [aspectOpen, setAspectOpen] = useState(false);
     const [layoutOpen, setLayoutOpen] = useState(false);
     const [globalOpen, setGlobalOpen] = useState(false);
-    const [showCropModal, setShowCropModal] = useState(false);
     const controlsRef = useRef(null);
     const selected = framing.clips.filter((c) => selectedIds.includes(c.id));
     const primary = selected[0] || framing.clips[0];
@@ -103,7 +101,6 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
     const is916 = Math.abs(outW / outH - 9 / 16) < 0.01;
     const fitMatchesFill = Math.abs((framing.source.width / framing.source.height) - (outW / outH)) < 0.01;
     const currentAspect = ASPECT_OPTIONS.find((a) => a.width === outW && a.height === outH) || ASPECT_OPTIONS[0];
-    const canManuallyReframe = selected.length <= 1 && primary && is916;
 
     const applyLayout = (layout, global = false) => {
         const clipIds = selected.length ? selectedIds : primary ? [primary.id] : [];
@@ -253,37 +250,6 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
                                 </div>
                                 <div className="px-3 pt-2 pb-1 text-[10px] text-zinc-500">Current layout</div>
                                 {layoutRows(false)}
-                                {canManuallyReframe && (
-                                    <div className="mt-1 border-t border-white/[0.06] p-2">
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                if (!selected.length) dispatch({ type: 'SELECT', id: primary.id, multi: false });
-                                                setShowCropModal(true);
-                                                setLayoutOpen(false);
-                                                setGlobalOpen(false);
-                                            }}
-                                            className="w-full h-8 px-2 rounded-md flex items-center gap-2 text-xs text-zinc-300 hover:bg-white/5 hover:text-fg"
-                                        >
-                                            <Crop size={13} />
-                                            {primary.manualCrop ? 'Adjust manual reframe' : 'Set manual reframe'}
-                                        </button>
-                                        {primary.manualCrop && (
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    dispatch({ type: 'SET_MANUAL_CROP', clipId: primary.id, crop: null });
-                                                    setLayoutOpen(false);
-                                                    setGlobalOpen(false);
-                                                }}
-                                                className="mt-1 w-full h-8 px-2 rounded-md flex items-center gap-2 text-xs text-muted hover:bg-white/5 hover:text-fg"
-                                            >
-                                                <Trash2 size={12} />
-                                                Remove manual reframe
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
                             </>
                         )}
                     </div>
@@ -300,18 +266,6 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
                 <Crosshair size={13} />
                 Tracker: {trackerOn ? 'ON' : 'OFF'}
             </button>
-            {showCropModal && primary && (
-                <ManualCropModal
-                    sourceUrl={sourceUrl}
-                    source={framing.source}
-                    segment={primary}
-                    onApply={(crop) => {
-                        dispatch({ type: 'SET_MANUAL_CROP', clipId: primary.id, crop });
-                        setShowCropModal(false);
-                    }}
-                    onClose={() => setShowCropModal(false)}
-                />
-            )}
         </div>
     );
 }
@@ -806,7 +760,6 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                         trackerOn={trackerOn}
                                         onToggleTracker={() => setTrackerOn((v) => !v)}
                                         dispatch={dispatch}
-                                        sourceUrl={sourceUrl}
                                         playerRef={playerRef}
                                     />
                                 </div>

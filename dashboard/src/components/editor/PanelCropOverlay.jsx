@@ -3,17 +3,18 @@ import { Crop } from 'lucide-react';
 import { EDITOR_FPS } from './EditorCanvas';
 import { outputToSource, clipAtOutputFrame } from '@remotion-src/lib/edl';
 import { panelsForLayout } from '@remotion-src/compositions/ReframedVideo';
-import { autoPanelCrop } from './trackerMapping';
+import { autoPanelCrop, wholeFrameCrop } from './trackerMapping';
 import ManualCropModal from './ManualCropModal';
 
-// Layouts with more than one tile — the only ones per-tile crop applies to.
-const MULTI_PANEL = ['split', 'three', 'four', 'screenshare', 'gameplay'];
+const FULL_FRAME = { left: 0, top: 0, width: 1, height: 1 };
 
 /**
- * Per-tile crop (Opus parity): with the Tracker OFF, clicking a tile in a
- * multi-panel 9:16 layout selects it and offers a "Crop" button that opens the
- * crop modal for THAT tile's source region. Sits over the Player, mutually
- * exclusive with the Tracker overlay (only mounted when trackerOn is false).
+ * Crop-by-clicking (Opus parity). With the Tracker OFF, clicking the canvas
+ * selects a tile and offers a "Crop" button that opens the crop modal for that
+ * tile's source region. Multi-panel layouts expose one tile per panel and edit
+ * `panelCrops[i]`; fill/fit are single-tile and edit the whole-clip `manualCrop`
+ * (the composition's fill/fit branches never look at panelCrops). Sits over the
+ * Player, mutually exclusive with the Tracker overlay.
  */
 export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceUrl }) {
     const [outFrame, setOutFrame] = useState(0);
@@ -34,15 +35,20 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
     }, [playerRef]);
 
     // Active clip resolved from the OUTPUT playhead (unambiguous under
-    // reorder/duplication); per-tile crop only applies to multi-panel 9:16
-    // clips that aren't already whole-clip manual-cropped.
+    // reorder/duplication). Non-9:16 outputs drop the layout machinery
+    // entirely, so there are no tiles to crop.
     const clip = clipAtOutputFrame(framing, outFrame, EDITOR_FPS)?.clip ?? null;
     const srcFrame = outputToSource(framing, outFrame, EDITOR_FPS);
     const outW = framing.outputWidth ?? 1080;
     const outH = framing.outputHeight ?? 1920;
     const is916 = Math.abs(outW / outH - 9 / 16) < 0.01;
-    const active = !!clip && !clip.manualCrop && is916 && MULTI_PANEL.includes(clip.layout);
-    const panels = active ? panelsForLayout(clip.layout, 1, 1) : []; // normalized 0..1 tiles
+    const active = !!clip && is916;
+
+    // A whole-clip manual crop collapses the render to one full-canvas crop, so
+    // its panels are gone until it's reset; fill/fit are single-tile by nature.
+    const layoutPanels = active ? panelsForLayout(clip.layout, 1, 1) : [];
+    const wholeFrame = active && (!!clip.manualCrop || layoutPanels.length === 1);
+    const panels = wholeFrame ? [FULL_FRAME] : layoutPanels;
     const selected = active && sel && sel.clipId === clip.id && sel.index < panels.length ? sel.index : null;
 
     // Escape / click-away deselects (but not while the modal owns the screen).
@@ -73,7 +79,17 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
     };
 
     const selPanel = selected != null ? panels[selected] : null;
+    // Panel rects are normalized, so this is the tile's true pixel aspect
+    // (a full-frame tile yields the output aspect).
     const selAspect = selPanel ? (selPanel.width * outW) / (selPanel.height * outH) : 1;
+    const currentCrop = (wholeFrame ? clip.manualCrop : clip.panelCrops?.[selected]) ?? null;
+
+    const setCrop = (crop) =>
+        dispatch(
+            wholeFrame
+                ? { type: 'SET_MANUAL_CROP', clipId: clip.id, crop }
+                : { type: 'SET_PANEL_CROP', clipId: clip.id, panelIndex: selected, crop }
+        );
 
     return (
         <>
@@ -99,7 +115,7 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
                             className="pointer-events-auto absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-7 px-2.5 rounded-full bg-black/80 backdrop-blur-sm border border-white/15 text-xs text-white flex items-center gap-1.5 hover:bg-black transition-colors"
                         >
                             <Crop size={12} />
-                            {clip.panelCrops?.[selected] ? 'Adjust crop' : 'Crop'}
+                            {currentCrop ? 'Adjust crop' : 'Crop'}
                         </button>
                     </div>
                 )}
@@ -111,19 +127,28 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
                     source={framing.source}
                     segment={clip}
                     aspect={selAspect}
-                    initialCrop={clip.panelCrops?.[selected] ?? autoPanelCrop(framing, clip, selected, srcFrame)}
+                    initialCrop={
+                        currentCrop ||
+                        (wholeFrame
+                            ? wholeFrameCrop(framing, clip, srcFrame)
+                            : autoPanelCrop(framing, clip, selected, srcFrame))
+                    }
                     previewSec={srcFrame / framing.source.fps}
-                    title="Crop this tile"
-                    subtitle="Choose how much of this speaker shows in the tile. Drag to move, use the corner to zoom."
-                    aspectLabel="Tile"
+                    title={wholeFrame ? 'Crop this clip' : 'Crop this tile'}
+                    subtitle={
+                        wholeFrame
+                            ? 'Choose how much of the video shows. Drag to move, use the corner to zoom.'
+                            : 'Choose how much of this speaker shows in the tile. Drag to move, use the corner to zoom.'
+                    }
+                    aspectLabel={wholeFrame ? '9:16' : 'Tile'}
                     applyLabel="Apply crop"
-                    onReset={clip.panelCrops?.[selected] ? () => {
-                        dispatch({ type: 'SET_PANEL_CROP', clipId: clip.id, panelIndex: selected, crop: null });
+                    onReset={currentCrop ? () => {
+                        setCrop(null);
                         setModalOpen(false);
                         setSel(null);
                     } : null}
                     onApply={(crop) => {
-                        dispatch({ type: 'SET_PANEL_CROP', clipId: clip.id, panelIndex: selected, crop });
+                        setCrop(crop);
                         setModalOpen(false);
                     }}
                     onClose={() => setModalOpen(false)}

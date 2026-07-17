@@ -139,6 +139,15 @@ export function panelRects(layout, framing) {
 }
 
 /**
+ * The crop currently filling the whole canvas for a single-tile clip: the
+ * manual crop if set, else the tracked camera, else a centered crop. The
+ * starting rect for the crop modal on fill/fit clips.
+ */
+export function wholeFrameCrop(framing, clip, srcFrame) {
+    return fillCrop(framing, clip, srcFrame);
+}
+
+/**
  * The crop the composition would auto-apply to a panel at a source frame
  * (tracked face crop, or center crop) — the starting rect for the per-tile
  * crop modal when the tile has no manual crop yet.
