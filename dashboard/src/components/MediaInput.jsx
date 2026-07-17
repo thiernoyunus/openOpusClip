@@ -517,7 +517,8 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
                 </div>
                 )}
 
-                {!inTool && (
+                {/* Transcription powers captions AND the editor's transcript,
+                    so the model picker stays visible in quick-tool modes too. */}
                 <label className="block mt-5">
                     <span className="block text-xs font-medium text-zinc-400 mb-2">Transcription</span>
                     <select
@@ -550,7 +551,6 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
                         </span>
                     )}
                 </label>
-                )}
 
                 <label className="flex items-start gap-2 mt-5 text-xs text-zinc-400 cursor-pointer select-none">
                     <input
