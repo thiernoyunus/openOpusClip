@@ -3,6 +3,7 @@ import { Upload, FileVideo, Sparkles, Scissors, Youtube, Instagram, Share2, LogO
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
+import { GhostClipCard, SkeletonClipCard } from './components/GenerateMoreCards';
 import ThumbnailStudio from './components/ThumbnailStudio';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
 import SocialCalendar from './components/SocialCalendar';
@@ -136,6 +137,7 @@ function App() {
   const [showProcessingModal, setShowProcessingModal] = useState(false);
   const [viewingResults, setViewingResults] = useState(false);
   const [generatingMore, setGeneratingMore] = useState(false);
+  const [moreClipsNotice, setMoreClipsNotice] = useState('');
   const [openClip, setOpenClip] = useState(null);
   const [editingClip, setEditingClip] = useState(null); // clip index being edited in EditorView
   const [processingJobIds, setProcessingJobIds] = useState(() => (
@@ -513,6 +515,7 @@ function App() {
       return;
     }
     if (!jobId || generatingMore) return;
+    setMoreClipsNotice('');
     setGeneratingMore(true);
     try {
       const res = await fetch(getApiUrl(`/api/jobs/${jobId}/more-clips`), {
@@ -523,6 +526,16 @@ function App() {
       if (!res.ok) {
         let detail = 'Could not generate more clips.';
         try { detail = (await res.json()).detail || detail; } catch { /* non-JSON body */ }
+        // A 409 means a run is already in flight — a benign race (e.g. the
+        // grid was reopened mid-run). Show a small inline notice rather than
+        // an interrupting alert; the poll loop will pick the run back up.
+        if (res.status === 409) {
+          setGeneratingMore(false);
+          setMoreClipsNotice(detail);
+          setProcessingJobIds((ids) => (ids.includes(jobId) ? ids : [...ids, jobId]));
+          setTimeout(() => setMoreClipsNotice(''), 6000);
+          return;
+        }
         throw new Error(detail);
       }
       setProjects(updateProject(jobId, { status: 'processing' }));
@@ -586,6 +599,8 @@ function App() {
     setViewingResults(false);
     setShowProcessingModal(false);
     setOpenClip(null);
+    setGeneratingMore(false);
+    setMoreClipsNotice('');
     localStorage.removeItem(SESSION_KEY);
   };
 
@@ -617,6 +632,15 @@ function App() {
             }));
           } else {
             setStatus('processing');
+            if (data.result?.clips?.length > 0) {
+              // Still running but has baked clips: show the grid, not the log
+              // modal (mirrors the restore-a-past-job path below).
+              setResults(data.result);
+              setViewingResults(true);
+              setShowProcessingModal(false);
+              setGeneratingMore((p.clipCount || 0) > 0);
+              return;
+            }
           }
         } catch (e) {
           console.warn('Could not refresh active project logs before opening modal', e);
@@ -628,6 +652,10 @@ function App() {
     try {
       const data = await pollJob(p.id);
       setJobId(p.id);
+      // Switching projects clears any leftover skeleton state; the more-clips
+      // partial branch below re-arms it when this project is itself mid-run.
+      setGeneratingMore(false);
+      setMoreClipsNotice('');
       if (data.status === 'completed' && data.result) {
         setResults(data.result);
         setStatus('complete');
@@ -637,9 +665,26 @@ function App() {
       } else if (data.status === 'processing' || data.status === 'queued') {
         setStatus('processing');
         setLogs(data.logs || []);
-        setViewingResults(false);
-        setShowProcessingModal(true);
         setProcessingJobIds((ids) => ids.includes(p.id) ? ids : [...ids, p.id]);
+        if (data.result?.clips?.length > 0) {
+          // The job is still working but already has baked clips — either a
+          // "generate more" run appending to a finished project, or an
+          // original run that's partway done. Either way, DON'T trap the user
+          // in the processing/log view: land them on the grid with the clips
+          // they already have (fully interactive) and let polling grow it.
+          setResults(data.result);
+          setViewingResults(true);
+          setShowProcessingModal(false);
+          // A prior completion (clipCount recorded) means this is a more-clips
+          // run → show skeletons. A never-completed job is an original partial
+          // → the grid just shows a "still processing" hint, no skeletons.
+          setGeneratingMore((p.clipCount || 0) > 0);
+        } else {
+          // Nothing baked yet — the classic processing view is correct.
+          setResults(data.result || null);
+          setViewingResults(false);
+          setShowProcessingModal(true);
+        }
       } else {
         setResults(data.result || null);
         setStatus('complete');
@@ -794,6 +839,11 @@ function App() {
     activeProject?.elapsedSeconds ??
     (activeProject?.createdAt ? (Date.now() - activeProject.createdAt) / 1000 : null)
   );
+
+  // Is the currently-open job still doing work in the background (an original
+  // run finishing, or a "generate more" pass)? Drives the grid's ghost/skeleton
+  // tiles and the "still processing" hint without hijacking the whole view.
+  const openJobBusy = !!jobId && processingJobIds.includes(jobId);
 
   return (
     <div className="flex h-screen bg-background overflow-hidden selection:bg-primary/30">
@@ -1264,6 +1314,17 @@ function App() {
                     ${results.cost_analysis.total_cost.toFixed(4)}
                   </span>
                 )}
+                {openJobBusy && (
+                  <span className="flex items-center gap-1.5 text-xs bg-surface2 border border-edge text-muted px-2 py-0.5 rounded-full">
+                    <RotateCcw size={11} className="animate-spin" />
+                    {generatingMore ? 'Finding more clips…' : 'Still processing…'}
+                  </span>
+                )}
+                {moreClipsNotice && (
+                  <span className="text-xs bg-amber-500/10 border border-amber-500/30 text-amber-300 px-2 py-0.5 rounded-full">
+                    {moreClipsNotice}
+                  </span>
+                )}
                 <div className="ml-auto flex items-center gap-2">
                   {results?.clips?.length > 1 && (
                     <div className="flex items-center rounded-lg border border-edge overflow-hidden text-xs">
@@ -1283,12 +1344,12 @@ function App() {
                   )}
                   <button
                     onClick={handleGenerateMore}
-                    disabled={generatingMore}
+                    disabled={generatingMore || openJobBusy}
                     className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface2 hover:bg-white/10 border border-edge text-fg rounded-lg text-xs font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {generatingMore
                       ? <><RotateCcw size={14} className="animate-spin" /> Generating…</>
-                      : <><Sparkles size={14} className="text-viral" /> Generate more clips</>}
+                      : <><Sparkles size={14} className="text-viral" /> More clips</>}
                   </button>
                   <button
                     onClick={() => setShowProcessingModal(true)}
@@ -1335,6 +1396,17 @@ function App() {
                         onEdit={(clipIndex) => setEditingClip(clipIndex)}
                       />
                     ))}
+                    {/* Trailing tiles — rendered AFTER the sorted real cards and
+                        outside the sort so they never reorder the clips. */}
+                    {generatingMore ? (
+                      <>
+                        <SkeletonClipCard caption="Finding new moments…" />
+                        <SkeletonClipCard />
+                        <SkeletonClipCard />
+                      </>
+                    ) : !openJobBusy ? (
+                      <GhostClipCard onClick={handleGenerateMore} />
+                    ) : null}
                   </div>
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center text-muted">
