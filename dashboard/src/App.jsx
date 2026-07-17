@@ -138,6 +138,13 @@ function App() {
   const [viewingResults, setViewingResults] = useState(false);
   const [generatingMore, setGeneratingMore] = useState(false);
   const [moreClipsNotice, setMoreClipsNotice] = useState('');
+  // Auto-dismiss the inline notice, with cleanup so a fast unmount or a new
+  // notice can't leave a stray timer that clears the wrong message.
+  useEffect(() => {
+    if (!moreClipsNotice) return;
+    const timer = setTimeout(() => setMoreClipsNotice(''), 6000);
+    return () => clearTimeout(timer);
+  }, [moreClipsNotice]);
   const [openClip, setOpenClip] = useState(null);
   const [editingClip, setEditingClip] = useState(null); // clip index being edited in EditorView
   const [processingJobIds, setProcessingJobIds] = useState(() => (
@@ -531,9 +538,8 @@ function App() {
         // an interrupting alert; the poll loop will pick the run back up.
         if (res.status === 409) {
           setGeneratingMore(false);
-          setMoreClipsNotice(detail);
+          setMoreClipsNotice(detail); // auto-dismissed by the effect above
           setProcessingJobIds((ids) => (ids.includes(jobId) ? ids : [...ids, jobId]));
-          setTimeout(() => setMoreClipsNotice(''), 6000);
           return;
         }
         throw new Error(detail);
