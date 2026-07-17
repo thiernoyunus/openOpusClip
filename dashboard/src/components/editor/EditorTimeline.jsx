@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
     Play, Pause, SkipBack, SkipForward, Scissors, Trash2, Copy, ZoomIn, ZoomOut, Plus,
     Type, Clapperboard, Music, Volume2, Image as ImageIcon, Calendar, PanelBottomClose, Columns2,
@@ -430,6 +430,38 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
     const dragRef = useRef(null);
     const resizeRef = useRef(null);
     const outTickRef = useRef(0);
+    const pxPerSecRef = useRef(pxPerSec); // current zoom for the native wheel handler
+    useEffect(() => { pxPerSecRef.current = pxPerSec; }, [pxPerSec]);
+    const pendingScroll = useRef(null); // scrollLeft to apply after a wheel-zoom re-renders
+
+    // Cmd/Ctrl + scroll zooms the timeline (Opus parity), anchored on the time
+    // under the cursor. Native non-passive listener because React's onWheel is
+    // passive and can't preventDefault the browser's page zoom.
+    useEffect(() => {
+        const el = trackRef.current;
+        if (!el) return;
+        const onWheel = (e) => {
+            if (!e.metaKey && !e.ctrlKey) return; // plain scroll stays plain scroll
+            e.preventDefault();
+            const z = pxPerSecRef.current;
+            const next = Math.round(Math.min(MAX_PPS, Math.max(MIN_PPS, z * Math.exp(-e.deltaY * 0.002))));
+            if (next === z) return;
+            const offsetX = e.clientX - el.getBoundingClientRect().left;
+            const t = (el.scrollLeft + offsetX - LEFT_GUTTER) / z; // seconds under cursor
+            pendingScroll.current = LEFT_GUTTER + t * next - offsetX;
+            setPxPerSec(next);
+        };
+        el.addEventListener('wheel', onWheel, { passive: false });
+        return () => el.removeEventListener('wheel', onWheel);
+    }, []);
+
+    // Apply the wheel-zoom scroll target once the new track width is committed.
+    useLayoutEffect(() => {
+        if (pendingScroll.current != null && trackRef.current) {
+            trackRef.current.scrollLeft = pendingScroll.current;
+            pendingScroll.current = null;
+        }
+    }, [pxPerSec]);
 
     const fps = EDITOR_FPS;
     const srcFps = framing.source.fps;
