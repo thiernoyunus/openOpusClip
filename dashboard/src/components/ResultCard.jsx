@@ -40,7 +40,7 @@ const ScoreBadge = ({ score, lg, box }) => {
 
 const BREAKDOWN_LABELS = { hook: 'Hook', flow: 'Flow', value: 'Value', trend: 'Trend' };
 
-export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], geminiApiKey, elevenLabsKey, onPlay, onPause, openIndex, setOpenIndex, totalClips, onEdit }) {
+export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], geminiApiKey, elevenLabsKey, onPlay, onPause, openIndex, setOpenIndex, totalClips, onEdit, framingVersion = 0 }) {
     const isOpen = openIndex === index;
     const [showModal, setShowModal] = useState(false);
     const [showSubtitleModal, setShowSubtitleModal] = useState(false);
@@ -111,11 +111,14 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
     // Load the clip's saved framing so the preview mirrors editor caption edits
     // (position/style, or captions turned off). Only the caption bits are used.
+    // framingVersion bumps when the editor closes: the card never unmounts (the
+    // editor is an overlay), so without it the preview keeps the pre-edit style.
+    // The ?v= also defeats the browser's heuristic cache on the static JSON.
     useEffect(() => {
         if (!clip.framing_url) { setFramingCaptions(null); return; }
         let alive = true;
         setFramingCaptions(null); // drop the previous clip's config so it can't flash
-        fetch(getApiUrl(clip.framing_url))
+        fetch(getApiUrl(clip.framing_url) + `?v=${framingVersion}`)
             .then(res => res.ok ? res.json() : null)
             .then(f => {
                 if (!alive || !f) return;
@@ -126,7 +129,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             })
             .catch(() => {});
         return () => { alive = false; };
-    }, [clip.framing_url]);
+    }, [clip.framing_url, framingVersion]);
 
     // Initialize/Reset form when modal opens
     useEffect(() => {

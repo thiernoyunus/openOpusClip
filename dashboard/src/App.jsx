@@ -138,6 +138,7 @@ function App() {
   const [generatingMore, setGeneratingMore] = useState(false);
   const [openClip, setOpenClip] = useState(null);
   const [editingClip, setEditingClip] = useState(null); // clip index being edited in EditorView
+  const [framingVersion, setFramingVersion] = useState(0); // bumped on editor close so cards refetch framing
   const [processingJobIds, setProcessingJobIds] = useState(() => (
     getProjects().filter((p) => p.status === 'processing').map((p) => p.id)
   ));
@@ -1333,6 +1334,7 @@ function App() {
                         setOpenIndex={setOpenClip}
                         totalClips={results.clips.length}
                         onEdit={(clipIndex) => setEditingClip(clipIndex)}
+                        framingVersion={framingVersion}
                       />
                     ))}
                   </div>
@@ -1459,7 +1461,7 @@ function App() {
           clip={results.clips[editingClip]}
           index={editingClip}
           jobId={jobId}
-          onClose={() => setEditingClip(null)}
+          onClose={() => { setEditingClip(null); setFramingVersion((v) => v + 1); }}
           onExported={(newVideoUrl) => {
             setResults((prev) => {
               if (!prev?.clips?.[editingClip]) return prev;
