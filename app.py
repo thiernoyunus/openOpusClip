@@ -2136,9 +2136,11 @@ async def apply_render(req: ApplyRenderRequest):
     if not _safe_job_id(req.job_id):
         raise HTTPException(status_code=400, detail="Invalid job id")
     filename = os.path.basename(req.filename)
+    if filename in ("", ".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid filename")
     output_dir = os.path.join(OUTPUT_DIR, req.job_id)
     rendered_path = os.path.join(output_dir, filename)
-    if not os.path.exists(rendered_path) or os.path.getsize(rendered_path) == 0:
+    if not os.path.isfile(rendered_path) or os.path.getsize(rendered_path) == 0:
         raise HTTPException(status_code=404, detail=f"Rendered file not found: {filename}")
 
     new_video_url = _video_url(req.job_id, filename)
