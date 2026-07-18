@@ -1118,12 +1118,16 @@ def plan_static_reframe(input_video, scene_boundaries, scene_strategies,
 
     # ≥40 samples across the clip catches real movement while costing little
     # (we grab() every frame anyway; only sampled frames pay detection).
-    # Cap the stride at the recorder's matching gap: sparser samples would
-    # never link into one track, so every sample would open a single-sample
-    # track that to_face_tracks() drops — leaving segments referencing face
-    # ids missing from faceTracks and breaking the editor's tracked-speaker UI.
-    step = max(1, min(span // 40, recorder.max_gap_frames))
+    # Cap the stride at 15 frames: the editor's tracksInClip() treats a face
+    # track as usable only above 10% coverage (one sample per ~20 frames), so
+    # anything sparser makes the tracked-speaker UI (re-track picker,
+    # screenshare panel assignment, non-9:16 tracking) silently go blind on
+    # long clips. 15 also stays under the recorder's 30-frame matching gap,
+    # keeping each face one connected track. Still ~3x fewer detections than
+    # the tracking loop's every-5-frames, with zero encode cost.
+    step = max(1, min(span // 40, 15))
     centers = []
+    sampled = 0
     segment_votes = {}  # scene index -> {recorder_track_id: votes}
 
     cap = cv2.VideoCapture(input_video)
@@ -1145,6 +1149,7 @@ def plan_static_reframe(input_video, scene_boundaries, scene_strategies,
             if not ret:
                 break
             current_f += 1
+            sampled += 1
             candidates = detect_face_candidates(frame)
             rec_ids = recorder.add(f, candidates)
             scene_idx = 0
@@ -1163,8 +1168,11 @@ def plan_static_reframe(input_video, scene_boundaries, scene_strategies,
     finally:
         cap.release()
 
-    # Need faces to anchor a crop, and the whole spread must fit the safe zone.
-    if not centers:
+    # Need faces on most samples to trust the "speaker never moved" verdict.
+    # A few scattered detections could all look static while the speaker moved
+    # with their face turned away — the tracking loop covers that with a YOLO
+    # person fallback the pre-pass doesn't have, so bail to it instead.
+    if sampled == 0 or len(centers) < sampled * 2 / 3:
         return None
     if (max(centers) - min(centers)) > safe_zone_radius:
         return None
@@ -1300,12 +1308,6 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
     bake_end_frame = bake_out_frame if bake_out_frame is not None else total_frames
     window_frames = max(0, bake_end_frame - bake_in_frame)
 
-    # Skip decode up to the window start. cap.grab() frame-by-frame is the
-    # reliable way — CAP_PROP_POS_FRAMES seeking is not frame-accurate.
-    for _ in range(bake_in_frame):
-        if not cap.grab():
-            break
-
     frame_number = bake_in_frame
     current_scene_index = 0
     pipe_broke = False  # set if FFmpeg dies mid-stream (write hits a closed pipe)
@@ -1370,6 +1372,14 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
             *video_codec_args('final'), '-an', temp_video_output
         ]
         ffmpeg_process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+        # Skip decode up to the window start. cap.grab() frame-by-frame is the
+        # reliable way — CAP_PROP_POS_FRAMES seeking is not frame-accurate.
+        # Only the tracking loop needs this; the static fast path never reads
+        # from this capture, so skipping here would be wasted decode.
+        for _ in range(bake_in_frame):
+            if not cap.grab():
+                break
 
         # Bar off outside the main thread (see analyze_scenes_strategy note).
         with tqdm(total=window_frames, desc="   Processing", file=sys.stdout,
