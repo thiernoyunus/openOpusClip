@@ -1112,12 +1112,17 @@ def plan_static_reframe(input_video, scene_boundaries, scene_strategies,
     win_start = scene_boundaries[0][0]
     win_end = scene_boundaries[-1][1]
     span = max(1, win_end - win_start)
-    # ~40 samples across the clip catches real movement while costing a tiny
-    # fraction of a full decode.
-    step = max(1, span // 40)
 
     tracker = SpeakerTracker(cooldown_frames=30)
     recorder = FaceTrackRecorder(original_width, original_height)
+
+    # ≥40 samples across the clip catches real movement while costing little
+    # (we grab() every frame anyway; only sampled frames pay detection).
+    # Cap the stride at the recorder's matching gap: sparser samples would
+    # never link into one track, so every sample would open a single-sample
+    # track that to_face_tracks() drops — leaving segments referencing face
+    # ids missing from faceTracks and breaking the editor's tracked-speaker UI.
+    step = max(1, min(span // 40, recorder.max_gap_frames))
     centers = []
     segment_votes = {}  # scene index -> {recorder_track_id: votes}
 
