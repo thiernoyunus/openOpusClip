@@ -1205,7 +1205,10 @@ def render_static_crop(input_video, temp_video_output, crop_box, fps,
     No audio here — the shared Step 5/6 muxes it, exactly like the tracking path."""
     x1, y1, x2, y2 = crop_box
     cw, ch = x2 - x1, y2 - y1
-    vf = (f"crop={cw}:{ch}:{x1}:{y1},scale={output_width}:{output_height},"
+    # setsar=1: anamorphic sources carry a non-square sample aspect that scale
+    # would propagate to the output tag; the rawvideo path always emitted
+    # square pixels, so force the same here or the clip displays stretched.
+    vf = (f"crop={cw}:{ch}:{x1}:{y1},scale={output_width}:{output_height},setsar=1,"
           "unsharp=5:5:1.5,eq=brightness=0.06:contrast=1.1:saturation=1.15")
     cmd = ['ffmpeg', '-y']
     if window_active:
