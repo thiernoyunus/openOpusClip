@@ -64,11 +64,10 @@ const EditorCanvas = forwardRef(function EditorCanvas(
             const r = el.getBoundingClientRect();
             if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
             e.preventDefault();
-            setViewZoom((z) => {
-                let next = Math.min(4, Math.max(0.25, z * Math.exp(-e.deltaY * 0.0015)));
-                if (Math.abs(next - 1) < 0.03) next = 1; // easy detent at 100%
-                return next;
-            });
+            // Store the RAW zoom so slow ticks keep accumulating; the 100%
+            // detent is applied only to the displayed transform below (snapping
+            // the stored value would trap slow/trackpad scrolls at 100%).
+            setViewZoom((z) => Math.min(4, Math.max(0.25, z * Math.exp(-e.deltaY * 0.0015))));
         };
         window.addEventListener('wheel', onWheel, { capture: true, passive: false });
         return () => window.removeEventListener('wheel', onWheel, { capture: true });
@@ -96,6 +95,10 @@ const EditorCanvas = forwardRef(function EditorCanvas(
         ? { height: `min(100%, ${maxPreviewHeight}px)`, width: 'auto', aspectRatio: `${outW} / ${outH}` }
         : { width: `min(100%, ${maxPreviewWidth}px)`, height: 'auto', aspectRatio: `${outW} / ${outH}` };
 
+    // Snap the DISPLAYED zoom to 100% within a small band so it's easy to land
+    // on normal — without snapping the stored value (which would trap slow scrolls).
+    const shownZoom = Math.abs(viewZoom - 1) < 0.03 ? 1 : viewZoom;
+
     const inputProps = useMemo(
         () => ({
             videoUrl: '',
@@ -119,7 +122,7 @@ const EditorCanvas = forwardRef(function EditorCanvas(
         <div ref={wrapRef} className="w-full h-full flex items-center justify-center">
             <div
                 className="relative max-w-full max-h-full rounded-xl overflow-hidden border border-edge bg-black shadow-2xl"
-                style={{ ...boxStyle, transform: viewZoom !== 1 ? `scale(${viewZoom})` : undefined }}
+                style={{ ...boxStyle, transform: shownZoom !== 1 ? `scale(${shownZoom})` : undefined }}
             >
                 <Player
                     // Remount when the canvas size changes so the composition
