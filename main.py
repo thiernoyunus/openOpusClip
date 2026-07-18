@@ -1068,6 +1068,131 @@ Technical Details: {str(e)}
     
     return downloaded_file, sanitized_title
 
+# --- Single-speaker fast path ---------------------------------------------
+# A clip that is one speaker who barely moves would have the tracking cameraman
+# hold essentially the same crop for every frame. Detecting that up front lets
+# us skip the per-frame Python decode/crop/re-encode loop and hand FFmpeg a
+# single crop+scale pass instead — visually the same clip, a fraction of the
+# work. Toggle off with OPENSHORTS_STATIC_FASTPATH=0.
+STATIC_FASTPATH = os.environ.get("OPENSHORTS_STATIC_FASTPATH", "1") != "0"
+
+
+def plan_static_reframe(input_video, scene_boundaries, scene_strategies,
+                        original_width, original_height,
+                        output_width, output_height):
+    """Decide whether a single-speaker clip can be reframed with one fixed crop.
+
+    Returns (crop_box, face_recorder, segment_votes, segment_keyframes) when the
+    speaker stays inside the camera's safe zone for the whole clip, else None.
+    crop_box is (x1, y1, x2, y2) in original-frame pixels; the other three are
+    the same framing-metadata structures the tracking loop builds, so the web
+    editor still gets a valid recipe.
+
+    Only tried when every scene is TRACK (single speaker). GENERAL/SPLIT scenes
+    need the full compositor, and hard cuts to different speaker positions are
+    not a single static crop."""
+    if not STATIC_FASTPATH:
+        return None
+    if not scene_strategies or any(s != 'TRACK' for s in scene_strategies):
+        return None
+    if not scene_boundaries:
+        return None
+
+    # Crop geometry mirrors SmoothedCameraman: full height, width from aspect.
+    aspect = output_width / output_height
+    crop_height = original_height
+    crop_width = int(crop_height * aspect)
+    if crop_width > original_width:
+        crop_width = original_width
+        crop_height = int(crop_width / aspect)
+    # The real cameraman only pans when the target leaves this band, so if every
+    # sampled speaker center stays inside it the fixed crop is identical output.
+    safe_zone_radius = crop_width * 0.25
+
+    win_start = scene_boundaries[0][0]
+    win_end = scene_boundaries[-1][1]
+    span = max(1, win_end - win_start)
+    # ~40 samples across the clip catches real movement while costing a tiny
+    # fraction of a full decode.
+    step = max(1, span // 40)
+
+    tracker = SpeakerTracker(cooldown_frames=30)
+    recorder = FaceTrackRecorder(original_width, original_height)
+    centers = []
+    segment_votes = {}  # scene index -> {recorder_track_id: votes}
+
+    cap = cv2.VideoCapture(input_video)
+    try:
+        for f in range(win_start, win_end, step):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, f)
+            ret, frame = cap.read()
+            if not ret:
+                continue
+            candidates = detect_face_candidates(frame)
+            rec_ids = recorder.add(f, candidates)
+            scene_idx = 0
+            for i, (s, e) in enumerate(scene_boundaries):
+                if s <= f < e:
+                    scene_idx = i
+                    break
+            target_box = tracker.get_target(candidates, f, original_width)
+            if target_box:
+                centers.append(target_box[0] + target_box[2] / 2.0)
+                for ci, cand in enumerate(candidates):
+                    if cand['box'] == target_box:
+                        votes = segment_votes.setdefault(scene_idx, {})
+                        votes[rec_ids[ci]] = votes.get(rec_ids[ci], 0) + 1
+                        break
+    finally:
+        cap.release()
+
+    # Need faces to anchor a crop, and the whole spread must fit the safe zone.
+    if not centers:
+        return None
+    if (max(centers) - min(centers)) > safe_zone_radius:
+        return None
+
+    centers.sort()
+    center_x = centers[len(centers) // 2]  # median
+    half = crop_width / 2.0
+    center_x = min(max(center_x, half), original_width - half)
+    x1 = max(0, int(center_x - half))
+    x2 = min(original_width, int(center_x + half))
+
+    # One static keyframe per scene (normalized), matching the tracking loop's
+    # 'fill' segment schema so the editor can re-frame non-destructively.
+    norm_kf = {
+        'x': round(x1 / original_width, 4),
+        'y': 0.0,
+        'w': round((x2 - x1) / original_width, 4),
+        'h': 1.0,
+    }
+    segment_keyframes = {i: [{'frame': s, **norm_kf}]
+                         for i, (s, e) in enumerate(scene_boundaries)}
+
+    return (x1, 0, x2, original_height), recorder, segment_votes, segment_keyframes
+
+
+def render_static_crop(input_video, temp_video_output, crop_box, fps,
+                       output_width, output_height,
+                       bake_in_frame, bake_end_frame, window_active):
+    """One-pass FFmpeg reframe for a stable single-speaker clip: crop the fixed
+    window, scale to output, apply the same finishing filters as the frame loop.
+    No audio here — the shared Step 5/6 muxes it, exactly like the tracking path."""
+    x1, y1, x2, y2 = crop_box
+    cw, ch = x2 - x1, y2 - y1
+    vf = (f"crop={cw}:{ch}:{x1}:{y1},scale={output_width}:{output_height},"
+          "unsharp=5:5:1.5,eq=brightness=0.06:contrast=1.1:saturation=1.15")
+    cmd = ['ffmpeg', '-y']
+    if window_active:
+        # Bake only the clip's window; -ss/-to re-encode is sample-accurate.
+        cmd += ['-ss', str(bake_in_frame / float(fps)),
+                '-to', str(bake_end_frame / float(fps))]
+    cmd += ['-i', input_video, '-vf', vf, '-r', str(fps),
+            *video_codec_args('final'), '-an', temp_video_output]
+    run_logged_command(cmd, "Static single-speaker reframe", temp_video_output, check=True)
+
+
 def process_video_to_vertical(input_video, final_output_video, framing_output_path=None,
                               framing_source_override=None, aspect_ratio="9:16",
                               bake_in_frame=0, bake_out_frame=None):
@@ -1140,16 +1265,6 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
     # scene_strategies is a list of 'TRACK' / 'GENERAL' / 'SPLIT' per scene
     
     print("\n   ✂️ Step 4: Processing video frames...")
-    
-    command = [
-        'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
-        '-s', f'{OUTPUT_WIDTH}x{OUTPUT_HEIGHT}', '-pix_fmt', 'bgr24',
-        '-r', str(fps), '-i', '-',
-        '-vf', 'unsharp=5:5:1.5,eq=brightness=0.06:contrast=1.1:saturation=1.15',
-        *video_codec_args('final'), '-an', temp_video_output
-    ]
-
-    ffmpeg_process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
     cap = cv2.VideoCapture(input_video)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -1206,143 +1321,166 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
     # Cameraman for stacked two-person SPLIT scenes (panels are W x H/2)
     split_cameraman = SplitCameraman(original_width, original_height, OUTPUT_WIDTH / (OUTPUT_HEIGHT / 2))
 
-    # Bar off outside the main thread (see analyze_scenes_strategy note).
-    with tqdm(total=window_frames, desc="   Processing", file=sys.stdout,
-              disable=threading.current_thread() is not threading.main_thread()) as pbar:
-        while cap.isOpened():
-            if bake_out_frame is not None and frame_number >= bake_out_frame:
-                break
-            ret, frame = cap.read()
-            if not ret:
-                break
+    static_plan = plan_static_reframe(
+        input_video, scene_boundaries, scene_strategies,
+        original_width, original_height, OUTPUT_WIDTH, OUTPUT_HEIGHT)
+    if static_plan is not None:
+        # Single speaker, stable framing: one FFmpeg crop+scale pass instead of
+        # the frame-by-frame tracking loop. Reuse the pre-pass's framing metadata.
+        crop_box, face_recorder, segment_votes, segment_keyframes = static_plan
+        cap.release()
+        print("   ⚡ Single speaker with stable framing → one-pass static crop "
+              "(skipping per-frame tracking).")
+        render_static_crop(
+            input_video, temp_video_output, crop_box, fps,
+            OUTPUT_WIDTH, OUTPUT_HEIGHT, bake_in_frame, bake_end_frame, window_active)
+    else:
+        command = [
+            'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
+            '-s', f'{OUTPUT_WIDTH}x{OUTPUT_HEIGHT}', '-pix_fmt', 'bgr24',
+            '-r', str(fps), '-i', '-',
+            '-vf', 'unsharp=5:5:1.5,eq=brightness=0.06:contrast=1.1:saturation=1.15',
+            *video_codec_args('final'), '-an', temp_video_output
+        ]
+        ffmpeg_process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
-            # Update Scene Index
-            if current_scene_index < len(scene_boundaries):
-                start_f, end_f = scene_boundaries[current_scene_index]
-                if frame_number >= end_f and current_scene_index < len(scene_boundaries) - 1:
-                    current_scene_index += 1
+        # Bar off outside the main thread (see analyze_scenes_strategy note).
+        with tqdm(total=window_frames, desc="   Processing", file=sys.stdout,
+                  disable=threading.current_thread() is not threading.main_thread()) as pbar:
+            while cap.isOpened():
+                if bake_out_frame is not None and frame_number >= bake_out_frame:
+                    break
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                # Update Scene Index
+                if current_scene_index < len(scene_boundaries):
+                    start_f, end_f = scene_boundaries[current_scene_index]
+                    if frame_number >= end_f and current_scene_index < len(scene_boundaries) - 1:
+                        current_scene_index += 1
             
-            # Determine Strategy for current frame based on scene
-            current_strategy = scene_strategies[current_scene_index] if current_scene_index < len(scene_strategies) else 'TRACK'
+                # Determine Strategy for current frame based on scene
+                current_strategy = scene_strategies[current_scene_index] if current_scene_index < len(scene_strategies) else 'TRACK'
 
-            # Snap cameras on scene change to avoid panning from previous scene position
-            is_scene_start = (frame_number == scene_boundaries[current_scene_index][0])
+                # Snap cameras on scene change to avoid panning from previous scene position
+                is_scene_start = (frame_number == scene_boundaries[current_scene_index][0])
 
-            # Apply Strategy
-            if current_strategy == 'GENERAL':
-                # "Plano General" -> Blur Background + Fit Width
-                output_frame = create_general_frame(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
+                # Apply Strategy
+                if current_strategy == 'GENERAL':
+                    # "Plano General" -> Blur Background + Fit Width
+                    output_frame = create_general_frame(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
 
-                # Reset cameraman/tracker so they don't drift while inactive
-                cameraman.current_center_x = original_width / 2
-                cameraman.target_center_x = original_width / 2
+                    # Reset cameraman/tracker so they don't drift while inactive
+                    cameraman.current_center_x = original_width / 2
+                    cameraman.target_center_x = original_width / 2
 
-                # Record face tracks even in GENERAL scenes (multi-person scenes
-                # land here — the editor needs these tracks to offer split/three/four).
-                # Recorder only; never feeds speaker_tracker, so baked output is untouched.
-                if face_recorder is not None and (frame_number % DETECT_EVERY == 0 or is_scene_start):
-                    face_recorder.add(frame_number, detect_face_candidates(frame))
+                    # Record face tracks even in GENERAL scenes (multi-person scenes
+                    # land here — the editor needs these tracks to offer split/three/four).
+                    # Recorder only; never feeds speaker_tracker, so baked output is untouched.
+                    if face_recorder is not None and (frame_number % DETECT_EVERY == 0 or is_scene_start):
+                        face_recorder.add(frame_number, detect_face_candidates(frame))
 
-            elif current_strategy == 'SPLIT':
-                # Stable two-person scene -> stacked panels, one per face.
-                # Always detect on scene-start so force_snap targets the new
-                # scene's faces, not stale positions from the previous scene.
-                if frame_number % DETECT_EVERY == 0 or is_scene_start:
-                    candidates = detect_face_candidates(frame)
-                    rec_ids = face_recorder.add(frame_number, candidates) if face_recorder is not None else []
-                    # Two most prominent faces, ordered left -> right
-                    top2 = sorted(candidates, key=lambda c: -c['score'])[:2]
-                    ordered = sorted(top2, key=lambda c: c['box'][0])
-                    split_cameraman.update(ordered, force_snap=is_scene_start)
-                    # Record which recorder track each panel follows
-                    if face_recorder is not None:
-                        for panel_idx, face in enumerate(ordered):
-                            for ci, cand in enumerate(candidates):
-                                if cand['box'] == face['box']:
-                                    votes = split_votes.setdefault(current_scene_index, {})
-                                    key = (panel_idx, rec_ids[ci])
-                                    votes[key] = votes.get(key, 0) + 1
-                                    break
-
-                output_frame = compose_split_frame(frame, split_cameraman.get_crops(), OUTPUT_WIDTH, OUTPUT_HEIGHT)
-
-            else:
-                # "Single Speaker" -> Track & Crop
-
-                # Detect every DETECT_EVERY frames for performance (env-tunable),
-                # plus on scene-start so the snap lands on the new speaker.
-                if frame_number % DETECT_EVERY == 0 or is_scene_start:
-                    candidates = detect_face_candidates(frame)
-                    rec_ids = face_recorder.add(frame_number, candidates) if face_recorder is not None else []
-                    target_box = speaker_tracker.get_target(candidates, frame_number, original_width)
-                    if target_box:
-                        cameraman.update_target(target_box)
-                        # Vote: which recorder track is the active speaker in this scene?
-                        # get_target always returns a box from `candidates`, so identity-match it.
+                elif current_strategy == 'SPLIT':
+                    # Stable two-person scene -> stacked panels, one per face.
+                    # Always detect on scene-start so force_snap targets the new
+                    # scene's faces, not stale positions from the previous scene.
+                    if frame_number % DETECT_EVERY == 0 or is_scene_start:
+                        candidates = detect_face_candidates(frame)
+                        rec_ids = face_recorder.add(frame_number, candidates) if face_recorder is not None else []
+                        # Two most prominent faces, ordered left -> right
+                        top2 = sorted(candidates, key=lambda c: -c['score'])[:2]
+                        ordered = sorted(top2, key=lambda c: c['box'][0])
+                        split_cameraman.update(ordered, force_snap=is_scene_start)
+                        # Record which recorder track each panel follows
                         if face_recorder is not None:
-                            for ci, cand in enumerate(candidates):
-                                if cand['box'] == target_box:
-                                    votes = segment_votes.setdefault(current_scene_index, {})
-                                    votes[rec_ids[ci]] = votes.get(rec_ids[ci], 0) + 1
-                                    break
-                    else:
-                        person_box = detect_person_yolo(frame)
-                        if person_box:
-                            cameraman.update_target(person_box)
+                            for panel_idx, face in enumerate(ordered):
+                                for ci, cand in enumerate(candidates):
+                                    if cand['box'] == face['box']:
+                                        votes = split_votes.setdefault(current_scene_index, {})
+                                        key = (panel_idx, rec_ids[ci])
+                                        votes[key] = votes.get(key, 0) + 1
+                                        break
 
-                x1, y1, x2, y2 = cameraman.get_crop_box(force_snap=is_scene_start)
+                    output_frame = compose_split_frame(frame, split_cameraman.get_crops(), OUTPUT_WIDTH, OUTPUT_HEIGHT)
 
-                # Record the smoothed crop window as a keyframe (every 3rd frame)
-                if face_recorder is not None and (frame_number % 3 == 0 or is_scene_start):
-                    segment_keyframes.setdefault(current_scene_index, []).append({
-                        'frame': frame_number,
-                        'x': round(x1 / original_width, 4),
-                        'y': round(y1 / original_height, 4),
-                        'w': round((x2 - x1) / original_width, 4),
-                        'h': round((y2 - y1) / original_height, 4),
-                    })
-                
-                # Crop
-                if y2 > y1 and x2 > x1:
-                    cropped = frame[y1:y2, x1:x2]
-                    output_frame = cv2.resize(cropped, (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LINEAR)
                 else:
-                    output_frame = cv2.resize(frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LINEAR)
+                    # "Single Speaker" -> Track & Crop
 
-            # Guard against any wrong-sized/typed frame desyncing the raw stream.
-            if output_frame.shape[0] != OUTPUT_HEIGHT or output_frame.shape[1] != OUTPUT_WIDTH:
-                output_frame = cv2.resize(output_frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LINEAR)
-            if output_frame.dtype != np.uint8:
-                output_frame = output_frame.astype(np.uint8)
+                    # Detect every DETECT_EVERY frames for performance (env-tunable),
+                    # plus on scene-start so the snap lands on the new speaker.
+                    if frame_number % DETECT_EVERY == 0 or is_scene_start:
+                        candidates = detect_face_candidates(frame)
+                        rec_ids = face_recorder.add(frame_number, candidates) if face_recorder is not None else []
+                        target_box = speaker_tracker.get_target(candidates, frame_number, original_width)
+                        if target_box:
+                            cameraman.update_target(target_box)
+                            # Vote: which recorder track is the active speaker in this scene?
+                            # get_target always returns a box from `candidates`, so identity-match it.
+                            if face_recorder is not None:
+                                for ci, cand in enumerate(candidates):
+                                    if cand['box'] == target_box:
+                                        votes = segment_votes.setdefault(current_scene_index, {})
+                                        votes[rec_ids[ci]] = votes.get(rec_ids[ci], 0) + 1
+                                        break
+                        else:
+                            person_box = detect_person_yolo(frame)
+                            if person_box:
+                                cameraman.update_target(person_box)
 
-            # If FFmpeg already died, stop and surface ITS error below instead of
-            # letting an opaque BrokenPipeError bubble up with no context.
-            try:
-                ffmpeg_process.stdin.write(np.ascontiguousarray(output_frame).tobytes())
-            except BrokenPipeError:
-                pipe_broke = True
-                break
+                    x1, y1, x2, y2 = cameraman.get_crop_box(force_snap=is_scene_start)
 
-            frame_number += 1
-            pbar.update(1)
+                    # Record the smoothed crop window as a keyframe (every 3rd frame)
+                    if face_recorder is not None and (frame_number % 3 == 0 or is_scene_start):
+                        segment_keyframes.setdefault(current_scene_index, []).append({
+                            'frame': frame_number,
+                            'x': round(x1 / original_width, 4),
+                            'y': round(y1 / original_height, 4),
+                            'w': round((x2 - x1) / original_width, 4),
+                            'h': round((y2 - y1) / original_height, 4),
+                        })
+                
+                    # Crop
+                    if y2 > y1 and x2 > x1:
+                        cropped = frame[y1:y2, x1:x2]
+                        output_frame = cv2.resize(cropped, (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LINEAR)
+                    else:
+                        output_frame = cv2.resize(frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LINEAR)
 
-    try:
-        ffmpeg_process.stdin.close()
-    except BrokenPipeError:
-        pass
-    stderr_output = ffmpeg_process.stderr.read().decode(errors="replace")
-    ffmpeg_process.wait()
-    cap.release()
+                # Guard against any wrong-sized/typed frame desyncing the raw stream.
+                if output_frame.shape[0] != OUTPUT_HEIGHT or output_frame.shape[1] != OUTPUT_WIDTH:
+                    output_frame = cv2.resize(output_frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT), interpolation=cv2.INTER_LINEAR)
+                if output_frame.dtype != np.uint8:
+                    output_frame = output_frame.astype(np.uint8)
 
-    if pipe_broke or ffmpeg_process.returncode != 0:
-        print(f"\n   ❌ FFmpeg frame processing failed (exit code {ffmpeg_process.returncode}).")
-        print("   FFmpeg stderr:\n" + (stderr_output.strip() or "(empty)"))
-        # Raise with the real cause so it lands in the job log, instead of a bare
-        # BrokenPipeError that hides why FFmpeg exited.
-        raise RuntimeError(
-            "FFmpeg encoder exited early during frame processing. "
-            "Cause (FFmpeg stderr):\n" + (stderr_output.strip()[-2000:] or "(no stderr captured)")
-        )
+                # If FFmpeg already died, stop and surface ITS error below instead of
+                # letting an opaque BrokenPipeError bubble up with no context.
+                try:
+                    ffmpeg_process.stdin.write(np.ascontiguousarray(output_frame).tobytes())
+                except BrokenPipeError:
+                    pipe_broke = True
+                    break
+
+                frame_number += 1
+                pbar.update(1)
+
+        try:
+            ffmpeg_process.stdin.close()
+        except BrokenPipeError:
+            pass
+        stderr_output = ffmpeg_process.stderr.read().decode(errors="replace")
+        ffmpeg_process.wait()
+        cap.release()
+
+        if pipe_broke or ffmpeg_process.returncode != 0:
+            print(f"\n   ❌ FFmpeg frame processing failed (exit code {ffmpeg_process.returncode}).")
+            print("   FFmpeg stderr:\n" + (stderr_output.strip() or "(empty)"))
+            # Raise with the real cause so it lands in the job log, instead of a bare
+            # BrokenPipeError that hides why FFmpeg exited.
+            raise RuntimeError(
+                "FFmpeg encoder exited early during frame processing. "
+                "Cause (FFmpeg stderr):\n" + (stderr_output.strip()[-2000:] or "(no stderr captured)")
+            )
 
     print("\n   🔊 Step 5: Extracting audio...")
     if window_active:
