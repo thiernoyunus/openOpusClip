@@ -1123,11 +1123,23 @@ def plan_static_reframe(input_video, scene_boundaries, scene_strategies,
 
     cap = cv2.VideoCapture(input_video)
     try:
+        # Sequential grab() to each sample instead of CAP_PROP_POS_FRAMES
+        # seeks — property seeking is not frame-accurate (see the bake loop's
+        # skip note) and re-decodes from the nearest keyframe on every seek.
+        # grab() decodes but skips read()'s retrieve/convert cost for the
+        # frames we don't sample.
+        current_f = 0
         for f in range(win_start, win_end, step):
-            cap.set(cv2.CAP_PROP_POS_FRAMES, f)
+            while current_f < f:
+                if not cap.grab():
+                    break
+                current_f += 1
+            if current_f != f:
+                break  # ran out of frames while skipping
             ret, frame = cap.read()
             if not ret:
-                continue
+                break
+            current_f += 1
             candidates = detect_face_candidates(frame)
             rec_ids = recorder.add(f, candidates)
             scene_idx = 0
@@ -1159,18 +1171,25 @@ def plan_static_reframe(input_video, scene_boundaries, scene_strategies,
     x1 = max(0, int(center_x - half))
     x2 = min(original_width, int(center_x + half))
 
+    # Vertical crop centered. crop_height == original_height for the usual
+    # tall-output case; when the output aspect is WIDER than the input,
+    # crop_height was scaled down above, and hardcoding full height here would
+    # give the crop the wrong aspect and let FFmpeg's scale stretch the image.
+    y1 = (original_height - crop_height) // 2
+    y2 = y1 + crop_height
+
     # One static keyframe per scene (normalized), matching the tracking loop's
     # 'fill' segment schema so the editor can re-frame non-destructively.
     norm_kf = {
         'x': round(x1 / original_width, 4),
-        'y': 0.0,
+        'y': round(y1 / original_height, 4),
         'w': round((x2 - x1) / original_width, 4),
-        'h': 1.0,
+        'h': round((y2 - y1) / original_height, 4),
     }
     segment_keyframes = {i: [{'frame': s, **norm_kf}]
                          for i, (s, e) in enumerate(scene_boundaries)}
 
-    return (x1, 0, x2, original_height), recorder, segment_votes, segment_keyframes
+    return (x1, y1, x2, y2), recorder, segment_votes, segment_keyframes
 
 
 def render_static_crop(input_video, temp_video_output, crop_box, fps,
