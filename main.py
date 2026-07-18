@@ -1094,6 +1094,8 @@ def plan_static_reframe(input_video, scene_boundaries, scene_strategies,
     if not STATIC_FASTPATH:
         return None
     if not scene_strategies or any(s != 'TRACK' for s in scene_strategies):
+        print("   ⏭️ Static fast path skipped: mixed scene layouts "
+              "(group/split scenes need the per-frame compositor).")
         return None
     if not scene_boundaries:
         return None
@@ -1105,6 +1107,17 @@ def plan_static_reframe(input_video, scene_boundaries, scene_strategies,
     if crop_width > original_width:
         crop_width = original_width
         crop_height = int(crop_width / aspect)
+    # Only fire the fast path when the crop keeps full source height. The
+    # tracking cameraman never crops vertically (get_crop_box always spans
+    # 0..height), so a full-height fixed crop is provably identical to it. When
+    # the output is WIDER than the source, crop_height shrinks and we'd have to
+    # pick a vertical band — the eligibility check only tracks X, so a face high
+    # or low in the frame could be cropped out. Rare case; let the tracking loop
+    # handle it faithfully instead of guessing.
+    if crop_height < original_height:
+        print("   ⏭️ Static fast path skipped: output aspect wider than source "
+              "(needs vertical framing the tracking loop handles).")
+        return None
     # The real cameraman only pans when the target leaves this band, so if every
     # sampled speaker center stays inside it the fixed crop is identical output.
     safe_zone_radius = crop_width * 0.25
@@ -1173,8 +1186,14 @@ def plan_static_reframe(input_video, scene_boundaries, scene_strategies,
     # with their face turned away — the tracking loop covers that with a YOLO
     # person fallback the pre-pass doesn't have, so bail to it instead.
     if sampled == 0 or len(centers) < sampled * 2 / 3:
+        print(f"   ⏭️ Static fast path skipped: speaker's face not consistently "
+              f"detected ({len(centers)}/{sampled} samples) — tracking loop's "
+              "body fallback handles this.")
         return None
     if (max(centers) - min(centers)) > safe_zone_radius:
+        print(f"   ⏭️ Static fast path skipped: speaker moves across the frame "
+              f"(spread {int(max(centers) - min(centers))}px > "
+              f"{int(safe_zone_radius)}px safe zone) → per-frame tracking.")
         return None
 
     centers.sort()
@@ -1184,12 +1203,10 @@ def plan_static_reframe(input_video, scene_boundaries, scene_strategies,
     x1 = max(0, int(center_x - half))
     x2 = min(original_width, int(center_x + half))
 
-    # Vertical crop centered. crop_height == original_height for the usual
-    # tall-output case; when the output aspect is WIDER than the input,
-    # crop_height was scaled down above, and hardcoding full height here would
-    # give the crop the wrong aspect and let FFmpeg's scale stretch the image.
-    y1 = (original_height - crop_height) // 2
-    y2 = y1 + crop_height
+    # Full source height — the guard above guarantees crop_height ==
+    # original_height, matching the tracking cameraman, which never crops
+    # vertically (get_crop_box always spans 0..height).
+    y1, y2 = 0, original_height
 
     # One static keyframe per scene (normalized), matching the tracking loop's
     # 'fill' segment schema so the editor can re-frame non-destructively.
