@@ -2133,6 +2133,8 @@ async def apply_render(req: ApplyRenderRequest):
     Also stamps rendered_edited_at from the framing's editedAt so clients can
     skip re-rendering when the burn already matches the latest edit.
     """
+    if not _safe_job_id(req.job_id):
+        raise HTTPException(status_code=400, detail="Invalid job id")
     filename = os.path.basename(req.filename)
     output_dir = os.path.join(OUTPUT_DIR, req.job_id)
     rendered_path = os.path.join(output_dir, filename)
