@@ -118,8 +118,10 @@ rm -rf "${STAGE}/render-service/node_modules"
 [[ -d "${STAGE}/render-service/node_modules/@remotion/compositor-darwin-arm64" ]] || die "stage missing @remotion/compositor-darwin-arm64"
 [[ -d "${STAGE}/render-service/node_modules/express" ]] || die "stage missing express"
 [[ ! -d "${STAGE}/render-service/node_modules/@remotion/bundler" ]] || die "stage UNEXPECTEDLY contains @remotion/bundler"
-if ls -d "${STAGE}/render-service/node_modules/@rspack"* >/dev/null 2>&1; then
-  die "stage UNEXPECTEDLY contains @rspack* (the bundler's native addon)"
+# Content check, not existence: npm 10 pre-creates EMPTY scope dirs for
+# dev-omitted packages (e.g. @rspack/), which is harmless.
+if [[ -n "$(find "${STAGE}/render-service/node_modules" -maxdepth 3 -path '*/@rspack/*' -type f -print -quit 2>/dev/null)" ]]; then
+  die "stage UNEXPECTEDLY contains @rspack files (the bundler's native addon)"
 fi
 info "prod node_modules OK: renderer + compositor + express, no bundler/rspack"
 
