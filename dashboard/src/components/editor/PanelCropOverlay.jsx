@@ -30,6 +30,7 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
     // pending rect from here instead of stale props.
     const ctxRef = useRef(null);
     const pendingRef = useRef(null);
+    const pendingTimer = useRef(null);
 
     useEffect(() => {
         const p = playerRef.current;
@@ -105,7 +106,12 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
                     : autoPanelCrop(ctx.framing, ctx.clip, idx, ctx.srcFrame));
             // deltaY > 0 (scroll down) widens the crop = zoom out; up = zoom in.
             const next = scaleCrop(base, Math.exp(e.deltaY * 0.001));
+            // Only bridge the async-dispatch gap within one scroll gesture: drop
+            // the pending crop once scrolling stops, so a later manual edit to
+            // this tile isn't overridden by a stale zoom.
             pendingRef.current = { key, crop: next };
+            clearTimeout(pendingTimer.current);
+            pendingTimer.current = setTimeout(() => { pendingRef.current = null; }, 200);
             ctx.dispatch(
                 ctx.wholeFrame
                     ? { type: 'SET_MANUAL_CROP', clipId: ctx.clip.id, crop: next }
@@ -113,7 +119,10 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
             );
         };
         el.addEventListener('wheel', onWheel, { passive: false });
-        return () => el.removeEventListener('wheel', onWheel);
+        return () => {
+            el.removeEventListener('wheel', onWheel);
+            clearTimeout(pendingTimer.current);
+        };
     }, [active]);
 
     if (!active) return null;
