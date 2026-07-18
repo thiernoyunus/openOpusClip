@@ -536,38 +536,21 @@ export const ReframedVideo: React.FC<{
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
-      {ranges.map((range) => {
-        // Whole-clip preview zoom: scale the composed video (all layouts alike)
-        // about the frame center. Captions/overlays render above this
-        // composition, so they stay full-size — only the video scales.
-        const canvasScale = range.clip.canvasScale ?? 1;
-        const content = (
+      {ranges.map((range) => (
+        <Sequence
+          key={`${range.startFrame}-${range.outStart}`}
+          from={range.outStart}
+          durationInFrames={range.outDuration}
+          premountFor={30}
+        >
           <RangeContent
             src={src}
             framing={framing}
             range={range}
             originalVolume={originalVolume}
           />
-        );
-        return (
-          <Sequence
-            key={`${range.startFrame}-${range.outStart}`}
-            from={range.outStart}
-            durationInFrames={range.outDuration}
-            premountFor={30}
-          >
-            {Math.abs(canvasScale - 1) > 0.001 ? (
-              <AbsoluteFill style={{ backgroundColor: "#000" }}>
-                <AbsoluteFill style={{ transform: `scale(${canvasScale})` }}>
-                  {content}
-                </AbsoluteFill>
-              </AbsoluteFill>
-            ) : (
-              content
-            )}
-          </Sequence>
-        );
-      })}
+        </Sequence>
+      ))}
     </AbsoluteFill>
   );
 };

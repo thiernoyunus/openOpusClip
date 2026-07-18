@@ -1,4 +1,4 @@
-import React, { forwardRef, useMemo, useRef, useState, useLayoutEffect } from 'react';
+import React, { forwardRef, useMemo, useRef, useState, useEffect, useLayoutEffect } from 'react';
 import { Player } from '@remotion/player';
 import { ShortVideo } from '@remotion-src/compositions/ShortVideo';
 import TrackerOverlay from './TrackerOverlay';
@@ -47,6 +47,32 @@ const EditorCanvas = forwardRef(function EditorCanvas(
 
     const wrapRef = useRef(null);
     const [avail, setAvail] = useState(null);
+    // Editor-only view zoom: Cmd/Ctrl+scroll over the preview scales the whole
+    // preview box bigger/smaller in the pane (like zooming an artboard). Purely
+    // visual — it never touches the framing or the export, so it lives in local
+    // state, not the framing config.
+    const [viewZoom, setViewZoom] = useState(1);
+    useEffect(() => {
+        // Window + capture phase: the Remotion Player swallows wheel events in
+        // its own subtree, so an element listener never sees them. Gate to the
+        // pane bounds so plain scrolling and the timeline's own Cmd+scroll zoom
+        // are untouched. Non-passive so preventDefault stops the browser zoom.
+        const onWheel = (e) => {
+            if (!e.ctrlKey && !e.metaKey) return;
+            const el = wrapRef.current;
+            if (!el) return;
+            const r = el.getBoundingClientRect();
+            if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+            e.preventDefault();
+            setViewZoom((z) => {
+                let next = Math.min(4, Math.max(0.25, z * Math.exp(-e.deltaY * 0.0015)));
+                if (Math.abs(next - 1) < 0.03) next = 1; // easy detent at 100%
+                return next;
+            });
+        };
+        window.addEventListener('wheel', onWheel, { capture: true, passive: false });
+        return () => window.removeEventListener('wheel', onWheel, { capture: true });
+    }, []);
     useLayoutEffect(() => {
         const el = wrapRef.current;
         if (!el) return;
@@ -93,7 +119,7 @@ const EditorCanvas = forwardRef(function EditorCanvas(
         <div ref={wrapRef} className="w-full h-full flex items-center justify-center">
             <div
                 className="relative max-w-full max-h-full rounded-xl overflow-hidden border border-edge bg-black shadow-2xl"
-                style={boxStyle}
+                style={{ ...boxStyle, transform: viewZoom !== 1 ? `scale(${viewZoom})` : undefined }}
             >
                 <Player
                     // Remount when the canvas size changes so the composition

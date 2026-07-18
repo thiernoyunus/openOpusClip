@@ -76,7 +76,6 @@ export const framingToClips = (framing: FramingConfig): TimelineClip[] => {
         cameraKeyframes: s.cameraKeyframes,
         manualCrop: s.manualCrop,
         panelCrops: s.panelCrops,
-        canvasScale: s.canvasScale,
         captionPlacement: s.captionPlacement,
       });
     }
@@ -94,7 +93,6 @@ export const framingToClips = (framing: FramingConfig): TimelineClip[] => {
       cameraKeyframes: s?.cameraKeyframes ?? [],
       manualCrop: s?.manualCrop ?? null,
       panelCrops: s?.panelCrops ?? null,
-      canvasScale: s?.canvasScale ?? null,
       captionPlacement: s?.captionPlacement,
     });
   }

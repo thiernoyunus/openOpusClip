@@ -24,13 +24,6 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
     const [sel, setSel] = useState(null);
     const [modalOpen, setModalOpen] = useState(false);
     const containerRef = useRef(null);
-    // Latest context for the wheel listener (attached once), and the scroll
-    // gesture in progress — dispatch is async, so consecutive wheel ticks read
-    // the accumulated scale from here instead of stale props. The gesture also
-    // keeps the pre-gesture framing so committing it makes ONE undo step.
-    const ctxRef = useRef(null);
-    const gestureRef = useRef(null); // { clipId, scale, original }
-    const gestureTimer = useRef(null);
 
     useEffect(() => {
         const p = playerRef.current;
@@ -72,70 +65,12 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
         };
     }, [selected, modalOpen]);
 
-    // Keep the wheel listener's context fresh without re-attaching every frame.
-    useEffect(() => {
-        ctxRef.current = active ? { clip, wholeFrame, panels, srcFrame, framing, dispatch } : null;
-    });
-
-    // Cmd/Ctrl + scroll anywhere over the preview zooms the WHOLE clip's video
-    // in/out of the output frame (Opus parity): scroll up punches in, scroll
-    // down shrinks the composed video with black around it. One field per clip
-    // (canvasScale), all layouts alike — this is not the per-tile crop (that
-    // lives in the Crop popup). Attached to window in the CAPTURE phase, once:
-    // the Remotion Player swallows wheel events aimed at its own subtree, so an
-    // element-scoped listener never fires. Non-passive so preventDefault can
-    // stop the browser/page zoom. Ticks dispatch transient updates; 250ms of
-    // quiet commits the gesture with the pre-gesture framing as ONE undo step.
-    useEffect(() => {
-        const onWheel = (e) => {
-            if (!e.ctrlKey && !e.metaKey) return; // plain scroll passes through
-            const ctx = ctxRef.current;
-            const el = containerRef.current;
-            if (!ctx || !el) return;
-            const rect = el.getBoundingClientRect();
-            const px = (e.clientX - rect.left) / rect.width;
-            const py = (e.clientY - rect.top) / rect.height;
-            if (px < 0 || px > 1 || py < 0 || py > 1) return; // cursor outside the preview
-            e.preventDefault();
-            const gesture =
-                gestureRef.current?.clipId === ctx.clip.id ? gestureRef.current : null;
-            const cur = gesture ? gesture.scale : (ctx.clip.canvasScale ?? 1);
-            // deltaY < 0 (scroll up) = bigger; snap to exactly 1 near full size.
-            let next = Math.min(2, Math.max(0.3, cur * Math.exp(-e.deltaY * 0.001)));
-            if (Math.abs(next - 1) < 0.02) next = 1;
-            gestureRef.current = {
-                clipId: ctx.clip.id,
-                scale: next,
-                original: gesture ? gesture.original : ctx.framing,
-            };
-            clearTimeout(gestureTimer.current);
-            gestureTimer.current = setTimeout(() => {
-                const g = gestureRef.current;
-                gestureRef.current = null;
-                if (g) ctx.dispatch({ type: 'SET_CANVAS_SCALE', clipId: g.clipId, scale: g.scale, original: g.original });
-            }, 250);
-            ctx.dispatch({ type: 'SET_CANVAS_SCALE', clipId: ctx.clip.id, scale: next, transient: true });
-        };
-        window.addEventListener('wheel', onWheel, { capture: true, passive: false });
-        return () => {
-            window.removeEventListener('wheel', onWheel, { capture: true });
-            clearTimeout(gestureTimer.current);
-        };
-    }, []);
-
     if (!active) return null;
-
-    // The composed video may be scaled about the frame center (canvasScale);
-    // map canvas coords into video space for hit-testing, and video-space tile
-    // rects back to canvas for the outline.
-    const cScale = clip.canvasScale ?? 1;
-    const toVideo = (v) => (v - 0.5) / cScale + 0.5;
-    const toCanvas = (v) => 0.5 + (v - 0.5) * cScale;
 
     const handleClick = (e) => {
         const rect = e.currentTarget.getBoundingClientRect();
-        const x = toVideo((e.clientX - rect.left) / rect.width);
-        const y = toVideo((e.clientY - rect.top) / rect.height);
+        const x = (e.clientX - rect.left) / rect.width;
+        const y = (e.clientY - rect.top) / rect.height;
         const idx = panels.findIndex(
             (p) => x >= p.left && x <= p.left + p.width && y >= p.top && y <= p.top + p.height
         );
@@ -168,10 +103,10 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
                     <div
                         className="absolute border-2 border-viral rounded-sm pointer-events-none"
                         style={{
-                            left: `${toCanvas(selPanel.left) * 100}%`,
-                            top: `${toCanvas(selPanel.top) * 100}%`,
-                            width: `${selPanel.width * cScale * 100}%`,
-                            height: `${selPanel.height * cScale * 100}%`,
+                            left: `${selPanel.left * 100}%`,
+                            top: `${selPanel.top * 100}%`,
+                            width: `${selPanel.width * 100}%`,
+                            height: `${selPanel.height * 100}%`,
                         }}
                     >
                         <button
