@@ -4,7 +4,6 @@ import { EDITOR_FPS } from './EditorCanvas';
 import { outputToSource, clipAtOutputFrame } from '@remotion-src/lib/edl';
 import { panelsForLayout } from '@remotion-src/compositions/ReframedVideo';
 import { autoPanelCrop, wholeFrameCrop } from './trackerMapping';
-import { scaleCrop } from './cropZoom';
 import ManualCropModal from './ManualCropModal';
 
 const FULL_FRAME = { left: 0, top: 0, width: 1, height: 1 };
@@ -25,12 +24,13 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
     const [sel, setSel] = useState(null);
     const [modalOpen, setModalOpen] = useState(false);
     const containerRef = useRef(null);
-    // Latest context for the wheel listener (attached once), and the crop it's
-    // mid-zoom on — dispatch is async, so consecutive wheel ticks read the
-    // pending rect from here instead of stale props.
+    // Latest context for the wheel listener (attached once), and the scroll
+    // gesture in progress — dispatch is async, so consecutive wheel ticks read
+    // the accumulated scale from here instead of stale props. The gesture also
+    // keeps the pre-gesture framing so committing it makes ONE undo step.
     const ctxRef = useRef(null);
-    const pendingRef = useRef(null);
-    const pendingTimer = useRef(null);
+    const gestureRef = useRef(null); // { clipId, scale, original }
+    const gestureTimer = useRef(null);
 
     useEffect(() => {
         const p = playerRef.current;
@@ -77,13 +77,15 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
         ctxRef.current = active ? { clip, wholeFrame, panels, srcFrame, framing, dispatch } : null;
     });
 
-    // Cmd/Ctrl + scroll over the preview zooms the hovered tile's video in/out
-    // (Opus parity). Attached to window in the CAPTURE phase, once, for the whole
-    // life of the component: the Remotion Player swallows wheel events aimed at
-    // its own subtree, so an element-scoped listener on our overlay never sees
-    // them. Capturing at the window beats the Player to the event; we then gate
-    // by the preview bounds + `active` (via ctxRef) so it only fires over a live
-    // tile. Non-passive so preventDefault can stop the browser/page zoom.
+    // Cmd/Ctrl + scroll anywhere over the preview zooms the WHOLE clip's video
+    // in/out of the output frame (Opus parity): scroll up punches in, scroll
+    // down shrinks the composed video with black around it. One field per clip
+    // (canvasScale), all layouts alike — this is not the per-tile crop (that
+    // lives in the Crop popup). Attached to window in the CAPTURE phase, once:
+    // the Remotion Player swallows wheel events aimed at its own subtree, so an
+    // element-scoped listener never fires. Non-passive so preventDefault can
+    // stop the browser/page zoom. Ticks dispatch transient updates; 250ms of
+    // quiet commits the gesture with the pre-gesture framing as ONE undo step.
     useEffect(() => {
         const onWheel = (e) => {
             if (!e.ctrlKey && !e.metaKey) return; // plain scroll passes through
@@ -94,46 +96,46 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
             const px = (e.clientX - rect.left) / rect.width;
             const py = (e.clientY - rect.top) / rect.height;
             if (px < 0 || px > 1 || py < 0 || py > 1) return; // cursor outside the preview
-            const idx = ctx.panels.findIndex(
-                (p) => px >= p.left && px <= p.left + p.width && py >= p.top && py <= p.top + p.height
-            );
-            if (idx < 0) return;
             e.preventDefault();
-            const key = `${ctx.clip.id}:${idx}`;
-            const stored = ctx.wholeFrame ? ctx.clip.manualCrop : ctx.clip.panelCrops?.[idx];
-            const base =
-                (pendingRef.current?.key === key ? pendingRef.current.crop : null) ||
-                stored ||
-                (ctx.wholeFrame
-                    ? wholeFrameCrop(ctx.framing, ctx.clip, ctx.srcFrame)
-                    : autoPanelCrop(ctx.framing, ctx.clip, idx, ctx.srcFrame));
-            // deltaY > 0 (scroll down) widens the crop = zoom out; up = zoom in.
-            const next = scaleCrop(base, Math.exp(e.deltaY * 0.001));
-            // Only bridge the async-dispatch gap within one scroll gesture: drop
-            // the pending crop once scrolling stops, so a later manual edit to
-            // this tile isn't overridden by a stale zoom.
-            pendingRef.current = { key, crop: next };
-            clearTimeout(pendingTimer.current);
-            pendingTimer.current = setTimeout(() => { pendingRef.current = null; }, 200);
-            ctx.dispatch(
-                ctx.wholeFrame
-                    ? { type: 'SET_MANUAL_CROP', clipId: ctx.clip.id, crop: next }
-                    : { type: 'SET_PANEL_CROP', clipId: ctx.clip.id, panelIndex: idx, crop: next }
-            );
+            const gesture =
+                gestureRef.current?.clipId === ctx.clip.id ? gestureRef.current : null;
+            const cur = gesture ? gesture.scale : (ctx.clip.canvasScale ?? 1);
+            // deltaY < 0 (scroll up) = bigger; snap to exactly 1 near full size.
+            let next = Math.min(2, Math.max(0.3, cur * Math.exp(-e.deltaY * 0.001)));
+            if (Math.abs(next - 1) < 0.02) next = 1;
+            gestureRef.current = {
+                clipId: ctx.clip.id,
+                scale: next,
+                original: gesture ? gesture.original : ctx.framing,
+            };
+            clearTimeout(gestureTimer.current);
+            gestureTimer.current = setTimeout(() => {
+                const g = gestureRef.current;
+                gestureRef.current = null;
+                if (g) ctx.dispatch({ type: 'SET_CANVAS_SCALE', clipId: g.clipId, scale: g.scale, original: g.original });
+            }, 250);
+            ctx.dispatch({ type: 'SET_CANVAS_SCALE', clipId: ctx.clip.id, scale: next, transient: true });
         };
         window.addEventListener('wheel', onWheel, { capture: true, passive: false });
         return () => {
             window.removeEventListener('wheel', onWheel, { capture: true });
-            clearTimeout(pendingTimer.current);
+            clearTimeout(gestureTimer.current);
         };
     }, []);
 
     if (!active) return null;
 
+    // The composed video may be scaled about the frame center (canvasScale);
+    // map canvas coords into video space for hit-testing, and video-space tile
+    // rects back to canvas for the outline.
+    const cScale = clip.canvasScale ?? 1;
+    const toVideo = (v) => (v - 0.5) / cScale + 0.5;
+    const toCanvas = (v) => 0.5 + (v - 0.5) * cScale;
+
     const handleClick = (e) => {
         const rect = e.currentTarget.getBoundingClientRect();
-        const x = (e.clientX - rect.left) / rect.width;
-        const y = (e.clientY - rect.top) / rect.height;
+        const x = toVideo((e.clientX - rect.left) / rect.width);
+        const y = toVideo((e.clientY - rect.top) / rect.height);
         const idx = panels.findIndex(
             (p) => x >= p.left && x <= p.left + p.width && y >= p.top && y <= p.top + p.height
         );
@@ -166,10 +168,10 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
                     <div
                         className="absolute border-2 border-viral rounded-sm pointer-events-none"
                         style={{
-                            left: `${selPanel.left * 100}%`,
-                            top: `${selPanel.top * 100}%`,
-                            width: `${selPanel.width * 100}%`,
-                            height: `${selPanel.height * 100}%`,
+                            left: `${toCanvas(selPanel.left) * 100}%`,
+                            top: `${toCanvas(selPanel.top) * 100}%`,
+                            width: `${selPanel.width * cScale * 100}%`,
+                            height: `${selPanel.height * cScale * 100}%`,
                         }}
                     >
                         <button
