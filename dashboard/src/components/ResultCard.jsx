@@ -457,7 +457,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
         const cacheKey = isEdited
             ? `edit:${framingVersion}:${framingFull.editedAt}`
-            : `captions:${framingVersion}:${JSON.stringify(previewSubtitles?.style || previewSubtitles?.position || '')}:${captions.length}`;
+            : `captions:${framingVersion}:${JSON.stringify({ style: previewSubtitles?.style, position: previewSubtitles?.position })}:${captions.length}`;
         if (renderCacheRef.current?.key === cacheKey) {
             return renderCacheRef.current;
         }
@@ -495,7 +495,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                 };
             }
 
-            const { outputUrl, filename } = await renderClipOnServer({
+            const { filename } = await renderClipOnServer({
                 jobId,
                 clipIndex: index,
                 props,
@@ -513,10 +513,12 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                 return result;
             }
 
-            // Captions-only: do NOT applyRender (keep raw clip for live overlay preview)
+            // Captions-only: do NOT applyRender (keep raw clip for live overlay preview).
+            // The render service's outputUrl is a server-local file path — the file is
+            // only served under /videos/{jobId}/, so build that URL instead.
             const result = {
                 key: cacheKey,
-                downloadUrl: getApiUrl(outputUrl),
+                downloadUrl: getApiUrl(`/videos/${jobId}/${encodeURIComponent(filename)}`),
                 filename,
                 applied: false,
             };
