@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Type, Calendar, Clock, Languages, Play, ArrowUp, ArrowDown, FileText, Crop, Flame } from 'lucide-react';
 import { getApiUrl } from '../config';
 import SubtitleModal from './SubtitleModal';
@@ -6,6 +6,8 @@ import HookModal from './HookModal';
 import TranslateModal from './TranslateModal';
 import RemotionPreview from './RemotionPreview';
 import { renderInBrowser } from '../lib/renderInBrowser';
+import { renderClipOnServer, applyRender } from '../lib/renderClip';
+import { outputDurationFrames } from '@remotion-src/lib/edl';
 import { defaultSubtitleConfig, loadDefaultCaptionStyle } from './editor/useEditorState';
 
 const fmtTime = (s) => {
@@ -40,15 +42,20 @@ const ScoreBadge = ({ score, lg, box }) => {
 
 const BREAKDOWN_LABELS = { hook: 'Hook', flow: 'Flow', value: 'Value', trend: 'Trend' };
 
-export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], geminiApiKey, elevenLabsKey, onPlay, onPause, openIndex, setOpenIndex, totalClips, onEdit, framingVersion = 0 }) {
+export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], geminiApiKey, elevenLabsKey, onPlay, onPause, openIndex, setOpenIndex, totalClips: _totalClips, onEdit, framingVersion = 0 }) {
     const isOpen = openIndex === index;
     const [showModal, setShowModal] = useState(false);
     const [showSubtitleModal, setShowSubtitleModal] = useState(false);
     const [playing, setPlaying] = useState(false);
     const [captions, setCaptions] = useState([]);
     const videoRef = React.useRef(null);
-    const originalVideoUrl = getApiUrl(clip.video_url); // Never changes — used for Remotion previews
+    const originalVideoUrl = getApiUrl(clip.video_url); // Base URL for Remotion when not EDL-edited
     const [currentVideoUrl, setCurrentVideoUrl] = useState(originalVideoUrl);
+
+    // Keep card video URL in sync when parent updates clip.video_url (e.g. editor export)
+    useEffect(() => {
+        setCurrentVideoUrl(originalVideoUrl);
+    }, [originalVideoUrl]);
 
     // Account selection: default every connected account to ON until the user unticks it
     const [accountToggles, setAccountToggles] = useState({});
@@ -69,6 +76,21 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     const [showTranslateModal, setShowTranslateModal] = useState(false);
     const [editError, setEditError] = useState(null);
 
+    // Server-side burn progress (download / social share)
+    const [isRendering, setIsRendering] = useState(false);
+    const [renderProgress, setRenderProgress] = useState(null); // 0–100 for UI
+    // Cache last burned output so a second click doesn't re-render
+    const renderCacheRef = useRef(null); // { key, downloadUrl, filename, applied }
+    // Drop cache when editor closes / framing version bumps
+    useEffect(() => {
+        renderCacheRef.current = null;
+    }, [framingVersion, index]);
+    // Local mirror of clip.rendered_edited_at after applyRender from this card
+    const [localRenderedEditedAt, setLocalRenderedEditedAt] = useState(clip.rendered_edited_at ?? null);
+    useEffect(() => {
+        setLocalRenderedEditedAt(clip.rendered_edited_at ?? null);
+    }, [clip.rendered_edited_at]);
+
     const [clipDuration, setClipDuration] = useState(clip.end != null && clip.start != null ? clip.end - clip.start : 30);
 
     // Accumulate Remotion layers across operations
@@ -77,6 +99,8 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     // Caption config saved in the editor for this clip (position/style/on-off),
     // loaded from the clip's framing. null = clip has no framing / not loaded.
     const [framingCaptions, setFramingCaptions] = useState(null);
+    // Full framing JSON (EDL) — used when the user has edited the clip in the editor
+    const [framingFull, setFramingFull] = useState(null);
 
     // Default captions in the preview (Opus-style): overlay the same caption
     // engine the editor/export use, so the user sees captions WITHOUT opening
@@ -98,6 +122,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     }, [captions, currentVideoUrl, originalVideoUrl, framingCaptions]);
 
     // Fetch clip duration from transcript endpoint
+    // framingVersion: re-fetch after editor extends/edits so captions stay current
     useEffect(() => {
         if (!jobId || index === undefined) return;
         fetch(getApiUrl(`/api/clip/${jobId}/${index}/transcript`))
@@ -107,21 +132,28 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                 if (data && data.captions) setCaptions(data.captions);
             })
             .catch(() => {});
-    }, [jobId, index]);
+    }, [jobId, index, framingVersion]);
 
     // Load the clip's saved framing so the preview mirrors editor caption edits
-    // (position/style, or captions turned off). Only the caption bits are used.
+    // (position/style, or captions turned off). Full JSON is kept for EDL preview
+    // when the user has edited in the editor (framing.editedAt).
     // framingVersion bumps when the editor closes: the card never unmounts (the
     // editor is an overlay), so without it the preview keeps the pre-edit style.
     // The ?v= also defeats the browser's heuristic cache on the static JSON.
     useEffect(() => {
-        if (!clip.framing_url) { setFramingCaptions(null); return; }
+        if (!clip.framing_url) {
+            setFramingCaptions(null);
+            setFramingFull(null);
+            return;
+        }
         let alive = true;
         setFramingCaptions(null); // drop the previous clip's config so it can't flash
+        setFramingFull(null);
         fetch(getApiUrl(clip.framing_url) + `?v=${framingVersion}`)
             .then(res => res.ok ? res.json() : null)
             .then(f => {
                 if (!alive || !f) return;
+                setFramingFull(f);
                 setFramingCaptions({
                     subtitles: f.subtitles ?? null,
                     captionsInitialized: f.captionsInitialized ?? false,
@@ -130,6 +162,11 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             .catch(() => {});
         return () => { alive = false; };
     }, [clip.framing_url, framingVersion]);
+
+    const isEdited = !!framingFull?.editedAt;
+    const effectiveDuration = isEdited
+        ? outputDurationFrames(framingFull, 30) / 30
+        : clipDuration;
 
     // Initialize/Reset form when modal opens
     useEffect(() => {
@@ -396,6 +433,105 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
         }
     };
 
+    /**
+     * Ensure the file on disk matches what the card preview shows (edits + captions).
+     * Returns { downloadUrl, filename, applied } where:
+     * - applied: true if video_url was promoted (edited burn)
+     * - filename: set when a captions-only render was produced (pass to social/post)
+     * - downloadUrl: absolute or API-relative URL to fetch for download
+     */
+    const ensureRenderedFile = useCallback(async () => {
+        const renderedEditedAt = localRenderedEditedAt ?? clip.rendered_edited_at;
+        const isFreshEdit = isEdited && renderedEditedAt && framingFull?.editedAt
+            && renderedEditedAt === framingFull.editedAt;
+
+        // Edited clip already burned for this framing revision → use current video_url
+        if (isFreshEdit) {
+            return { downloadUrl: currentVideoUrl, filename: null, applied: true };
+        }
+
+        const needsRender = isEdited || !!previewSubtitles;
+        if (!needsRender) {
+            return { downloadUrl: currentVideoUrl, filename: null, applied: false };
+        }
+
+        const cacheKey = isEdited
+            ? `edit:${framingVersion}:${framingFull.editedAt}`
+            : `captions:${framingVersion}:${JSON.stringify(previewSubtitles?.style || previewSubtitles?.position || '')}:${captions.length}`;
+        if (renderCacheRef.current?.key === cacheKey) {
+            return renderCacheRef.current;
+        }
+
+        setIsRendering(true);
+        setRenderProgress(0);
+        try {
+            let props;
+            if (isEdited) {
+                props = {
+                    videoUrl: clip.video_url || '',
+                    sourceVideoUrl: clip.source_url,
+                    framing: framingFull,
+                    durationInFrames: outputDurationFrames(framingFull, 30),
+                    fps: 30,
+                    width: framingFull.outputWidth ?? 1080,
+                    height: framingFull.outputHeight ?? 1920,
+                    subtitles: framingFull.subtitles ?? null,
+                    hook: null,
+                    effects: null,
+                };
+            } else {
+                // Default caption style on an untouched clip — burn overlay only
+                props = {
+                    videoUrl: currentVideoUrl,
+                    sourceVideoUrl: clip.source_url,
+                    framing: null,
+                    durationInFrames: Math.round(clipDuration * 30),
+                    fps: 30,
+                    width: 1080,
+                    height: 1920,
+                    subtitles: previewSubtitles,
+                    hook: null,
+                    effects: null,
+                };
+            }
+
+            const { outputUrl, filename } = await renderClipOnServer({
+                jobId,
+                clipIndex: index,
+                props,
+                // Render service reports 0–100 (same as editor Export progress)
+                onProgress: (p) => setRenderProgress(Math.round(p ?? 0)),
+            });
+
+            if (isEdited) {
+                const applied = await applyRender({ jobId, clipIndex: index, filename });
+                const newUrl = getApiUrl(applied.new_video_url);
+                setCurrentVideoUrl(newUrl);
+                setLocalRenderedEditedAt(framingFull.editedAt);
+                const result = { key: cacheKey, downloadUrl: newUrl, filename: null, applied: true };
+                renderCacheRef.current = result;
+                return result;
+            }
+
+            // Captions-only: do NOT applyRender (keep raw clip for live overlay preview)
+            const result = {
+                key: cacheKey,
+                downloadUrl: getApiUrl(outputUrl),
+                filename,
+                applied: false,
+            };
+            renderCacheRef.current = result;
+            return result;
+        } finally {
+            setIsRendering(false);
+            setRenderProgress(null);
+        }
+    }, [
+        localRenderedEditedAt, clip.rendered_edited_at, clip.video_url, clip.source_url,
+        isEdited, framingFull, framingVersion, previewSubtitles, captions.length,
+        currentVideoUrl, clipDuration, jobId, index,
+    ]);
+
     const handlePost = async () => {
         if (!zernioKey) {
             setPostResult({ success: false, msg: "Missing Zernio API Key." });
@@ -416,6 +552,9 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
         setPostResult(null);
 
         try {
+            // Burn edits/captions before upload so social matches the card preview
+            const prepared = await ensureRenderedFile();
+
             const payload = {
                 job_id: jobId,
                 clip_index: index,
@@ -424,6 +563,12 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                 title: postTitle,
                 description: postDescription
             };
+
+            // Captions-only burns are not applied to video_url — pass filename so
+            // the backend uploads the temporary render instead of the raw mp4.
+            if (prepared.filename) {
+                payload.filename = prepared.filename;
+            }
 
             if (isScheduling && scheduleDate) {
                 // Convert to ISO-8601
@@ -440,12 +585,11 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
             if (!res.ok) {
                 const errText = await res.text();
+                let detail = errText;
                 try {
-                    const jsonErr = JSON.parse(errText);
-                    throw new Error(jsonErr.detail || errText);
-                } catch (e) {
-                    throw new Error(errText);
-                }
+                    detail = JSON.parse(errText).detail || errText;
+                } catch { /* plain text */ }
+                throw new Error(detail);
             }
 
             setPostResult({ success: true, msg: isScheduling ? "Scheduled successfully!" : "Posted successfully!" });
@@ -462,8 +606,10 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     };
 
     const handleDownload = async () => {
+        setEditError(null);
         try {
-            const response = await fetch(currentVideoUrl);
+            const prepared = await ensureRenderedFile();
+            const response = await fetch(prepared.downloadUrl);
             if (!response.ok) throw new Error('Download failed');
             const blob = await response.blob();
             const url = window.URL.createObjectURL(blob);
@@ -477,7 +623,9 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             document.body.removeChild(a);
         } catch (err) {
             console.error('Download error:', err);
-            window.open(currentVideoUrl, '_blank');
+            setEditError(err.message || 'Download failed');
+            setTimeout(() => setEditError(null), 5000);
+            // Do not fall back to the raw file — user expects what they saw
         }
     };
 
@@ -489,7 +637,9 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     const hasScore = !isNaN(viralityScore);
     const breakdown = clip.score_breakdown || {};
     const transcriptText = captions.map((c) => c.text).join(' ');
-    const durSec = Math.floor(clipDuration);
+    const durSec = Math.floor(effectiveDuration);
+    const useFramingPreview = isEdited || !!previewSubtitles;
+    const renderPct = renderProgress != null ? `${renderProgress}%` : null;
 
     const ActionBtn = ({ icon: Icon, label, onClick, loading, primary }) => (
         <button
@@ -510,11 +660,13 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     className="relative aspect-[9/16] rounded-xl overflow-hidden bg-black border border-edge cursor-pointer"
                     onClick={() => { if (!playing) setOpenIndex(index); }}
                 >
-                    {playing && previewSubtitles ? (
+                    {playing && useFramingPreview ? (
                         <RemotionPreview
-                            videoUrl={originalVideoUrl}
-                            durationInSeconds={clipDuration}
-                            subtitles={previewSubtitles}
+                            videoUrl={isEdited ? currentVideoUrl : originalVideoUrl}
+                            sourceVideoUrl={isEdited ? getApiUrl(clip.source_url) : null}
+                            framing={isEdited ? framingFull : null}
+                            durationInSeconds={effectiveDuration}
+                            subtitles={isEdited ? (framingFull.subtitles ?? null) : previewSubtitles}
                             loop={false}
                             onPlay={(t) => onPlay && onPlay(clip.start + t)}
                             onPause={() => onPause && onPause()}
@@ -540,7 +692,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     {!playing && (
                         <div className="absolute inset-0 flex items-center justify-center bg-black/10 group-hover:bg-black/25 transition-colors pointer-events-none">
                             <button
-                                onClick={(e) => { e.stopPropagation(); setPlaying(true); if (!previewSubtitles) videoRef.current && videoRef.current.play(); }}
+                                onClick={(e) => { e.stopPropagation(); setPlaying(true); if (!useFramingPreview) videoRef.current && videoRef.current.play(); }}
                                 className="w-12 h-12 rounded-full bg-black/55 backdrop-blur flex items-center justify-center text-white pointer-events-auto hover:bg-black/75 active:scale-95 transition-all"
                                 aria-label="Play clip"
                             >
@@ -569,7 +721,14 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                 <div className="flex items-center gap-1 mt-2">
                     <button onClick={(e) => { e.stopPropagation(); setShowModal(true); }} title="Post / schedule" className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors"><Share2 size={15} /></button>
                     <button onClick={(e) => { e.stopPropagation(); setShowHookModal(true); }} title="Viral hook" className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors"><Wand2 size={15} /></button>
-                    <button onClick={(e) => { e.stopPropagation(); handleDownload(); }} title="Download" className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors"><Download size={15} /></button>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); handleDownload(); }}
+                        title={isRendering ? `Preparing… ${renderPct || ''}`.trim() : 'Download'}
+                        disabled={isRendering}
+                        className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors disabled:opacity-50"
+                    >
+                        {isRendering ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                    </button>
                 </div>
             </div>
 
@@ -585,11 +744,13 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     <div className="bg-surface border border-edge rounded-2xl w-full max-w-4xl max-h-[88vh] overflow-hidden flex shadow-2xl" onClick={(e) => e.stopPropagation()}>
                         {/* Preview */}
                         <div className="w-[clamp(200px,26vw,280px)] shrink-0 bg-black relative">
-                            {previewSubtitles ? (
+                            {useFramingPreview ? (
                                 <RemotionPreview
-                                    videoUrl={originalVideoUrl}
-                                    durationInSeconds={clipDuration}
-                                    subtitles={previewSubtitles}
+                                    videoUrl={isEdited ? currentVideoUrl : originalVideoUrl}
+                                    sourceVideoUrl={isEdited ? getApiUrl(clip.source_url) : null}
+                                    framing={isEdited ? framingFull : null}
+                                    durationInSeconds={effectiveDuration}
+                                    subtitles={isEdited ? (framingFull.subtitles ?? null) : previewSubtitles}
                                     className="aspect-[9/16]"
                                     loop={false}
                                 />
@@ -651,7 +812,12 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                 <ActionBtn icon={Crop} label="Edit clip" primary onClick={() => { setOpenIndex(null); onEdit(index); }} />
                             )}
                             <ActionBtn icon={Share2} label="Publish on Social" primary onClick={() => setShowModal(true)} />
-                            <ActionBtn icon={Download} label="Download HD" onClick={handleDownload} />
+                            <ActionBtn
+                                icon={Download}
+                                label={isRendering ? `Preparing… ${renderPct || ''}`.trim() : 'Download HD'}
+                                loading={isRendering}
+                                onClick={handleDownload}
+                            />
                             <div className="h-px bg-edge my-1" />
                             <ActionBtn icon={Wand2} label="Auto edit" loading={isEditing} onClick={handleAutoEdit} />
                             <ActionBtn icon={Type} label="Subtitles" loading={isSubtitling} onClick={() => setShowSubtitleModal(true)} />
@@ -773,12 +939,27 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                             </div>
                         )}
 
+                        {posting && isRendering && (
+                            <p className="mb-3 text-xs text-zinc-400 text-center">
+                                Preparing video…{renderPct ? ` ${renderPct}` : ''}
+                            </p>
+                        )}
+
                         <button
                             onClick={handlePost}
                             disabled={posting || !zernioKey}
                             className="w-full py-3 bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-white font-bold transition-all flex items-center justify-center gap-2"
                         >
-                            {posting ? <><Loader2 size={16} className="animate-spin" /> {isScheduling ? 'Scheduling...' : 'Publishing...'}</> : <><Share2 size={16} /> {isScheduling ? 'Schedule Post' : 'Publish Now'}</>}
+                            {posting ? (
+                                <>
+                                    <Loader2 size={16} className="animate-spin" />
+                                    {isRendering
+                                        ? `Preparing…${renderPct ? ` ${renderPct}` : ''}`
+                                        : (isScheduling ? 'Scheduling...' : 'Publishing...')}
+                                </>
+                            ) : (
+                                <><Share2 size={16} /> {isScheduling ? 'Schedule Post' : 'Publish Now'}</>
+                            )}
                         </button>
                     </div>
                 </div>

@@ -13,6 +13,7 @@ import TransitionsPanel from './TransitionsPanel';
 import TextPanel from './TextPanel';
 import MediaPanel from './MediaPanel';
 import ExtendClipModal from './ExtendClipModal';
+import { renderClipOnServer, applyRender } from '../../lib/renderClip';
 
 const LAYOUT_LABEL = {
     fill: 'Fill',
@@ -461,7 +462,10 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         const res = await fetch(getApiUrl(`/api/clips/${jobId}/${index}/framing`), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(state.framing),
+            // editedAt marks "user has edited this clip in the editor" so card
+            // preview/download/share can burn in the full EDL (untouched pipeline
+            // framings never get this stamp).
+            body: JSON.stringify({ ...state.framing, editedAt: new Date().toISOString() }),
         });
         if (!res.ok) {
             const text = await res.text();
@@ -493,56 +497,27 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
             if (state.dirty) await saveFraming();
 
             const durationInFrames = outputDurationFrames(state.framing, EDITOR_FPS);
-            const res = await fetch(getApiUrl('/api/render'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    jobId,
-                    clipIndex: index,
-                    props: {
-                        videoUrl: clip.video_url || '',
-                        sourceVideoUrl: clip.source_url,
-                        framing: state.framing,
-                        durationInFrames,
-                        fps: EDITOR_FPS,
-                        width: state.framing.outputWidth ?? 1080,
-                        height: state.framing.outputHeight ?? 1920,
-                        subtitles: state.framing.subtitles ?? null,
-                        hook: null,
-                        effects: null,
-                    },
-                }),
+            const { filename } = await renderClipOnServer({
+                jobId,
+                clipIndex: index,
+                props: {
+                    videoUrl: clip.video_url || '',
+                    sourceVideoUrl: clip.source_url,
+                    framing: state.framing,
+                    durationInFrames,
+                    fps: EDITOR_FPS,
+                    width: state.framing.outputWidth ?? 1080,
+                    height: state.framing.outputHeight ?? 1920,
+                    subtitles: state.framing.subtitles ?? null,
+                    hook: null,
+                    effects: null,
+                },
+                onProgress: setExportProgress,
             });
-            if (!res.ok) throw new Error(`Render service error (${res.status}). Is the renderer running?`);
-            const { renderId } = await res.json();
-
-            // Poll until the render finishes
-            let outputUrl = null;
-            for (;;) {
-                await new Promise((r) => setTimeout(r, 1500));
-                const statusRes = await fetch(getApiUrl(`/api/render/${renderId}`));
-                if (!statusRes.ok) throw new Error('Lost contact with the render service.');
-                const status = await statusRes.json();
-                setExportProgress(status.progress ?? 0);
-                if (status.status === 'done') {
-                    outputUrl = status.outputUrl;
-                    break;
-                }
-                if (status.status === 'error') {
-                    throw new Error(status.error || 'Render failed.');
-                }
-            }
 
             // Promote the rendered file to be the clip's video
-            const filename = outputUrl.split('/').pop();
-            const applyRes = await fetch(getApiUrl('/api/clips/apply-render'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ job_id: jobId, clip_index: index, filename }),
-            });
-            if (!applyRes.ok) throw new Error('Render finished but could not be applied to the clip.');
-            const applied = await applyRes.json();
-            onExported?.(applied.new_video_url);
+            const applied = await applyRender({ jobId, clipIndex: index, filename });
+            onExported?.(applied.new_video_url, applied.rendered_edited_at);
             // Deliver the export to the user's browser Downloads folder (the app
             // also keeps a copy under output/, but the export should "land" where
             // downloads go). Fetch→blob so it saves instead of navigating.

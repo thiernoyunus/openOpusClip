@@ -12,6 +12,8 @@ import { ShortVideo } from '@remotion-src/compositions/ShortVideo';
  * @param {object|null} props.subtitles - SubtitleConfig or null
  * @param {object|null} props.hook - HookConfig or null
  * @param {object|null} props.effects - EffectsConfig or null
+ * @param {object|null} [props.framing] - Full framing/EDL config (edited clips)
+ * @param {string|null} [props.sourceVideoUrl] - Source video URL when framing is set
  * @param {string} [props.className] - Additional CSS classes
  * @param {boolean} [props.autoPlay] - Start playback on mount (default true)
  * @param {boolean} [props.loop] - Loop playback (default true)
@@ -25,6 +27,8 @@ export default function RemotionPreview({
     subtitles = null,
     hook = null,
     effects = null,
+    framing = null,
+    sourceVideoUrl = null,
     className = '',
     autoPlay = true,
     loop = true,
@@ -34,6 +38,8 @@ export default function RemotionPreview({
 }) {
     const fps = 30;
     const durationInFrames = Math.max(1, Math.round(durationInSeconds * fps));
+    const compositionWidth = framing?.outputWidth ?? 1080;
+    const compositionHeight = framing?.outputHeight ?? 1920;
     const playerRef = useRef(null);
 
     // Keep the latest callbacks in a ref so the listener effect can run once on
@@ -60,15 +66,17 @@ export default function RemotionPreview({
     const inputProps = useMemo(
         () => ({
             videoUrl,
+            sourceVideoUrl,
+            framing,
             durationInFrames,
             fps,
-            width: 1080,
-            height: 1920,
+            width: compositionWidth,
+            height: compositionHeight,
             subtitles,
             hook,
             effects,
         }),
-        [videoUrl, durationInFrames, subtitles, hook, effects]
+        [videoUrl, sourceVideoUrl, framing, durationInFrames, compositionWidth, compositionHeight, subtitles, hook, effects]
     );
 
     return (
@@ -79,8 +87,8 @@ export default function RemotionPreview({
                 inputProps={inputProps}
                 durationInFrames={durationInFrames}
                 fps={fps}
-                compositionWidth={1080}
-                compositionHeight={1920}
+                compositionWidth={compositionWidth}
+                compositionHeight={compositionHeight}
                 style={{
                     width: '100%',
                     height: '100%',
