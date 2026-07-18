@@ -4,6 +4,7 @@ import { EDITOR_FPS } from './EditorCanvas';
 import { outputToSource, clipAtOutputFrame } from '@remotion-src/lib/edl';
 import { panelsForLayout } from '@remotion-src/compositions/ReframedVideo';
 import { autoPanelCrop, wholeFrameCrop } from './trackerMapping';
+import { scaleCrop } from './cropZoom';
 import ManualCropModal from './ManualCropModal';
 
 const FULL_FRAME = { left: 0, top: 0, width: 1, height: 1 };
@@ -24,6 +25,11 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
     const [sel, setSel] = useState(null);
     const [modalOpen, setModalOpen] = useState(false);
     const containerRef = useRef(null);
+    // Latest context for the wheel listener (attached once), and the crop it's
+    // mid-zoom on — dispatch is async, so consecutive wheel ticks read the
+    // pending rect from here instead of stale props.
+    const ctxRef = useRef(null);
+    const pendingRef = useRef(null);
 
     useEffect(() => {
         const p = playerRef.current;
@@ -64,6 +70,51 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
             window.removeEventListener('pointerdown', onDown);
         };
     }, [selected, modalOpen]);
+
+    // Keep the wheel listener's context fresh without re-attaching every frame.
+    useEffect(() => {
+        ctxRef.current = active ? { clip, wholeFrame, panels, srcFrame, framing, dispatch } : null;
+    });
+
+    // Cmd/Ctrl + scroll over the preview zooms the hovered tile's video in/out
+    // (Opus parity). Native non-passive listener so we can preventDefault the
+    // page scroll; re-attached only when `active` flips (the div is one stable
+    // node for the whole active period, so clip changes don't need re-attach).
+    useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return undefined;
+        const onWheel = (e) => {
+            if (!e.ctrlKey && !e.metaKey) return; // plain scroll passes through
+            const ctx = ctxRef.current;
+            if (!ctx) return;
+            e.preventDefault();
+            const rect = el.getBoundingClientRect();
+            const px = (e.clientX - rect.left) / rect.width;
+            const py = (e.clientY - rect.top) / rect.height;
+            const idx = ctx.panels.findIndex(
+                (p) => px >= p.left && px <= p.left + p.width && py >= p.top && py <= p.top + p.height
+            );
+            if (idx < 0) return;
+            const key = `${ctx.clip.id}:${idx}`;
+            const stored = ctx.wholeFrame ? ctx.clip.manualCrop : ctx.clip.panelCrops?.[idx];
+            const base =
+                (pendingRef.current?.key === key ? pendingRef.current.crop : null) ||
+                stored ||
+                (ctx.wholeFrame
+                    ? wholeFrameCrop(ctx.framing, ctx.clip, ctx.srcFrame)
+                    : autoPanelCrop(ctx.framing, ctx.clip, idx, ctx.srcFrame));
+            // deltaY > 0 (scroll down) widens the crop = zoom out; up = zoom in.
+            const next = scaleCrop(base, Math.exp(e.deltaY * 0.001));
+            pendingRef.current = { key, crop: next };
+            ctx.dispatch(
+                ctx.wholeFrame
+                    ? { type: 'SET_MANUAL_CROP', clipId: ctx.clip.id, crop: next }
+                    : { type: 'SET_PANEL_CROP', clipId: ctx.clip.id, panelIndex: idx, crop: next }
+            );
+        };
+        el.addEventListener('wheel', onWheel, { passive: false });
+        return () => el.removeEventListener('wheel', onWheel);
+    }, [active]);
 
     if (!active) return null;
 
