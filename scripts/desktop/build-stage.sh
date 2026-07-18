@@ -108,6 +108,9 @@ info "remotion bundle -> ${STAGE}/remotion-bundle"
 log "c. Installing renderer production node_modules (--omit=dev)"
 cp "${REPO_ROOT}/render-service/package.json" "${STAGE}/render-service/package.json"
 cp "${REPO_ROOT}/render-service/package-lock.json" "${STAGE}/render-service/package-lock.json"
+# Wipe first: npm ci prunes packages but can leave empty scope dirs (e.g. an
+# @rspack/ husk from an interrupted run), which false-positive the guard below.
+rm -rf "${STAGE}/render-service/node_modules"
 ( cd "${STAGE}/render-service" && npm ci --omit=dev )
 
 # Assert the expected shape.
