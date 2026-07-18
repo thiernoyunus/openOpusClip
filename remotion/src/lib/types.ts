@@ -295,6 +295,10 @@ export interface FramingSegment {
   // panels. A non-null entry pins that panel to a fixed source region (no
   // tracking); null/absent → auto framing. Optional → old files stay valid.
   panelCrops?: (CropRect | null)[] | null;
+  // Whole-clip video scale inside the output frame (Cmd+scroll preview zoom).
+  // <1 shrinks the composed video (black around it), >1 punches in. Applies to
+  // the video only — captions/overlays stay full-size. 1/null/absent → off.
+  canvasScale?: number | null;
   captionPlacement?: CaptionPlacement; // per-segment caption position (carried to clips on migration)
 }
 
@@ -316,6 +320,8 @@ export interface TimelineClip {
   manualCrop: CropRect | null;
   // Per-tile manual crop for multi-panel layouts (see FramingSegment.panelCrops).
   panelCrops?: (CropRect | null)[] | null;
+  // Whole-clip video scale inside the output frame (see FramingSegment.canvasScale).
+  canvasScale?: number | null;
   captionPlacement?: CaptionPlacement; // per-clip caption position; absent → global subtitle position
 }
 
@@ -677,6 +683,7 @@ export const framingSegmentSchema = z.object({
   cameraKeyframes: z.array(cameraKeyframeSchema),
   manualCrop: cropRectSchema.nullable(),
   panelCrops: z.array(cropRectSchema.nullable()).nullable().optional(),
+  canvasScale: z.number().min(0.1).max(3).nullable().optional(),
   captionPlacement: captionPlacementSchema.optional(),
 });
 
@@ -689,6 +696,7 @@ export const timelineClipSchema = z.object({
   cameraKeyframes: z.array(cameraKeyframeSchema),
   manualCrop: cropRectSchema.nullable(),
   panelCrops: z.array(cropRectSchema.nullable()).nullable().optional(),
+  canvasScale: z.number().min(0.1).max(3).nullable().optional(),
   captionPlacement: captionPlacementSchema.optional(),
 });
 

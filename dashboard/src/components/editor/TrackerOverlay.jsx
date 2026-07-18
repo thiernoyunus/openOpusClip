@@ -34,11 +34,17 @@ export default function TrackerOverlay({ playerRef, framing, dispatch }) {
     const srcFrame = outputToSource(framing, outFrame, EDITOR_FPS);
     const faces = facesAtSourceFrame(framing, srcFrame);
 
+    // The composed video may be scaled about the frame center (canvasScale);
+    // markers/clicks map through that scale so they stay on the faces.
+    const cScale = segment?.canvasScale ?? 1;
+    const toCanvas = (v) => 0.5 + (v - 0.5) * cScale;
+    const toVideo = (v) => (v - 0.5) / cScale + 0.5;
+
     const markers = segment
         ? faces
               .map((f) => {
                   const pos = sourceToCanvas(framing, segment, srcFrame, f.center);
-                  return pos ? { id: f.id, pos } : null;
+                  return pos ? { id: f.id, pos: { x: toCanvas(pos.x), y: toCanvas(pos.y) } } : null;
               })
               .filter(Boolean)
         : [];
@@ -49,8 +55,8 @@ export default function TrackerOverlay({ playerRef, framing, dispatch }) {
         if (!segment) return;
         const rect = e.currentTarget.getBoundingClientRect();
         const pt = {
-            x: (e.clientX - rect.left) / rect.width,
-            y: (e.clientY - rect.top) / rect.height,
+            x: toVideo((e.clientX - rect.left) / rect.width),
+            y: toVideo((e.clientY - rect.top) / rect.height),
         };
         const hit = canvasToSource(framing, segment, srcFrame, pt);
         if (!hit) return;
