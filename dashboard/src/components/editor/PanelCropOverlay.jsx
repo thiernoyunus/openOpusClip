@@ -78,24 +78,27 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
     });
 
     // Cmd/Ctrl + scroll over the preview zooms the hovered tile's video in/out
-    // (Opus parity). Native non-passive listener so we can preventDefault the
-    // page scroll; re-attached only when `active` flips (the div is one stable
-    // node for the whole active period, so clip changes don't need re-attach).
+    // (Opus parity). Attached to window in the CAPTURE phase, once, for the whole
+    // life of the component: the Remotion Player swallows wheel events aimed at
+    // its own subtree, so an element-scoped listener on our overlay never sees
+    // them. Capturing at the window beats the Player to the event; we then gate
+    // by the preview bounds + `active` (via ctxRef) so it only fires over a live
+    // tile. Non-passive so preventDefault can stop the browser/page zoom.
     useEffect(() => {
-        const el = containerRef.current;
-        if (!el) return undefined;
         const onWheel = (e) => {
             if (!e.ctrlKey && !e.metaKey) return; // plain scroll passes through
             const ctx = ctxRef.current;
-            if (!ctx) return;
-            e.preventDefault();
+            const el = containerRef.current;
+            if (!ctx || !el) return;
             const rect = el.getBoundingClientRect();
             const px = (e.clientX - rect.left) / rect.width;
             const py = (e.clientY - rect.top) / rect.height;
+            if (px < 0 || px > 1 || py < 0 || py > 1) return; // cursor outside the preview
             const idx = ctx.panels.findIndex(
                 (p) => px >= p.left && px <= p.left + p.width && py >= p.top && py <= p.top + p.height
             );
             if (idx < 0) return;
+            e.preventDefault();
             const key = `${ctx.clip.id}:${idx}`;
             const stored = ctx.wholeFrame ? ctx.clip.manualCrop : ctx.clip.panelCrops?.[idx];
             const base =
@@ -118,12 +121,12 @@ export default function PanelCropOverlay({ playerRef, framing, dispatch, sourceU
                     : { type: 'SET_PANEL_CROP', clipId: ctx.clip.id, panelIndex: idx, crop: next }
             );
         };
-        el.addEventListener('wheel', onWheel, { passive: false });
+        window.addEventListener('wheel', onWheel, { capture: true, passive: false });
         return () => {
-            el.removeEventListener('wheel', onWheel);
+            window.removeEventListener('wheel', onWheel, { capture: true });
             clearTimeout(pendingTimer.current);
         };
-    }, [active]);
+    }, []);
 
     if (!active) return null;
 
