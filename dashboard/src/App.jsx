@@ -1569,11 +1569,17 @@ function App() {
           index={editingClip}
           jobId={jobId}
           onClose={() => { setEditingClip(null); setFramingVersion((v) => v + 1); }}
-          onExported={(newVideoUrl) => {
+          onExported={(newVideoUrl, renderedEditedAt) => {
             setResults((prev) => {
               if (!prev?.clips?.[editingClip]) return prev;
               const clips = prev.clips.map((c, i) =>
-                i === editingClip ? { ...c, video_url: newVideoUrl } : c
+                i === editingClip
+                  ? {
+                      ...c,
+                      video_url: newVideoUrl,
+                      ...(renderedEditedAt ? { rendered_edited_at: renderedEditedAt } : {}),
+                    }
+                  : c
               );
               return { ...prev, clips };
             });

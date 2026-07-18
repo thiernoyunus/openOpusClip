@@ -2130,6 +2130,8 @@ async def apply_render(req: ApplyRenderRequest):
     Promote a render-service output file to be the clip's video. Mirrors the
     subtitle endpoint's bookkeeping: updates the in-memory job (when present)
     and the on-disk metadata so the results grid and downloads pick it up.
+    Also stamps rendered_edited_at from the framing's editedAt so clients can
+    skip re-rendering when the burn already matches the latest edit.
     """
     filename = os.path.basename(req.filename)
     output_dir = os.path.join(OUTPUT_DIR, req.job_id)
@@ -2139,6 +2141,19 @@ async def apply_render(req: ApplyRenderRequest):
 
     new_video_url = _video_url(req.job_id, filename)
 
+    # Match this burn to the framing revision that produced it (if any).
+    edited_at = None
+    try:
+        framing_path = _find_framing_path(req.job_id, req.clip_index)
+        with open(framing_path, 'r') as f:
+            framing_data = json.load(f)
+        if isinstance(framing_data, dict):
+            edited_at = framing_data.get('editedAt')
+    except HTTPException:
+        pass
+    except Exception as e:
+        print(f"⚠️ apply-render: could not read framing editedAt: {e}")
+
     json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
     if json_files:
         try:
@@ -2147,6 +2162,8 @@ async def apply_render(req: ApplyRenderRequest):
             clips = data.get('shorts', [])
             if req.clip_index < len(clips):
                 clips[req.clip_index]['video_url'] = new_video_url
+                if edited_at:
+                    clips[req.clip_index]['rendered_edited_at'] = edited_at
                 data['shorts'] = clips
                 with open(json_files[0], 'w') as f:
                     json.dump(data, f, indent=4)
@@ -2156,9 +2173,14 @@ async def apply_render(req: ApplyRenderRequest):
     job = jobs.get(req.job_id)
     if job and 'result' in job and req.clip_index < len(job['result'].get('clips', [])):
         job['result']['clips'][req.clip_index]['video_url'] = new_video_url
+        if edited_at:
+            job['result']['clips'][req.clip_index]['rendered_edited_at'] = edited_at
         _persist_result(req.job_id)  # keep the on-disk snapshot in sync with edits
 
-    return {"success": True, "new_video_url": new_video_url}
+    out = {"success": True, "new_video_url": new_video_url}
+    if edited_at:
+        out["rendered_edited_at"] = edited_at
+    return out
 
 @app.post("/api/clips/{job_id}/{clip_index}/audio")
 async def upload_clip_audio(job_id: str, clip_index: int, file: UploadFile = File(...)):
@@ -2514,6 +2536,9 @@ class SocialPostRequest(BaseModel):
     description: Optional[str] = None
     scheduled_date: Optional[str] = None # ISO-8601 string
     timezone: Optional[str] = "UTC"
+    # Optional render output filename (captions-only burns that were not applied
+    # to clip.video_url). Basename only — path traversal is stripped.
+    filename: Optional[str] = None
 
 
 @app.post("/api/social/post")
@@ -2542,12 +2567,19 @@ async def post_to_socials(req: SocialPostRequest):
 
     try:
         clip = job['result']['clips'][req.clip_index]
-        # clip['video_url'] is "/videos/{job_id}/{filename}"; file lives in OUTPUT_DIR
-        filename = unquote(clip['video_url'].split('/')[-1])
-        file_path = os.path.join(OUTPUT_DIR, req.job_id, filename)
-
-        if not os.path.exists(file_path):
-             raise HTTPException(status_code=404, detail=f"Video file not found: {file_path}")
+        # Prefer an explicit render filename (e.g. captions burn not applied to
+        # video_url); otherwise use the clip's current video_url.
+        if req.filename:
+            filename = os.path.basename(req.filename)
+            file_path = os.path.join(OUTPUT_DIR, req.job_id, filename)
+            if not os.path.exists(file_path):
+                raise HTTPException(status_code=404, detail=f"Rendered video not found: {filename}")
+        else:
+            # clip['video_url'] is "/videos/{job_id}/{filename}"; file lives in OUTPUT_DIR
+            filename = unquote(clip['video_url'].split('/')[-1])
+            file_path = os.path.join(OUTPUT_DIR, req.job_id, filename)
+            if not os.path.exists(file_path):
+                raise HTTPException(status_code=404, detail=f"Video file not found: {file_path}")
 
         final_title = req.title or clip.get('title') or clip.get('video_title_for_youtube_short') or 'Viral Short'
         final_description = req.description or clip.get('video_description_for_instagram') or clip.get('video_description_for_tiktok') or "Check this out!"
