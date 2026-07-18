@@ -116,29 +116,6 @@ export const editorReducer = (state, action) => {
             });
             return withHistory({ ...state.framing, clips });
         }
-        case 'SET_CANVAS_SCALE': {
-            // Whole-clip preview zoom (Cmd+scroll): scale the composed video
-            // inside the output frame. scale 1 clears the field. transient/
-            // original mirror SET_SUBTITLES so one scroll gesture = one undo.
-            const { clipId, scale } = action;
-            const clips = state.framing.clips.map((c) =>
-                c.id === clipId ? { ...c, canvasScale: Math.abs(scale - 1) < 0.001 ? null : scale } : c
-            );
-            const nextFraming = { ...state.framing, clips };
-            if (action.transient) {
-                return { ...state, framing: nextFraming, dirty: true };
-            }
-            if (action.original !== undefined) {
-                return {
-                    ...state,
-                    framing: nextFraming,
-                    dirty: true,
-                    past: [...state.past.slice(-HISTORY_LIMIT + 1), action.original],
-                    future: [],
-                };
-            }
-            return withHistory(nextFraming);
-        }
         case 'SET_SUBTITLES': {
             // Caption config lives on the framing object (optional key) so it
             // rides the existing save/export paths. null disables captions.
