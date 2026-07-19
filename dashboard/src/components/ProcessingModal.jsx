@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from 'react';
-import { X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { X, ArrowDown, Check, ChevronRight } from 'lucide-react';
+import { PHASE_LABELS, phaseIndexFromLogs } from '../lib/projectHistory';
 
 // Colorize a log line the way Opus does: highlight quoted strings, dim routine
 // lines, green for success/progress, red for errors.
@@ -13,15 +14,57 @@ function logColor(line) {
 
 export default function ProcessingModal({ open, onClose, title: _title, logs = [], status, phase, duration, onViewClips }) {
   const endRef = useRef(null);
+  const scrollRef = useRef(null);
+  // Stick to the newest line only while the user is already at the bottom.
+  // Once they scroll up to read, leave them there until they come back down.
+  // The parent mounts this only while open, so state resets fresh per run.
+  const pinnedRef = useRef(true);
+  const [pinned, setPinned] = useState(true);
+  // Raw log is secondary: hidden behind a disclosure so the friendly checklist
+  // reads first. Auto-opens on failure so the error is visible without a click.
+  const [showDetails, setShowDetails] = useState(false);
+  const autoOpenedRef = useRef(false);
 
   useEffect(() => {
-    if (open) endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [logs, open]);
+    // Instant (not smooth): a smooth animation fires intermediate scroll events
+    // that read as "not at bottom" and would unpin us mid-stream.
+    if (open && showDetails && pinnedRef.current) endRef.current?.scrollIntoView({ block: 'end' });
+  }, [logs, open, showDetails]);
+
+  useEffect(() => {
+    if (status === 'error' && !autoOpenedRef.current) {
+      setShowDetails(true);
+      autoOpenedRef.current = true;
+    }
+  }, [status]);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    pinnedRef.current = atBottom;
+    setPinned(atBottom);
+  };
+
+  const jumpToLatest = () => {
+    pinnedRef.current = true;
+    setPinned(true);
+    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  };
 
   if (!open) return null;
 
   const done = status === 'complete';
   const failed = status === 'error';
+  const current = phaseIndexFromLogs(logs);
+
+  // done → every stage complete; failed → the reached stage is the one that
+  // broke; running → stages before `current` done, `current` active, rest wait.
+  const stageState = (i) => {
+    if (done) return 'done';
+    if (failed) return i < current ? 'done' : i === current ? 'failed' : 'pending';
+    return i < current ? 'done' : i === current ? 'active' : 'pending';
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm p-4" onClick={onClose}>
@@ -38,7 +81,7 @@ export default function ProcessingModal({ open, onClose, title: _title, logs = [
               {done
                 ? `Open the project to review and edit your clips${duration ? ` — finished in ${duration}` : ''}.`
                 : failed
-                  ? 'Something went wrong — see the log below.'
+                  ? 'Something went wrong — the technical details are below.'
                   : `You'll get a notification once it's done${duration ? ` — running ${duration}` : ''}.`}
             </p>
           </div>
@@ -48,22 +91,87 @@ export default function ProcessingModal({ open, onClose, title: _title, logs = [
         </div>
 
         <div className="px-5">
-          <div className="bg-canvas border border-edge rounded-lg p-4 font-mono text-xs leading-relaxed max-h-[300px] overflow-y-auto custom-scrollbar">
-            {logs.length === 0 ? (
-              <div className="text-muted">Starting up…</div>
-            ) : (
-              logs.map((line, i) => (
-                <div key={i} className={logColor(line)}>{line}</div>
-              ))
-            )}
-            {!done && !failed && (
-              <div className="flex items-center gap-2 text-viral mt-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-viral animate-pulse" />
-                {phase || 'Processing'}…
+          {/* Friendly stage checklist — the primary, plain-language view. */}
+          <ul className="bg-canvas border border-edge rounded-lg p-4 space-y-0.5">
+            {PHASE_LABELS.map((label, i) => {
+              const state = stageState(i);
+              return (
+                <li key={label} className="flex items-center gap-2.5 py-1">
+                  <span className="shrink-0 w-4 h-4 flex items-center justify-center">
+                    {state === 'done' && (
+                      <span className="w-4 h-4 rounded-full bg-viral flex items-center justify-center">
+                        <Check size={11} strokeWidth={3} className="text-[#18181b]" />
+                      </span>
+                    )}
+                    {state === 'active' && <span className="w-2 h-2 rounded-full bg-viral animate-pulse" />}
+                    {state === 'failed' && (
+                      <span className="w-4 h-4 rounded-full bg-red-500 flex items-center justify-center">
+                        <X size={11} strokeWidth={3} className="text-white" />
+                      </span>
+                    )}
+                    {state === 'pending' && <span className="w-2 h-2 rounded-full border border-edge" />}
+                  </span>
+                  <span
+                    className={
+                      state === 'active'
+                        ? 'text-sm text-fg font-medium'
+                        : state === 'failed'
+                          ? 'text-sm text-red-400'
+                          : state === 'done'
+                            ? 'text-sm text-muted'
+                            : 'text-sm text-muted/50'
+                    }
+                  >
+                    {label}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+
+          {/* Raw log, collapsed by default. Keeps the exact streaming output for
+              anyone who wants it, without making it the first thing you see. */}
+          <button
+            onClick={() => setShowDetails((v) => !v)}
+            className="flex items-center gap-1 mt-3 text-xs text-muted hover:text-fg transition-colors"
+          >
+            <ChevronRight size={13} className={`transition-transform ${showDetails ? 'rotate-90' : ''}`} />
+            {showDetails ? 'Hide technical details' : 'Show technical details'}
+          </button>
+
+          {showDetails && (
+            <div className="relative mt-2">
+              <div
+                ref={scrollRef}
+                onScroll={handleScroll}
+                className="bg-canvas border border-edge rounded-lg p-4 font-mono text-xs leading-relaxed max-h-[240px] overflow-y-auto custom-scrollbar"
+              >
+                {logs.length === 0 ? (
+                  <div className="text-muted">Starting up…</div>
+                ) : (
+                  logs.map((line, i) => (
+                    <div key={i} className={logColor(line)}>{line}</div>
+                  ))
+                )}
+                {!done && !failed && (
+                  <div className="flex items-center gap-2 text-viral mt-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-viral animate-pulse" />
+                    {phase || 'Processing'}…
+                  </div>
+                )}
+                <div ref={endRef} />
               </div>
-            )}
-            <div ref={endRef} />
-          </div>
+              {!pinned && (
+                <button
+                  onClick={jumpToLatest}
+                  className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-fg text-[#18181b] shadow-lg hover:bg-white active:scale-[0.98] transition-all"
+                >
+                  <ArrowDown size={13} />
+                  Jump to latest
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end gap-2 p-5 pt-4">

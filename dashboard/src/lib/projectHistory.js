@@ -105,6 +105,20 @@ export function phaseFromLogs(logs) {
   return 'Processing';
 }
 
+// Ordered, friendly stage labels for the processing checklist.
+export const PHASE_LABELS = PHASES.map((p) => p.label);
+
+// Index of the furthest stage the logs have reached (-1 = not started yet).
+// Scans newest-first so a later stage's keyword wins over an earlier one.
+export function phaseIndexFromLogs(logs) {
+  if (!logs || logs.length === 0) return -1;
+  for (let i = logs.length - 1; i >= 0; i--) {
+    const idx = PHASES.findIndex((p) => p.re.test(logs[i] || ''));
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
+
 // A short, friendly fallback title from the submit payload.
 export function titleFromPayload(data) {
   if (!data) return 'Untitled project';

@@ -1552,16 +1552,18 @@ function App() {
         onViewCalendar={() => setActiveTab('calendar')}
       />
 
-      <ProcessingModal
-        open={showProcessingModal}
-        onClose={() => setShowProcessingModal(false)}
-        title={processingMedia ? titleFromPayload(processingMedia) : 'Processing'}
-        logs={logs}
-        status={status}
-        phase={phaseFromLogs(logs)}
-        duration={activeDuration}
-        onViewClips={() => { setShowProcessingModal(false); setViewingResults(true); }}
-      />
+      {showProcessingModal && (
+        <ProcessingModal
+          open={showProcessingModal}
+          onClose={() => setShowProcessingModal(false)}
+          title={processingMedia ? titleFromPayload(processingMedia) : 'Processing'}
+          logs={logs}
+          status={status}
+          phase={phaseFromLogs(logs)}
+          duration={activeDuration}
+          onViewClips={() => { setShowProcessingModal(false); setViewingResults(true); }}
+        />
+      )}
 
       {editingClip !== null && results?.clips?.[editingClip] && (
         <EditorView
