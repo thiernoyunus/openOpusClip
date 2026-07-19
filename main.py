@@ -1199,25 +1199,33 @@ def plan_static_reframe(input_video, scene_boundaries, scene_strategies,
     # The editor only shows a face track (re-track picker, panel assignment,
     # non-9:16 tracking) when tracksInClip() sees coverage > 0.1, where
     # coverage = samples_in_clip / (clip_len / 2) — see
-    # dashboard/src/components/editor/useEditorState.js:515-526. The 2/3
-    # hit-rate check above passes plenty of clips whose *actual* recorder
-    # coverage still lands under that cutoff (missed detections at a 15-frame
-    # stride add up), which would bake fine but leave the tracked speaker
-    # invisible to the editor. Check the real winning track's coverage against
-    # the same formula so the fast path only fires when the editor would also
-    # recognize the face it wrote into segment_votes.
-    all_votes = {}
-    for votes in segment_votes.values():
-        for tid, n in votes.items():
-            all_votes[tid] = all_votes.get(tid, 0) + n
-    winning_id = max(all_votes, key=all_votes.get) if all_votes else None
-    winning_samples = len(recorder.tracks[winning_id]['samples']) if winning_id is not None else 0
-    coverage = winning_samples / (span / 2) if span else 0
-    if winning_id is None or coverage <= 0.1:
-        print(f"   ⏭️ Static fast path skipped: tracked speaker's editor coverage "
-              f"too low ({coverage:.3f} ≤ 0.1 cutoff) — per-frame tracking samples "
-              "densely enough to stay visible to the editor.")
-        return None
+    # dashboard/src/components/editor/useEditorState.js:515-526. Crucially,
+    # "clip" there is per SEGMENT, not the whole bake span: framingToClips()
+    # (remotion/src/lib/edl.ts:60-78) turns each scene segment into its own
+    # clip, so a multi-scene TRACK clip is checked scene-by-scene. Evaluating
+    # one global winner over the full span (as an earlier version of this
+    # check did) both under- and over-counts: it can reject clips where every
+    # individual scene would clear the per-scene cutoff, and it can't catch a
+    # scene whose own coverage is too low while the overall total looks fine.
+    # Check every scene's own winning track against its own segment length.
+    for i, (s_f, e_f) in enumerate(scene_boundaries):
+        votes = segment_votes.get(i, {})
+        winning_id = max(votes, key=votes.get) if votes else None
+        seg_len = e_f - s_f
+        if winning_id is None:
+            seg_samples = 0
+        else:
+            seg_samples = sum(
+                1 for smp in recorder.tracks[winning_id]['samples']
+                if s_f <= smp['frame'] < e_f
+            )
+        coverage = seg_samples / (seg_len / 2) if seg_len else 0
+        if winning_id is None or coverage <= 0.1:
+            print(f"   ⏭️ Static fast path skipped: scene {i}'s tracked speaker "
+                  f"editor coverage too low ({coverage:.3f} ≤ 0.1 cutoff) — "
+                  "per-frame tracking samples densely enough to stay visible "
+                  "to the editor.")
+            return None
 
     centers.sort()
     center_x = centers[len(centers) // 2]  # median
