@@ -109,14 +109,18 @@ export function phaseFromLogs(logs) {
 export const PHASE_LABELS = PHASES.map((p) => p.label);
 
 // Index of the furthest stage the logs have reached (-1 = not started yet).
-// Scans newest-first so a later stage's keyword wins over an earlier one.
+// Uses the MAX matched index, not the newest match: the per-clip pipeline
+// re-logs "Step 1: Detecting scenes…" for every clip during extraction, so a
+// newest-match would make the checklist jump backwards mid-run. Progress is
+// monotonic, so take the highest stage any line has reached.
 export function phaseIndexFromLogs(logs) {
   if (!logs || logs.length === 0) return -1;
-  for (let i = logs.length - 1; i >= 0; i--) {
-    const idx = PHASES.findIndex((p) => p.re.test(logs[i] || ''));
-    if (idx !== -1) return idx;
+  let max = -1;
+  for (const line of logs) {
+    const idx = PHASES.findIndex((p) => p.re.test(line || ''));
+    if (idx > max) max = idx;
   }
-  return -1;
+  return max;
 }
 
 // A short, friendly fallback title from the submit payload.

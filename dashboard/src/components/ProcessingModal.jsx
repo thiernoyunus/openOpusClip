@@ -25,6 +25,11 @@ export default function ProcessingModal({ open, onClose, title: _title, logs = [
   const [showDetails, setShowDetails] = useState(false);
   const autoOpenedRef = useRef(false);
 
+  const pinToBottom = () => {
+    pinnedRef.current = true;
+    setPinned(true);
+  };
+
   useEffect(() => {
     // Instant (not smooth): a smooth animation fires intermediate scroll events
     // that read as "not at bottom" and would unpin us mid-stream.
@@ -33,22 +38,42 @@ export default function ProcessingModal({ open, onClose, title: _title, logs = [
 
   useEffect(() => {
     if (status === 'error' && !autoOpenedRef.current) {
+      pinToBottom(); // land on the error line, not wherever a prior mount left off
       setShowDetails(true);
       autoOpenedRef.current = true;
     }
   }, [status]);
 
+  // Reset per-open so state never leaks between jobs. App.jsx unmounts the modal
+  // while closed, but TrailerPage keeps it mounted with open={showModal}, so
+  // without this a hidden-details / unpinned state would carry into the next run.
+  useEffect(() => {
+    if (!open) {
+      setShowDetails(false);
+      autoOpenedRef.current = false;
+      pinnedRef.current = true; // ref only — modal renders null while closed;
+      // `pinned` state re-syncs when the log is reopened (toggleDetails pins).
+    }
+  }, [open]);
+
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    if (atBottom === pinnedRef.current) return; // no-op when the flag hasn't flipped
     pinnedRef.current = atBottom;
     setPinned(atBottom);
   };
 
+  const toggleDetails = () => {
+    // Reopening remounts the scroll box; start pinned at the latest line rather
+    // than stuck at the top where the previous mount was scrolled.
+    if (!showDetails) pinToBottom();
+    setShowDetails((v) => !v);
+  };
+
   const jumpToLatest = () => {
-    pinnedRef.current = true;
-    setPinned(true);
+    pinToBottom();
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   };
 
@@ -132,7 +157,7 @@ export default function ProcessingModal({ open, onClose, title: _title, logs = [
           {/* Raw log, collapsed by default. Keeps the exact streaming output for
               anyone who wants it, without making it the first thing you see. */}
           <button
-            onClick={() => setShowDetails((v) => !v)}
+            onClick={toggleDetails}
             className="flex items-center gap-1 mt-3 text-xs text-muted hover:text-fg transition-colors"
           >
             <ChevronRight size={13} className={`transition-transform ${showDetails ? 'rotate-90' : ''}`} />
@@ -156,7 +181,9 @@ export default function ProcessingModal({ open, onClose, title: _title, logs = [
                 {!done && !failed && (
                   <div className="flex items-center gap-2 text-viral mt-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-viral animate-pulse" />
-                    {phase || 'Processing'}…
+                    {/* Use the monotonic active stage so this agrees with the
+                        checklist above rather than the newest raw log line. */}
+                    {(current >= 0 ? PHASE_LABELS[current] : phase) || 'Processing'}…
                   </div>
                 )}
                 <div ref={endRef} />
