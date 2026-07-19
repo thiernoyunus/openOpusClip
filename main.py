@@ -1196,6 +1196,29 @@ def plan_static_reframe(input_video, scene_boundaries, scene_strategies,
               f"{int(safe_zone_radius)}px safe zone) → per-frame tracking.")
         return None
 
+    # The editor only shows a face track (re-track picker, panel assignment,
+    # non-9:16 tracking) when tracksInClip() sees coverage > 0.1, where
+    # coverage = samples_in_clip / (clip_len / 2) — see
+    # dashboard/src/components/editor/useEditorState.js:515-526. The 2/3
+    # hit-rate check above passes plenty of clips whose *actual* recorder
+    # coverage still lands under that cutoff (missed detections at a 15-frame
+    # stride add up), which would bake fine but leave the tracked speaker
+    # invisible to the editor. Check the real winning track's coverage against
+    # the same formula so the fast path only fires when the editor would also
+    # recognize the face it wrote into segment_votes.
+    all_votes = {}
+    for votes in segment_votes.values():
+        for tid, n in votes.items():
+            all_votes[tid] = all_votes.get(tid, 0) + n
+    winning_id = max(all_votes, key=all_votes.get) if all_votes else None
+    winning_samples = len(recorder.tracks[winning_id]['samples']) if winning_id is not None else 0
+    coverage = winning_samples / (span / 2) if span else 0
+    if winning_id is None or coverage <= 0.1:
+        print(f"   ⏭️ Static fast path skipped: tracked speaker's editor coverage "
+              f"too low ({coverage:.3f} ≤ 0.1 cutoff) — per-frame tracking samples "
+              "densely enough to stay visible to the editor.")
+        return None
+
     centers.sort()
     center_x = centers[len(centers) // 2]  # median
     half = crop_width / 2.0
