@@ -1212,6 +1212,14 @@ def plan_static_reframe(input_video, scene_boundaries, scene_strategies,
         votes = segment_votes.get(i, {})
         winning_id = max(votes, key=votes.get) if votes else None
         seg_len = e_f - s_f
+        # to_face_tracks() drops any track (globally, not per-scene) with
+        # fewer than 2 total samples as noise. A winning id that would get
+        # pruned there leaves this scene's trackedFaceIds pointing at an id
+        # absent from faceTracks entirely — reject before checking coverage,
+        # since a per-scene sample count can't rescue an id that won't even
+        # be serialized.
+        if winning_id is not None and len(recorder.tracks[winning_id]['samples']) < 2:
+            winning_id = None
         if winning_id is None:
             seg_samples = 0
         else:
