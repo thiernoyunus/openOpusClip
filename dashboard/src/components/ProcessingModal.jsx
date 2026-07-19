@@ -37,12 +37,16 @@ export default function ProcessingModal({ open, onClose, title: _title, logs = [
   }, [logs, open, showDetails]);
 
   useEffect(() => {
-    if (status === 'error' && !autoOpenedRef.current) {
+    // Gate on `open`: TrailerPage keeps the modal mounted, so a job that fails
+    // after "Run in background" must not flip these while closed — that would
+    // undo the reset below and leak expanded details into the next run. When the
+    // user reopens a failed job, open flips true here and the log auto-opens then.
+    if (open && status === 'error' && !autoOpenedRef.current) {
       pinToBottom(); // land on the error line, not wherever a prior mount left off
       setShowDetails(true);
       autoOpenedRef.current = true;
     }
-  }, [status]);
+  }, [open, status]);
 
   // Reset per-open so state never leaks between jobs. App.jsx unmounts the modal
   // while closed, but TrailerPage keeps it mounted with open={showModal}, so
