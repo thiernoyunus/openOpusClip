@@ -1196,6 +1196,45 @@ def plan_static_reframe(input_video, scene_boundaries, scene_strategies,
               f"{int(safe_zone_radius)}px safe zone) → per-frame tracking.")
         return None
 
+    # The editor only shows a face track (re-track picker, panel assignment,
+    # non-9:16 tracking) when tracksInClip() sees coverage > 0.1, where
+    # coverage = samples_in_clip / (clip_len / 2) — see
+    # dashboard/src/components/editor/useEditorState.js:515-526. Crucially,
+    # "clip" there is per SEGMENT, not the whole bake span: framingToClips()
+    # (remotion/src/lib/edl.ts:60-78) turns each scene segment into its own
+    # clip, so a multi-scene TRACK clip is checked scene-by-scene. Evaluating
+    # one global winner over the full span (as an earlier version of this
+    # check did) both under- and over-counts: it can reject clips where every
+    # individual scene would clear the per-scene cutoff, and it can't catch a
+    # scene whose own coverage is too low while the overall total looks fine.
+    # Check every scene's own winning track against its own segment length.
+    for i, (s_f, e_f) in enumerate(scene_boundaries):
+        votes = segment_votes.get(i, {})
+        winning_id = max(votes, key=votes.get) if votes else None
+        seg_len = e_f - s_f
+        # to_face_tracks() drops any track (globally, not per-scene) with
+        # fewer than 2 total samples as noise. A winning id that would get
+        # pruned there leaves this scene's trackedFaceIds pointing at an id
+        # absent from faceTracks entirely — reject before checking coverage,
+        # since a per-scene sample count can't rescue an id that won't even
+        # be serialized.
+        if winning_id is not None and len(recorder.tracks[winning_id]['samples']) < 2:
+            winning_id = None
+        if winning_id is None:
+            seg_samples = 0
+        else:
+            seg_samples = sum(
+                1 for smp in recorder.tracks[winning_id]['samples']
+                if s_f <= smp['frame'] < e_f
+            )
+        coverage = seg_samples / (seg_len / 2) if seg_len else 0
+        if winning_id is None or coverage <= 0.1:
+            print(f"   ⏭️ Static fast path skipped: scene {i}'s tracked speaker "
+                  f"editor coverage too low ({coverage:.3f} ≤ 0.1 cutoff) — "
+                  "per-frame tracking samples densely enough to stay visible "
+                  "to the editor.")
+            return None
+
     centers.sort()
     center_x = centers[len(centers) // 2]  # median
     half = crop_width / 2.0
