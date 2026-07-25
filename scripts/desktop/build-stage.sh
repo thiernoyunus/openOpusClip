@@ -304,17 +304,27 @@ info "smoke-testing imports ..."
 # Runs AFTER the prune on purpose: this is what catches an over-aggressive prune.
 # ultralytics + the faster-whisper VAD + a real mediapipe face detection pass are
 # included because those are the paths that actually broke when tested.
-"${EMULATE[@]}" "${PYBIN}" - <<'SMOKE' || die "python import smoke test failed"
+#
+# The live mediapipe inference runs only on a native build: it initialises a GPU
+# context, which Rosetta cannot reach — same reason the videotoolbox encode above
+# is skipped when cross-building. On a cross build we still import everything,
+# which is what actually catches an over-aggressive prune.
+if [[ ${#EMULATE[@]} -eq 0 ]]; then
+  _SMOKE_INFER="fd = mediapipe.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5); fd.process(np.zeros((480, 640, 3), dtype=np.uint8))"
+else
+  _SMOKE_INFER="pass  # skipped: GPU inference is unavailable under Rosetta"
+  note_mp="mediapipe: imported but not run (cross build under Rosetta)"
+fi
+"${EMULATE[@]}" "${PYBIN}" - <<SMOKE || die "python import smoke test failed"
 import numpy as np
 import torch, mediapipe, faster_whisper, cv2, yt_dlp, fastapi, PIL
 import scenedetect, boto3
 from ultralytics import YOLO
 from faster_whisper.vad import get_speech_timestamps
-fd = mediapipe.solutions.face_detection.FaceDetection(
-    model_selection=1, min_detection_confidence=0.5)
-fd.process(np.zeros((480, 640, 3), dtype=np.uint8))
+${_SMOKE_INFER}
 print('imports-ok')
 SMOKE
+[[ -n "${note_mp:-}" ]] && info "${note_mp}"
 
 # --- e. Backend source -------------------------------------------------------
 log "e. Staging backend Python source + fonts"
