@@ -269,9 +269,52 @@ if [[ "${TARGET_ARCH}" == "x64" ]]; then
 fi
 "${EMULATE[@]}" "${PYBIN}" -m pip install "${PIP_ARGS[@]}"
 
+# Prune packages that pip pulls in as declared dependencies but this app never
+# actually executes. Each one below was verified by removing it and re-running
+# the real code paths (see the smoke test right after): jax/jaxlib are only used
+# by mediapipe's unrelated LLM weight-conversion tools, onnxruntime only by a
+# faster-whisper VAD backend we don't select, polars/networkx/sympy only by
+# ultralytics training and torch compile paths the app never enters.
+#
+# This is a size/build-time win, not a correctness one: ~670 MB out of the stage
+# means that much less to copy, sign, and compress into the DMG.
+#
+# torchvision is deliberately NOT pruned: ultralytics reads its version metadata
+# at import time and raises PackageNotFoundError without it.
+#
+# __pycache__ is also deliberately NOT pruned, even though it is ~310 MB and
+# 13k files. Inside a signed .app those files cannot be regenerated (the bundle
+# is read-only and writing into it would break the code signature), so removing
+# them makes every app launch recompile from source instead.
+log "d2. Pruning unused Python packages"
+SITE="${STAGE}/python/lib/python3.11/site-packages"
+_pruned_before="$(du -sk "${STAGE}/python" | awk '{print $1}')"
+for _pkg in jax jaxlib sympy mpmath onnxruntime polars _polars_runtime_32 \
+            polars_runtime_32 networkx functorch isympy.py; do
+  for _match in "${SITE}/${_pkg}" "${SITE}/${_pkg}-"*.dist-info; do
+    [[ -e "${_match}" ]] && rm -rf "${_match}"
+  done
+  # The glob above often matches nothing, which would otherwise trip `set -e`.
+  true
+done
+_pruned_after="$(du -sk "${STAGE}/python" | awk '{print $1}')"
+info "python runtime: $(( _pruned_before / 1024 )) MB -> $(( _pruned_after / 1024 )) MB"
+
 info "smoke-testing imports ..."
-"${EMULATE[@]}" "${PYBIN}" -c "import torch, mediapipe, faster_whisper, cv2, yt_dlp, fastapi, PIL; print('imports-ok')" \
-  || die "python import smoke test failed"
+# Runs AFTER the prune on purpose: this is what catches an over-aggressive prune.
+# ultralytics + the faster-whisper VAD + a real mediapipe face detection pass are
+# included because those are the paths that actually broke when tested.
+"${EMULATE[@]}" "${PYBIN}" - <<'SMOKE' || die "python import smoke test failed"
+import numpy as np
+import torch, mediapipe, faster_whisper, cv2, yt_dlp, fastapi, PIL
+import scenedetect, boto3
+from ultralytics import YOLO
+from faster_whisper.vad import get_speech_timestamps
+fd = mediapipe.solutions.face_detection.FaceDetection(
+    model_selection=1, min_detection_confidence=0.5)
+fd.process(np.zeros((480, 640, 3), dtype=np.uint8))
+print('imports-ok')
+SMOKE
 
 # --- e. Backend source -------------------------------------------------------
 log "e. Staging backend Python source + fonts"

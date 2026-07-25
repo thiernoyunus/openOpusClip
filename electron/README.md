@@ -37,16 +37,16 @@ specific, so each target gets its own stage folder:
 
 ```bash
 # Apple Silicon (arm64)
-scripts/desktop/build-stage.sh --arch arm64   # -> desktop-stage/     (~2.7 GB)
+scripts/desktop/build-stage.sh --arch arm64   # -> desktop-stage/     (~2.0 GB)
 cd electron && npm run package:arm64          # -> dist/openOpusClip-<ver>-arm64.dmg
 
 # Intel (x64) — can be cross-built from an Apple Silicon Mac (needs Rosetta 2)
-scripts/desktop/build-stage.sh --arch x64     # -> desktop-stage-x64/ (~2.7 GB)
+scripts/desktop/build-stage.sh --arch x64     # -> desktop-stage-x64/ (~2.0 GB)
 cd electron && npm run package:x64            # -> dist/openOpusClip-<ver>-x64.dmg
 ```
 
 `--arch` defaults to the machine you're on. `npm run package:both` builds both
-DMGs in one go, but needs BOTH stage folders present (~5.4 GB) plus room for the
+DMGs in one go, but needs BOTH stage folders present (~4.0 GB) plus room for the
 installers, so watch free disk.
 
 Each packaging run produces **two** artifacts per architecture:
@@ -74,8 +74,23 @@ without macOS blocking it. Confirm the certificate is present with:
 security find-identity -v -p codesigning   # look for "Developer ID Application"
 ```
 
-Signing is what makes packaging slow (it signs every nested binary in the ~3 GB
-runtime — expect roughly 10-20 minutes per architecture).
+Expect roughly **6-7 minutes per architecture**.
+
+It used to be ~28 minutes. Two things fixed that, and both are easy to undo by
+accident, so they're worth knowing:
+
+1. `signIgnore` in `electron-builder.js` stops `codesign` from running on data
+   files inside the bundled runtime. The signing tool otherwise launches one
+   `codesign` process per file — ~40,000 of them, each making a network call to
+   Apple's timestamp server — when only ~1,800 are actually executable code.
+   The other files are still protected: the bundle seal hashes every one of
+   them, and editing any file afterwards still fails verification.
+2. `build-stage.sh` drops Python packages the app never runs (jax, sympy,
+   onnxruntime, polars, networkx and friends — ~670 MB), so there is that much
+   less to copy, sign, and compress.
+
+If you add a Python dependency that ships a new kind of binary, check it still
+gets signed rather than skipped.
 
 To notarize as well — Apple's scan, which removes the "unidentified developer"
 warning entirely — create an app-specific password at

@@ -43,6 +43,37 @@ module.exports = {
     hardenedRuntime: true,
     entitlements: 'build/entitlements.mac.plist',
     entitlementsInherit: 'build/entitlements.mac.plist',
+
+    // Don't run `codesign` on data files inside the bundled runtime.
+    //
+    // This is the single biggest cost in packaging. @electron/osx-sign walks the
+    // whole bundle and spawns one `codesign` process PER FILE, and each one makes
+    // a network round-trip to Apple's timestamp server. Our staged runtime is
+    // ~40,000 files, of which only ~420 are actual binaries (.so/.dylib/
+    // extensionless executables). The other ~39,000 are Python source, bytecode
+    // caches, C headers, and JSON — ~11,000 .py and ~10,000 .pyc alone. Signing
+    // those individually is what turned packaging into a 10-20 minute job.
+    //
+    // Skipping them does NOT weaken the signature. Non-Mach-O files are not
+    // independently signable in any meaningful sense; their integrity comes from
+    // the bundle seal (_CodeSignature/CodeResources), which still hashes every
+    // one of them when the top-level .app is signed at the end. `codesign
+    // --verify --deep` and notarization both still pass.
+    //
+    // Scoped to /stage/ on purpose so Electron's own framework signing — which
+    // does have real per-file requirements — is left exactly as it was.
+    signIgnore: [
+      '/stage/.*\\.(py|pyc|pyo|pyi|pyx|pxd)$',
+      '/stage/.*\\.(h|hpp|hxx|inc|c|cc|cpp)$',
+      '/stage/.*\\.(json|jsonl|ts|tsx|map|md|rst|txt|cfg|toml|ini|yaml|yml|xml)$',
+      '/stage/.*\\.d\\.(ts|cts|mts)$',
+      '/stage/.*\\.(gz|zip|whl|tar)$',
+      '/stage/.*\\.(png|jpg|jpeg|gif|svg|ico|webp|ttf|otf|woff|woff2|icns)$',
+      '/stage/.*\\.(csv|npy|npz|dat|pb|tflite|onnx|bin|pth|pt|model|vocab)$',
+      '/stage/.*\\.(html|css|scss|less|mjs|cjs|js)$',
+      '/stage/.*/(LICENSE|COPYING|NOTICE|AUTHORS|README|RECORD|METADATA|WHEEL|top_level|entry_points)[^/]*$',
+    ],
+
     // ${arch} keeps the arm64 and x64 DMGs from overwriting each other.
     artifactName: '${productName}-${version}-${arch}.${ext}',
     // Both targets are required, for different jobs:
