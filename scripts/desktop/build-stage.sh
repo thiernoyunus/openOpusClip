@@ -71,11 +71,19 @@ fi
 
 # Running the staged x64 CPython (for pip install + the import smoke test) on an
 # Apple Silicon host needs Rosetta 2. Emulate only when host and target differ.
-EMULATE=()
+#
+# `command` is a harmless no-op prefix rather than an empty array: macOS ships
+# bash 3.2, where "${EMULATE[@]}" on an empty array is an "unbound variable"
+# error under `set -u`, which would break every native build.
+EMULATE=(command)
+# Explicit flag for "is this a cross build?" — clearer than counting EMULATE's
+# elements, and immune to the no-op prefix above.
+CROSS_BUILD=0
 if [[ "${TARGET_ARCH}" == "x64" && "$(uname -m)" == "arm64" ]]; then
   /usr/bin/pgrep -q oahd \
     || { echo "ERROR: cross-building x64 needs Rosetta 2. Install it with: softwareupdate --install-rosetta" >&2; exit 1; }
   EMULATE=(arch -x86_64)
+  CROSS_BUILD=1
 
   # Some pure-Python deps have no macOS Intel wheel anymore and are built from
   # source instead (notably `cryptography`, a transitive google-genai dep whose
@@ -315,7 +323,7 @@ info "smoke-testing imports ..."
 # context, which Rosetta cannot reach — same reason the videotoolbox encode above
 # is skipped when cross-building. On a cross build we still import everything,
 # which is what actually catches an over-aggressive prune.
-if [[ ${#EMULATE[@]} -eq 0 ]]; then
+if [[ "${CROSS_BUILD}" -eq 0 ]]; then
   _SMOKE_INFER="fd = mediapipe.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5); fd.process(np.zeros((480, 640, 3), dtype=np.uint8))"
 else
   _SMOKE_INFER="pass  # skipped: GPU inference is unavailable under Rosetta"
@@ -390,7 +398,7 @@ _ff_tmp="$(mktemp -d)"
 # x64 encoder can't reach the media engine, so a failure here says nothing about
 # the real Intel machine — verify the encoder is COMPILED IN and leave the
 # runtime check to a native host.
-if [[ ${#EMULATE[@]} -eq 0 ]]; then
+if [[ "${CROSS_BUILD}" -eq 0 ]]; then
   "${STAGE}/bin/ffmpeg" -hide_banner -y -f lavfi -i testsrc=duration=1:size=320x240:rate=30 \
     -c:v h264_videotoolbox -pix_fmt yuv420p "${_ff_tmp}/vt.mp4" >/dev/null 2>&1 || die "h264_videotoolbox test encode failed"
 else
@@ -412,7 +420,7 @@ CHROME_VERSION="$(node -p "require('${REPO_ROOT}/remotion/node_modules/@remotion
 [[ -n "${CHROME_VERSION}" ]] || die "could not read Remotion's pinned Chrome version (TESTED_VERSION)"
 info "Remotion pins Chrome ${CHROME_VERSION}"
 
-if [[ ${#EMULATE[@]} -eq 0 ]]; then
+if [[ "${CROSS_BUILD}" -eq 0 ]]; then
   # Native: let the CLI resolve + validate the cached browser (it re-downloads a
   # stale one, which a presence-only check would happily stage).
   info "ensuring chrome-headless-shell via remotion/ CLI ..."
@@ -456,7 +464,7 @@ done
 printf '    %-22s %s\n' "TOTAL" "$(du -sh "${STAGE}" | awk '{print $1}')"
 
 log "Stage build complete: ${STAGE} (${TARGET_ARCH})"
-if [[ ${#EMULATE[@]} -eq 0 ]]; then
+if [[ "${CROSS_BUILD}" -eq 0 ]]; then
   echo "Next: scripts/desktop/verify-stage.sh"
 else
   echo "Next: package with electron-builder --mac dir --${TARGET_ARCH}"
