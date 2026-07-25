@@ -35,19 +35,34 @@ installed first.
 Build the bundled runtime, then package it. The runtime is architecture
 specific, so each target gets its own stage folder:
 
-```bash
-# Apple Silicon (arm64)
-scripts/desktop/build-stage.sh --arch arm64   # -> desktop-stage/     (~2.0 GB)
-cd electron && npm run package:arm64          # -> dist/openOpusClip-<ver>-arm64.{dmg,zip}
+**For a real release, build both architectures in ONE `package:both` run:**
 
-# Intel (x64) — can be cross-built from an Apple Silicon Mac (needs Rosetta 2)
+```bash
+scripts/desktop/build-stage.sh --arch arm64   # -> desktop-stage/     (~2.0 GB)
 scripts/desktop/build-stage.sh --arch x64     # -> desktop-stage-x64/ (~2.0 GB)
-cd electron && npm run package:x64            # -> dist/openOpusClip-<ver>-x64.{dmg,zip}
+cd electron && npm run package:both           # both .dmg + .zip, one latest-mac.yml
 ```
 
-`--arch` defaults to the machine you're on. `npm run package:both` builds both
-DMGs in one go, but needs BOTH stage folders present (~4.0 GB) plus room for the
-installers, so watch free disk.
+This needs BOTH stage folders present (~4.0 GB) plus room for the installers, so
+watch free disk. `--arch` defaults to the machine you're on, and the Intel stage
+cross-builds from Apple Silicon via Rosetta 2.
+
+> **Do not package the two architectures in separate runs for a release.**
+> Both write the same `dist/latest-mac.yml`, and the second run OVERWRITES the
+> first rather than merging — leaving metadata that lists only one architecture.
+> The updater then filters that list by the Mac it is running on and finds
+> nothing for the other architecture, so those users get
+> `ERR_UPDATER_ZIP_FILE_NOT_FOUND` on every check and can never update.
+> `package:both` writes a single file listing all four artifacts, which is what
+> the updater expects.
+
+Per-architecture runs are still fine for local testing, where the metadata is
+unused:
+
+```bash
+cd electron && npm run package:arm64          # -> dist/openOpusClip-<ver>-arm64.{dmg,zip}
+cd electron && npm run package:x64            # -> dist/openOpusClip-<ver>-x64.{dmg,zip}
+```
 
 Each packaging run produces **two** artifacts per architecture:
 
@@ -55,11 +70,12 @@ Each packaging run produces **two** artifacts per architecture:
 |---|---|
 | `openOpusClip-<ver>-<arch>.dmg` | what people download and install |
 | `openOpusClip-<ver>-<arch>.zip` | what auto-update installs from |
-| `latest-mac.yml` | version metadata the updater reads |
+| `latest-mac.yml` | version metadata the updater reads (one file, both arches) |
 
-Upload **all three** to the GitHub release. The updater ignores the DMG and
-fails with `ERR_UPDATER_ZIP_FILE_NOT_FOUND` if the zip is missing, so a
-DMG-only release installs fine but can never update itself.
+Upload **all five** to the GitHub release — both DMGs, both zips, and the single
+`latest-mac.yml`. The updater ignores the DMG and fails with
+`ERR_UPDATER_ZIP_FILE_NOT_FOUND` if the matching zip is missing, so a DMG-only
+release installs fine but can never update itself.
 
 If you invoke electron-builder directly, pass **both** targets — a CLI target
 list replaces the one in `electron-builder.js` rather than merging with it, so
