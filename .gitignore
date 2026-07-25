@@ -48,5 +48,14 @@ electron/dist/
 
 # Desktop packaging (Step A): staged runtime + download cache
 desktop-stage/
+desktop-stage-x64/
 .desktop-build-cache/
 
+# Code-signing material. The private key and .p12 must NEVER be committed:
+# together with the public cert they are the full Developer ID signing identity,
+# and anyone with them can ship software as this developer. They live in the
+# login keychain; these files are only a local backup.
+electron/certs/
+*.p12
+*.key
+*.csr

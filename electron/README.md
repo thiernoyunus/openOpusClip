@@ -32,15 +32,55 @@ The built `openOpusClip.app` bundles everything it needs — a portable Python,
 ffmpeg, the renderer, and a headless browser — so nothing has to be
 installed first.
 
-Build the bundled runtime, then package it:
+Build the bundled runtime, then package it. The runtime is architecture
+specific, so each target gets its own stage folder:
 
 ```bash
-scripts/desktop/build-stage.sh     # produces desktop-stage/ (~2.7 GB)
-cd electron && npm run package      # -> electron/dist/mac-arm64/openOpusClip.app
+# Apple Silicon (arm64)
+scripts/desktop/build-stage.sh --arch arm64   # -> desktop-stage/     (~2.7 GB)
+cd electron && npm run package:arm64          # -> dist/openOpusClip-<ver>-arm64.dmg
+
+# Intel (x64) — can be cross-built from an Apple Silicon Mac (needs Rosetta 2)
+scripts/desktop/build-stage.sh --arch x64     # -> desktop-stage-x64/ (~2.7 GB)
+cd electron && npm run package:x64            # -> dist/openOpusClip-<ver>-x64.dmg
 ```
 
-`npm run package:dmg` makes a `.dmg` installer instead of a plain `.app` — this
-is what you'd hand someone to install the app.
+`--arch` defaults to the machine you're on. `npm run package:both` builds both
+DMGs in one go, but needs BOTH stage folders present (~5.4 GB) plus room for the
+installers, so watch free disk.
+
+`npm run package` still makes a plain `.app` (arm64, no installer) for quick
+local testing.
+
+### Code signing and notarization
+
+Packaging signs the app automatically with the **Developer ID Application**
+certificate in the login keychain — that is what lets other people run it
+without macOS blocking it. Confirm the certificate is present with:
+
+```bash
+security find-identity -v -p codesigning   # look for "Developer ID Application"
+```
+
+Signing is what makes packaging slow (it signs every nested binary in the ~3 GB
+runtime — expect roughly 10-20 minutes per architecture).
+
+To notarize as well — Apple's scan, which removes the "unidentified developer"
+warning entirely — create an app-specific password at
+[appleid.apple.com](https://appleid.apple.com/account/manage), put it in
+`electron/.env` (git-ignored), and run the notarize step on the built app:
+
+```bash
+# electron/.env
+APPLE_ID="you@example.com"
+APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
+```
+
+```bash
+node electron/scripts/notarize.js electron/dist/mac/openOpusClip.app
+```
+
+Set `CSC_IDENTITY_AUTO_DISCOVERY=false` to deliberately build unsigned.
 
 The app icon lives at `electron/build/icon.png` / `icon.icns`. Regenerate it
 after changing the logo with:
@@ -51,9 +91,9 @@ after changing the logo with:
 
 ### First launch notes
 
-- The app is **unsigned**, so macOS will refuse to open it on a double-click
-  the first time. Right-click the app and choose **Open**, then confirm — you
-  only need to do this once.
+- A signed but **not yet notarized** build still shows a warning on first open.
+  Right-click the app and choose **Open**, then confirm — once per machine.
+  Notarizing (above) removes this step for everyone who downloads it.
 - Your videos, uploads, and settings live in
   `~/Library/Application Support/openOpusClip` (output/, uploads/, hf-cache/).
   Deleting the app does not delete these.

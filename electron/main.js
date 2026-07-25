@@ -24,6 +24,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { spawn } = require('child_process');
+const { autoUpdater } = require('electron-updater');
 
 const ROOT = path.resolve(__dirname, '..');
 const BACKEND_URL = 'http://127.0.0.1:8000';
@@ -235,12 +236,19 @@ function buildPackagedPlan() {
     .filter(Boolean)
     .join(path.delimiter);
 
-  const chromeExecutable = path.join(
-    RES,
-    'chrome-headless-shell',
-    'chrome-headless-shell-mac-arm64',
-    'chrome-headless-shell'
-  );
+  // The staged browser lives in a per-architecture folder
+  // (chrome-headless-shell-mac-arm64 / -mac-x64), so derive it from the running
+  // process instead of hardcoding one. Falls back to a scan so an unexpected
+  // folder name surfaces as a renderer error rather than a silently wrong path.
+  const chromeShellRoot = path.join(RES, 'chrome-headless-shell');
+  const chromeShellDir = 'chrome-headless-shell-mac-' + process.arch; // arm64 | x64
+  let chromeExecutable = path.join(chromeShellRoot, chromeShellDir, 'chrome-headless-shell');
+  if (!fs.existsSync(chromeExecutable)) {
+    const found = (fs.existsSync(chromeShellRoot) ? fs.readdirSync(chromeShellRoot) : [])
+      .map((entry) => path.join(chromeShellRoot, entry, 'chrome-headless-shell'))
+      .find((candidate) => fs.existsSync(candidate));
+    if (found) chromeExecutable = found;
+  }
 
   return {
     outputDir,
@@ -522,11 +530,44 @@ if (!gotSingleInstanceLock) {
   });
 }
 
+
+// --- Auto-update (packaged mode only) --------------------------------
+
+autoUpdater.autoDownload = false;
+autoUpdater.setFeedURL({
+  provider: 'github',
+  owner: 'thiernoyunus',
+  repo: 'openOpusClip',
+});
+
+autoUpdater.on('update-available', (info) => {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (!win) return;
+  dialog.showMessageBox(win, {
+    type: 'info',
+    title: 'Update Available',
+    message: `openOpusClip ${info.version} is available. Download it now?`,
+    buttons: ['Download', 'Later'],
+    defaultId: 0,
+  }).then(({ response }) => {
+    if (response === 0) autoUpdater.downloadUpdate();
+  });
+});
+
+autoUpdater.on('update-downloaded', () => {
+  autoUpdater.quitAndInstall();
+});
+
+
 // --- Entry point ------------------------------------------------------
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return; // duplicate launch — already quit above
   if (!runPreflightChecks()) return;
+
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdates().catch(() => {});
+  }
 
   const alreadyUp = await checkUrlIsUp(BACKEND_URL + '/api/config', 1500);
   if (alreadyUp) {

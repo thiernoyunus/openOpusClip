@@ -1,0 +1,19 @@
+# pip constraints applied ONLY when staging the macOS Intel (x64) build.
+#
+# Why this file exists:
+#   cryptography is a transitive dependency (google-genai -> google-auth), and
+#   from 49.0.0 on it publishes NO macOS Intel wheel — not x86_64, not
+#   universal2. pip therefore falls back to building it from source, which needs
+#   a Rust toolchain targeting x86_64 AND an Intel build of OpenSSL. That chain
+#   is not worth carrying just to reach a dependency the app never calls
+#   directly (openOpusClip authenticates to Gemini with an API key, so
+#   google-auth's JWT/service-account signing paths are never used).
+#
+#   48.0.1 is the newest release that still ships a macOS universal2 wheel,
+#   which runs natively on both Intel and Apple Silicon. Pinning below 49
+#   keeps the Intel stage wheel-only.
+#
+# Revisit when: cryptography resumes publishing macOS universal2/x86_64 wheels,
+# or google-auth drops the hard cryptography dependency. Then delete this file
+# and the --constraint flag in build-stage.sh.
+cryptography<49
