@@ -45,7 +45,17 @@ module.exports = {
     entitlementsInherit: 'build/entitlements.mac.plist',
     // ${arch} keeps the arm64 and x64 DMGs from overwriting each other.
     artifactName: '${productName}-${version}-${arch}.${ext}',
-    target: [{ target: 'dmg', arch: ['arm64', 'x64'] }],
+    // Both targets are required, for different jobs:
+    //   dmg — the installer people download and drag to Applications.
+    //   zip — what electron-updater installs FROM. MacUpdater looks for a zip
+    //         and explicitly excludes dmg/pkg, throwing
+    //         ERR_UPDATER_ZIP_FILE_NOT_FOUND without one, so a dmg-only
+    //         release makes auto-update fail at download. Building zip here
+    //         also produces the latest-mac.yml metadata the updater reads.
+    target: [
+      { target: 'dmg', arch: ['arm64', 'x64'] },
+      { target: 'zip', arch: ['arm64', 'x64'] },
+    ],
   },
 
   dmg: {

@@ -49,6 +49,18 @@ cd electron && npm run package:x64            # -> dist/openOpusClip-<ver>-x64.d
 DMGs in one go, but needs BOTH stage folders present (~5.4 GB) plus room for the
 installers, so watch free disk.
 
+Each packaging run produces **two** artifacts per architecture:
+
+| Artifact | Purpose |
+|---|---|
+| `openOpusClip-<ver>-<arch>.dmg` | what people download and install |
+| `openOpusClip-<ver>-<arch>.zip` | what auto-update installs from |
+| `latest-mac.yml` | version metadata the updater reads |
+
+Upload **all three** to the GitHub release. The updater ignores the DMG and
+fails with `ERR_UPDATER_ZIP_FILE_NOT_FOUND` if the zip is missing, so a
+DMG-only release installs fine but can never update itself.
+
 `npm run package` still makes a plain `.app` (arm64, no installer) for quick
 local testing.
 
