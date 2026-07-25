@@ -31,7 +31,7 @@ module.exports = {
   appId: 'com.openopusclip.desktop',
   productName: 'openOpusClip',
   asar: true,
-  files: ['main.js', 'package.json'],
+  files: ['main.js', 'preload.js', 'telemetry.js', 'package.json'],
 
   // Resolved per-arch in the artifact hooks below.
   extraResources: [{ from: stageForArch(process.env.OPENSHORTS_TARGET_ARCH), to: 'stage' }],
