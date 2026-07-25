@@ -19,7 +19,7 @@
 //   a terminal), this shell notices and just opens a window pointed at it
 //   instead of starting a second copy.
 
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -644,6 +644,47 @@ autoUpdater.on('update-downloaded', (info) => {
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return; // duplicate launch — already quit above
   if (!runPreflightChecks()) return;
+
+  // --- macOS application menu with "Check for Updates…" ----------------
+  // On macOS the first menu is always the app name ("openOpusClip") and
+  // conventionally holds About, Preferences, and Quit. We add a
+  // "Check for Updates…" item after About, which mirrors what people
+  // expect from every other Mac app.
+  //
+  // Disabled while no update is available; the autoUpdater events flip it
+  // on when a newer release is found.
+  const updateMenuItem = {
+    label: 'Check for Updates…',
+    click: () => autoUpdater.checkForUpdates().catch(() => {}),
+  };
+  if (app.isPackaged) {
+    // Not wired to .enabled yet — always clickable. If nothing is
+    // available the dialog just closes immediately, which matches
+    // Safari / Chrome behaviour when you're already up to date.
+  } else {
+    // Hide the menu item in dev mode: there is no published release to
+    // check against and it would just throw.
+    updateMenuItem.visible = false;
+  }
+  const menuTemplate = [
+    {
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        updateMenuItem,
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
+    { role: 'editMenu' },
+    { role: 'windowMenu' },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
 
   if (app.isPackaged) {
     autoUpdater.checkForUpdates().catch(() => {});
