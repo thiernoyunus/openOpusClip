@@ -282,6 +282,12 @@ fi
 # torchvision is deliberately NOT pruned: ultralytics reads its version metadata
 # at import time and raises PackageNotFoundError without it.
 #
+# functorch is deliberately NOT pruned either. On Apple Silicon it is an empty
+# compatibility shim, but the Intel build resolves to an older torch whose
+# libtorch_global_deps.dylib links @loader_path/../../functorch/.dylibs/
+# libiomp5.dylib — so removing it makes `import torch` fail outright with a
+# dlopen error. Same prune, harmless on one arch and fatal on the other.
+#
 # __pycache__ is also deliberately NOT pruned, even though it is ~310 MB and
 # 13k files. Inside a signed .app those files cannot be regenerated (the bundle
 # is read-only and writing into it would break the code signature), so removing
@@ -290,7 +296,7 @@ log "d2. Pruning unused Python packages"
 SITE="${STAGE}/python/lib/python3.11/site-packages"
 _pruned_before="$(du -sk "${STAGE}/python" | awk '{print $1}')"
 for _pkg in jax jaxlib sympy mpmath onnxruntime polars _polars_runtime_32 \
-            polars_runtime_32 networkx functorch isympy.py; do
+            polars_runtime_32 networkx isympy.py; do
   for _match in "${SITE}/${_pkg}" "${SITE}/${_pkg}-"*.dist-info; do
     [[ -e "${_match}" ]] && rm -rf "${_match}"
   done
