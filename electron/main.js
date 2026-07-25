@@ -24,6 +24,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { spawn } = require('child_process');
+const { autoUpdater } = require('electron-updater');
 
 const ROOT = path.resolve(__dirname, '..');
 const BACKEND_URL = 'http://127.0.0.1:8000';
@@ -235,12 +236,19 @@ function buildPackagedPlan() {
     .filter(Boolean)
     .join(path.delimiter);
 
-  const chromeExecutable = path.join(
-    RES,
-    'chrome-headless-shell',
-    'chrome-headless-shell-mac-arm64',
-    'chrome-headless-shell'
-  );
+  // The staged browser lives in a per-architecture folder
+  // (chrome-headless-shell-mac-arm64 / -mac-x64), so derive it from the running
+  // process instead of hardcoding one. Falls back to a scan so an unexpected
+  // folder name surfaces as a renderer error rather than a silently wrong path.
+  const chromeShellRoot = path.join(RES, 'chrome-headless-shell');
+  const chromeShellDir = 'chrome-headless-shell-mac-' + process.arch; // arm64 | x64
+  let chromeExecutable = path.join(chromeShellRoot, chromeShellDir, 'chrome-headless-shell');
+  if (!fs.existsSync(chromeExecutable)) {
+    const found = (fs.existsSync(chromeShellRoot) ? fs.readdirSync(chromeShellRoot) : [])
+      .map((entry) => path.join(chromeShellRoot, entry, 'chrome-headless-shell'))
+      .find((candidate) => fs.existsSync(candidate));
+    if (found) chromeExecutable = found;
+  }
 
   return {
     outputDir,
@@ -443,6 +451,12 @@ function createWindow() {
     title: 'openOpusClip',
   });
   win.loadURL(BACKEND_URL);
+
+  // An update found during startup (before any window existed) is held until
+  // now. Wait for the page so the prompt doesn't land on a blank window.
+  win.webContents.once('did-finish-load', () => {
+    if (pendingUpdate) promptForUpdate(pendingUpdate);
+  });
 }
 
 // --- Step 5: clean shutdown --------------------------------------------
@@ -461,6 +475,38 @@ function killProcessGroup(child) {
     }
   } catch (err) {
     // Process may already be gone; nothing more we can do.
+  }
+}
+
+// True while the process group still exists. Signal 0 performs the permission
+// and existence check without actually sending anything.
+function processGroupAlive(child) {
+  if (!child || child.pid == null) return false;
+  try {
+    process.kill(process.platform === 'win32' ? child.pid : -child.pid, 0);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+// Poll until every group is gone, or the timeout expires. On timeout the
+// stragglers get SIGKILL: a slow child must not block an update restart
+// forever, but neither should we hand over while it still owns a port.
+async function waitForProcessGroupsToExit(children, timeoutMs) {
+  const alive = children.filter(Boolean);
+  if (alive.length === 0) return;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!alive.some(processGroupAlive)) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  for (const child of alive.filter(processGroupAlive)) {
+    try {
+      process.kill(process.platform === 'win32' ? child.pid : -child.pid, 'SIGKILL');
+    } catch (err) {
+      // Already gone between the check and the signal.
+    }
   }
 }
 
@@ -522,11 +568,86 @@ if (!gotSingleInstanceLock) {
   });
 }
 
+
+// --- Auto-update (packaged mode only) --------------------------------
+
+autoUpdater.autoDownload = false;
+autoUpdater.setFeedURL({
+  provider: 'github',
+  owner: 'thiernoyunus',
+  repo: 'openOpusClip',
+});
+
+// GitHub can answer before the window exists: startup waits on the backend,
+// which can take up to 60s on a cold launch. Remember the update and prompt
+// once a window is available, otherwise the offer would be dropped silently
+// and the user would never see it until some later launch.
+let pendingUpdate = null;
+
+function promptForUpdate(info) {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (!win) {
+    pendingUpdate = info;
+    return;
+  }
+  pendingUpdate = null;
+  dialog.showMessageBox(win, {
+    type: 'info',
+    title: 'Update Available',
+    message: `openOpusClip ${info.version} is available. Download it now?`,
+    detail: 'The download runs in the background. The app restarts to finish installing.',
+    buttons: ['Download', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+  }).then(({ response }) => {
+    if (response === 0) autoUpdater.downloadUpdate().catch(() => {});
+  });
+}
+
+autoUpdater.on('update-available', promptForUpdate);
+
+autoUpdater.on('update-downloaded', (info) => {
+  const win = BrowserWindow.getAllWindows()[0];
+  const restartNow = async () => {
+    // quitAndInstall bypasses 'will-quit', so the backend/renderer process
+    // groups would be orphaned (holding ports 8000/3100) across the restart.
+    quitting = true;
+    killProcessGroup(spawned.backend);
+    killProcessGroup(spawned.renderer);
+    // SIGTERM only ASKS them to stop, and uvicorn shuts down gracefully, so the
+    // ports can still be held when the updated app relaunches. It would then
+    // find 8000 answering, assume a backend is already up, and attach to a
+    // process that is about to exit — leaving the new app with no backend at
+    // all. Wait for them to actually go before handing over.
+    await waitForProcessGroupsToExit([spawned.backend, spawned.renderer], 10000);
+    autoUpdater.quitAndInstall();
+  };
+
+  // Restarting unannounced mid-export would lose the user's work.
+  if (!win) return restartNow();
+  dialog.showMessageBox(win, {
+    type: 'info',
+    title: 'Update Ready',
+    message: `openOpusClip ${info.version} is ready to install.`,
+    detail: 'The app needs to restart. Finish any export in progress first.',
+    buttons: ['Restart Now', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+  }).then(({ response }) => {
+    if (response === 0) restartNow();
+  });
+});
+
+
 // --- Entry point ------------------------------------------------------
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return; // duplicate launch — already quit above
   if (!runPreflightChecks()) return;
+
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdates().catch(() => {});
+  }
 
   const alreadyUp = await checkUrlIsUp(BACKEND_URL + '/api/config', 1500);
   if (alreadyUp) {

@@ -32,15 +32,122 @@ The built `openOpusClip.app` bundles everything it needs — a portable Python,
 ffmpeg, the renderer, and a headless browser — so nothing has to be
 installed first.
 
-Build the bundled runtime, then package it:
+Build the bundled runtime, then package it. The runtime is architecture
+specific, so each target gets its own stage folder:
+
+**For a real release, build both architectures in ONE `package:both` run:**
 
 ```bash
-scripts/desktop/build-stage.sh     # produces desktop-stage/ (~2.7 GB)
-cd electron && npm run package      # -> electron/dist/mac-arm64/openOpusClip.app
+scripts/desktop/build-stage.sh --arch arm64   # -> desktop-stage/     (~2.0 GB)
+scripts/desktop/build-stage.sh --arch x64     # -> desktop-stage-x64/ (~2.0 GB)
+cd electron && npm run package:both           # both .dmg + .zip, one latest-mac.yml
 ```
 
-`npm run package:dmg` makes a `.dmg` installer instead of a plain `.app` — this
-is what you'd hand someone to install the app.
+This needs BOTH stage folders present (~4.0 GB) plus room for the installers, so
+watch free disk. `--arch` defaults to the machine you're on, and the Intel stage
+cross-builds from Apple Silicon via Rosetta 2.
+
+> **Do not package the two architectures in separate runs for a release.**
+> Both write the same `dist/latest-mac.yml`, and the second run OVERWRITES the
+> first rather than merging — leaving metadata that lists only one architecture.
+> The updater then filters that list by the Mac it is running on and finds
+> nothing for the other architecture, so those users get
+> `ERR_UPDATER_ZIP_FILE_NOT_FOUND` on every check and can never update.
+> `package:both` writes a single file listing all four artifacts, which is what
+> the updater expects.
+
+Per-architecture runs are still fine for local testing, where the metadata is
+unused:
+
+```bash
+cd electron && npm run package:arm64          # -> dist/openOpusClip-<ver>-arm64.{dmg,zip}
+cd electron && npm run package:x64            # -> dist/openOpusClip-<ver>-x64.{dmg,zip}
+```
+
+Each packaging run produces **two** artifacts per architecture:
+
+| Artifact | Purpose |
+|---|---|
+| `openOpusClip-<ver>-<arch>.dmg` | what people download and install |
+| `openOpusClip-<ver>-<arch>.zip` | what auto-update installs from |
+| `latest-mac.yml` | version metadata the updater reads (one file, both arches) |
+
+Upload **all five** to the GitHub release — both DMGs, both zips, and the single
+`latest-mac.yml`. The updater ignores the DMG and fails with
+`ERR_UPDATER_ZIP_FILE_NOT_FOUND` if the matching zip is missing, so a DMG-only
+release installs fine but can never update itself.
+
+If you invoke electron-builder directly, pass **both** targets — a CLI target
+list replaces the one in `electron-builder.js` rather than merging with it, so
+`--mac dmg` silently drops the zip:
+
+```bash
+npx electron-builder --mac dmg zip --arm64
+```
+
+`npm run package` still makes a plain `.app` (arm64, no installer) for quick
+local testing.
+
+### Code signing and notarization
+
+Packaging signs the app automatically with the **Developer ID Application**
+certificate in the login keychain — that is what lets other people run it
+without macOS blocking it. Confirm the certificate is present with:
+
+```bash
+security find-identity -v -p codesigning   # look for "Developer ID Application"
+```
+
+Expect roughly **6-7 minutes per architecture**.
+
+It used to be ~28 minutes. Two things fixed that, and both are easy to undo by
+accident, so they're worth knowing:
+
+1. `signIgnore` in `electron-builder.js` stops `codesign` from running on data
+   files inside the bundled runtime. The signing tool otherwise launches one
+   `codesign` process per file — ~40,000 of them, each making a network call to
+   Apple's timestamp server — when only ~1,800 are actually executable code.
+   The other files are still protected: the bundle seal hashes every one of
+   them, and editing any file afterwards still fails verification.
+2. `build-stage.sh` drops Python packages the app never runs (jax, sympy,
+   onnxruntime, polars, networkx and friends — ~670 MB), so there is that much
+   less to copy, sign, and compress.
+
+If you add a Python dependency that ships a new kind of binary, check it still
+gets signed rather than skipped.
+
+To notarize as well — Apple's scan, which removes the "unidentified developer"
+warning entirely — create an app-specific password at
+[appleid.apple.com](https://appleid.apple.com/account/manage), put it in
+`electron/.env` (git-ignored), and run the notarize step on the built app:
+
+```bash
+# electron/.env
+APPLE_ID="you@example.com"
+APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
+```
+
+```bash
+# Notarize the installer people actually download (recommended).
+node electron/scripts/notarize.js electron/dist/openOpusClip-<version>-<arch>.dmg
+
+# With no argument it picks the most recent .dmg in dist/.
+node electron/scripts/notarize.js
+```
+
+Passing a `.app` also works — the script zips it first, because Apple's notary
+service only accepts `.zip`, `.pkg`, or `.dmg`. Notarizing the DMG is usually
+what you want, since that is the file being distributed.
+
+Confirm it worked (this is the check that reflects what a user's Mac does):
+
+```bash
+spctl -a -vvv /Volumes/openOpusClip*/openOpusClip.app
+#   -> accepted
+#      source=Notarized Developer ID
+```
+
+Set `CSC_IDENTITY_AUTO_DISCOVERY=false` to deliberately build unsigned.
 
 The app icon lives at `electron/build/icon.png` / `icon.icns`. Regenerate it
 after changing the logo with:
@@ -51,9 +158,9 @@ after changing the logo with:
 
 ### First launch notes
 
-- The app is **unsigned**, so macOS will refuse to open it on a double-click
-  the first time. Right-click the app and choose **Open**, then confirm — you
-  only need to do this once.
+- A signed but **not yet notarized** build still shows a warning on first open.
+  Right-click the app and choose **Open**, then confirm — once per machine.
+  Notarizing (above) removes this step for everyone who downloads it.
 - Your videos, uploads, and settings live in
   `~/Library/Application Support/openOpusClip` (output/, uploads/, hf-cache/).
   Deleting the app does not delete these.

@@ -1,48 +1,26 @@
 {
   "name": "openopusclip-desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "package": "electron-builder --mac dir --arm64",
-    "package:dmg": "electron-builder --mac dmg --arm64"
+    "package:arm64": "electron-builder --mac dmg zip --arm64",
+    "package:x64": "electron-builder --mac dmg zip --x64",
+    "package:both": "electron-builder --mac dmg zip --arm64 --x64"
   },
   "devDependencies": {
     "electron": "^43.0.0",
     "electron-builder": "^25.1.8"
   },
-  "build": {
-    "appId": "com.openopusclip.desktop",
-    "productName": "openOpusClip",
-    "asar": true,
-    "files": [
-      "main.js",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "../desktop-stage",
-        "to": "stage"
-      }
-    ],
-    "mac": {
-      "target": [
-        "dir"
-      ],
-      "identity": null
-    },
-    "dmg": {
-      "title": "openOpusClip ${version}",
-      "icon": "build/icon.icns",
-      "window": {
-        "width": 540,
-        "height": 400
-      },
-      "contents": [
-        { "x": 130, "y": 220 },
-        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
-      ]
-    }
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
+  "description": "AI-powered vertical video generator",
+  "author": "Thierno Yunus Diallo <youndiallo@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thiernoyunus/openOpusClip.git"
   }
 }
