@@ -38,11 +38,11 @@ specific, so each target gets its own stage folder:
 ```bash
 # Apple Silicon (arm64)
 scripts/desktop/build-stage.sh --arch arm64   # -> desktop-stage/     (~2.0 GB)
-cd electron && npm run package:arm64          # -> dist/openOpusClip-<ver>-arm64.dmg
+cd electron && npm run package:arm64          # -> dist/openOpusClip-<ver>-arm64.{dmg,zip}
 
 # Intel (x64) — can be cross-built from an Apple Silicon Mac (needs Rosetta 2)
 scripts/desktop/build-stage.sh --arch x64     # -> desktop-stage-x64/ (~2.0 GB)
-cd electron && npm run package:x64            # -> dist/openOpusClip-<ver>-x64.dmg
+cd electron && npm run package:x64            # -> dist/openOpusClip-<ver>-x64.{dmg,zip}
 ```
 
 `--arch` defaults to the machine you're on. `npm run package:both` builds both
@@ -60,6 +60,14 @@ Each packaging run produces **two** artifacts per architecture:
 Upload **all three** to the GitHub release. The updater ignores the DMG and
 fails with `ERR_UPDATER_ZIP_FILE_NOT_FOUND` if the zip is missing, so a
 DMG-only release installs fine but can never update itself.
+
+If you invoke electron-builder directly, pass **both** targets — a CLI target
+list replaces the one in `electron-builder.js` rather than merging with it, so
+`--mac dmg` silently drops the zip:
+
+```bash
+npx electron-builder --mac dmg zip --arm64
+```
 
 `npm run package` still makes a plain `.app` (arm64, no installer) for quick
 local testing.

@@ -83,6 +83,12 @@ module.exports = {
     //         ERR_UPDATER_ZIP_FILE_NOT_FOUND without one, so a dmg-only
     //         release makes auto-update fail at download. Building zip here
     //         also produces the latest-mac.yml metadata the updater reads.
+    //
+    // CAUTION: a CLI target list REPLACES this, it does not merge. Running
+    // `electron-builder --mac dmg --arm64` normalizes to arm64:[dmg] and the
+    // zip below is silently skipped. That is why the npm scripts spell out
+    // `--mac dmg zip`. Keep the two in sync, or invoke with `--mac` alone and
+    // let this list apply.
     target: [
       { target: 'dmg', arch: ['arm64', 'x64'] },
       { target: 'zip', arch: ['arm64', 'x64'] },
