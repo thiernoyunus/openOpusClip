@@ -19,12 +19,13 @@
 //   a terminal), this shell notices and just opens a window pointed at it
 //   instead of starting a second copy.
 
-const { app, BrowserWindow, dialog, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
+const { createTelemetry } = require('./telemetry');
 
 const ROOT = path.resolve(__dirname, '..');
 const BACKEND_URL = 'http://127.0.0.1:8000';
@@ -42,6 +43,38 @@ const PACKAGED = app.isPackaged;
 app.setName('openOpusClip');
 const RES = path.join(process.resourcesPath, 'stage');
 const DATA = app.getPath('userData');
+const telemetry = createTelemetry({
+  userData: DATA,
+  appVersion: app.getVersion(),
+  platform: process.platform,
+  arch: process.arch,
+  packaged: PACKAGED,
+});
+
+ipcMain.handle('open-opus-telemetry:get-context', () => telemetry.getContext());
+
+function launchErrorCategory(err) {
+  if (err && err.code === 'ENOENT') return 'missing_executable';
+  if (err && (err.code === 'EACCES' || err.code === 'EPERM')) return 'permission_denied';
+  if (err && err.code === 'EADDRINUSE') return 'address_in_use';
+  return 'process_launch_failed';
+}
+
+// uncaughtExceptionMonitor observes crashes without changing Node's normal
+// crash behavior. Node reports an unhandled rejected promise here too, so we
+// can distinguish it without installing a handler that would keep a broken
+// process alive. The raw exception is deliberately never sent.
+process.on('uncaughtExceptionMonitor', (_error, origin) => {
+  telemetry.capture(
+    origin === 'unhandledRejection'
+      ? 'desktop_main_unhandled_rejection'
+      : 'desktop_main_uncaught_exception',
+    {
+      stage: 'main_process',
+      errorCategory: 'error',
+    }
+  );
+});
 
 // Children we spawned ourselves. If we didn't spawn something (because
 // it was already running), we must never try to kill it on quit.
@@ -82,6 +115,10 @@ function runPreflightChecks() {
     // missing is a corrupt/incomplete build, so point the user at that.
     const appPy = path.join(RES, 'backend', 'app.py');
     if (!fs.existsSync(appPy)) {
+      telemetry.capture('desktop_stack_startup_failed', {
+        stage: 'preflight',
+        errorCategory: 'missing_backend_bundle',
+      });
       fatal(
         'openOpusClip: incomplete installation',
         'A required file is missing from the app bundle:\n\n' +
@@ -92,6 +129,10 @@ function runPreflightChecks() {
     }
     const py = path.join(RES, 'python', 'bin', 'python3');
     if (!fs.existsSync(py)) {
+      telemetry.capture('desktop_stack_startup_failed', {
+        stage: 'preflight',
+        errorCategory: 'missing_python_runtime',
+      });
       fatal(
         'openOpusClip: incomplete installation',
         'The bundled Python runtime is missing:\n\n' +
@@ -105,6 +146,10 @@ function runPreflightChecks() {
 
   const venvDir = path.join(ROOT, '.venv');
   if (!fs.existsSync(venvDir)) {
+    telemetry.capture('desktop_stack_startup_failed', {
+      stage: 'preflight',
+      errorCategory: 'missing_python_environment',
+    });
     fatal(
       'openOpusClip: missing Python environment',
       'The Python virtual environment (.venv) was not found.\n\n' +
@@ -116,6 +161,10 @@ function runPreflightChecks() {
 
   const dashboardIndex = path.join(ROOT, 'dashboard', 'dist', 'index.html');
   if (!fs.existsSync(dashboardIndex)) {
+    telemetry.capture('desktop_stack_startup_failed', {
+      stage: 'preflight',
+      errorCategory: 'missing_dashboard_build',
+    });
     fatal(
       'openOpusClip: dashboard not built',
       'The dashboard has not been built yet (dashboard/dist/index.html is missing).\n\n' +
@@ -313,6 +362,10 @@ function spawnStack() {
   // is essential, so report it and quit cleanly instead of waiting out the
   // 60s health-check timeout.
   backend.on('error', (err) => {
+    telemetry.capture('desktop_backend_startup_failed', {
+      stage: 'backend_spawn',
+      errorCategory: launchErrorCategory(err),
+    });
     fatal(
       'openOpusClip: backend failed to start',
       'Could not launch the backend process:\n\n  ' + err.message +
@@ -335,6 +388,12 @@ function spawnStack() {
     // killing the app.
     checkUrlIsUp(BACKEND_URL + '/api/config', 2000).then((up) => {
       if (up) { spawned.backend = null; return; }
+      telemetry.capture('desktop_backend_exited', {
+        stage: 'backend_runtime',
+        errorCategory: signal ? 'fault_signal' : 'nonzero_exit',
+        exitCode: code,
+        signal,
+      });
       fatal(
         'openOpusClip: backend stopped',
         'The backend exited unexpectedly (' + (signal ? 'signal ' + signal : 'code ' + code) + ').\n\n' +
@@ -370,9 +429,10 @@ function spawnStack() {
   // with a mysteriously broken Export button. A failed launch fires 'error'
   // (possibly followed by 'exit'); reportRendererDown de-dupes the two.
   let rendererReported = false;
-  function showRendererDown(detail) {
+  function showRendererDown(detail, telemetryDetails) {
     if (quitting || rendererReported) return;
     rendererReported = true;
+    telemetry.capture(telemetryDetails.event, telemetryDetails.properties);
     dialog.showErrorBox(
       'openOpusClip: video renderer stopped',
       detail + '\nExporting clips will not work until you restart the app.\n\n' +
@@ -380,7 +440,7 @@ function spawnStack() {
         (rendererStderrTail.join('\n') || '(no output captured)')
     );
   }
-  function reportRendererDown(detail) {
+  function reportRendererDown(detail, telemetryDetails) {
     if (quitting || rendererReported) return;
     // Before the window opens, probe the RENDERER's own health — not the
     // backend's. A responding renderer on 3100 means an already-running
@@ -391,15 +451,24 @@ function spawnStack() {
     // renderer death is a genuine in-session crash.
     if (!windowOpen) {
       checkUrlIsUp('http://127.0.0.1:' + RENDERER_PORT + '/health', 2000).then((up) => {
-        if (!up) showRendererDown(detail);
+        if (!up) showRendererDown(detail, telemetryDetails);
       });
       return;
     }
-    showRendererDown(detail);
+    showRendererDown(detail, telemetryDetails);
   }
   renderer.on('error', (err) => {
     spawned.renderer = null;
-    reportRendererDown('The video render service could not be launched:\n\n  ' + err.message + '\n');
+    reportRendererDown(
+      'The video render service could not be launched:\n\n  ' + err.message + '\n',
+      {
+        event: 'desktop_render_service_startup_failed',
+        properties: {
+          stage: 'render_service_spawn',
+          errorCategory: launchErrorCategory(err),
+        },
+      }
+    );
   });
   renderer.on('exit', (code, signal) => {
     spawned.renderer = null;
@@ -409,7 +478,18 @@ function spawnStack() {
     // non-zero exit code or a fault signal (SIGSEGV/SIGABRT/SIGKILL-on-OOM).
     if (code === 0 || signal === 'SIGTERM' || signal === 'SIGINT' || signal === 'SIGHUP') return;
     const how = signal ? 'signal ' + signal : 'code ' + code;
-    reportRendererDown('The video render service exited unexpectedly (' + how + ').\n');
+    reportRendererDown(
+      'The video render service exited unexpectedly (' + how + ').\n',
+      {
+        event: 'desktop_render_service_exited',
+        properties: {
+          stage: 'render_service_runtime',
+          errorCategory: signal ? 'fault_signal' : 'nonzero_exit',
+          exitCode: code,
+          signal,
+        },
+      }
+    );
   });
   spawned.renderer = renderer;
 }
@@ -434,6 +514,10 @@ async function waitForBackendThenShowWindow() {
   const tail = backendStderrTail.length
     ? backendStderrTail.join('\n')
     : '(no backend output captured)';
+  telemetry.capture('desktop_backend_startup_failed', {
+    stage: 'backend_healthcheck',
+    errorCategory: 'health_check_timeout',
+  });
   fatal(
     'openOpusClip: backend did not start',
     'Timed out after 60 seconds waiting for the backend at ' +
@@ -449,6 +533,28 @@ function createWindow() {
     width: 1440,
     height: 900,
     title: 'openOpusClip',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+  win.webContents.on('render-process-gone', (_event, details) => {
+    if (details.reason === 'clean-exit') return;
+    const reasonCategories = {
+      crashed: 'process_crashed',
+      'abnormal-exit': 'process_crashed',
+      killed: 'process_killed',
+      'oom': 'out_of_memory',
+      'launch-failed': 'launch_failed',
+      'integrity-failure': 'integrity_failure',
+      unresponsive: 'unresponsive',
+    };
+    telemetry.capture('desktop_render_process_gone', {
+      stage: 'renderer_process',
+      errorCategory: reasonCategories[details.reason] || 'unknown',
+      exitCode: details.exitCode,
+    });
   });
   win.loadURL(BACKEND_URL);
 
@@ -516,6 +622,17 @@ async function waitForProcessGroupsToExit(children, timeoutMs) {
 let windowOpen = false;
 
 let quitting = false;
+let telemetryShutdownStarted = false;
+app.on('before-quit', (event) => {
+  if (telemetryShutdownStarted) return;
+  telemetryShutdownStarted = true;
+  event.preventDefault();
+  quitting = true;
+  killProcessGroup(spawned.backend);
+  killProcessGroup(spawned.renderer);
+  telemetry.shutdown(750).finally(() => app.quit());
+});
+
 app.on('will-quit', () => {
   quitting = true;
   // Only kill what we actually spawned. If the stack was already
@@ -600,11 +717,39 @@ function promptForUpdate(info) {
     defaultId: 0,
     cancelId: 1,
   }).then(({ response }) => {
-    if (response === 0) autoUpdater.downloadUpdate().catch(() => {});
+    if (response === 0) autoUpdater.downloadUpdate().catch(() => {
+      telemetry.capture('desktop_updater_failed', {
+        stage: 'updater_download',
+        errorCategory: 'updater_error',
+      });
+    });
   });
 }
 
 autoUpdater.on('update-available', promptForUpdate);
+
+// Only show "up to date" when the user manually clicked Check for Updates.
+// The startup check should be silent — nobody wants a dialog on every launch.
+let _manualUpdateCheck = false;
+autoUpdater.on('update-not-available', () => {
+  if (!_manualUpdateCheck) return;
+  _manualUpdateCheck = false;
+  const win = BrowserWindow.getAllWindows()[0];
+  if (!win) return;
+  dialog.showMessageBox(win, {
+    type: 'info',
+    title: 'No Updates',
+    message: 'openOpusClip is up to date.',
+    buttons: ['OK'],
+  });
+});
+
+autoUpdater.on('error', () => {
+  telemetry.capture('desktop_updater_failed', {
+    stage: 'updater_event',
+    errorCategory: 'updater_error',
+  });
+});
 
 autoUpdater.on('update-downloaded', (info) => {
   const win = BrowserWindow.getAllWindows()[0];
@@ -620,6 +765,7 @@ autoUpdater.on('update-downloaded', (info) => {
     // process that is about to exit — leaving the new app with no backend at
     // all. Wait for them to actually go before handing over.
     await waitForProcessGroupsToExit([spawned.backend, spawned.renderer], 10000);
+    await telemetry.shutdown(750);
     autoUpdater.quitAndInstall();
   };
 
@@ -645,6 +791,8 @@ app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return; // duplicate launch — already quit above
   if (!runPreflightChecks()) return;
 
+  telemetry.capture('desktop_app_started', { stage: 'application' });
+
   // --- macOS application menu with "Check for Updates…" ----------------
   // On macOS the first menu is always the app name ("openOpusClip") and
   // conventionally holds About, Preferences, and Quit. We add a
@@ -655,7 +803,12 @@ app.whenReady().then(async () => {
   // on when a newer release is found.
   const updateMenuItem = {
     label: 'Check for Updates…',
-    click: () => autoUpdater.checkForUpdates().catch(() => {}),
+    click: () => { _manualUpdateCheck = true; autoUpdater.checkForUpdates().catch(() => {
+      telemetry.capture('desktop_updater_failed', {
+        stage: 'updater_check',
+        errorCategory: 'updater_error',
+      });
+    }); },
   };
   if (app.isPackaged) {
     // Not wired to .enabled yet — always clickable. If nothing is
@@ -687,14 +840,27 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
 
   if (app.isPackaged) {
-    autoUpdater.checkForUpdates().catch(() => {});
+    autoUpdater.checkForUpdates().catch(() => {
+      telemetry.capture('desktop_updater_failed', {
+        stage: 'updater_check',
+        errorCategory: 'updater_error',
+      });
+    });
   }
 
   const alreadyUp = await checkUrlIsUp(BACKEND_URL + '/api/config', 1500);
   if (alreadyUp) {
     console.log('Backend already responding at ' + BACKEND_URL + ' — attaching instead of spawning.');
   } else {
-    spawnStack();
+    try {
+      spawnStack();
+    } catch (err) {
+      telemetry.capture('desktop_stack_startup_failed', {
+        stage: 'stack',
+        errorCategory: 'stack_setup_failed',
+      });
+      throw err;
+    }
   }
 
   await waitForBackendThenShowWindow();
