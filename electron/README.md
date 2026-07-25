@@ -77,7 +77,23 @@ APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
 ```
 
 ```bash
-node electron/scripts/notarize.js electron/dist/mac/openOpusClip.app
+# Notarize the installer people actually download (recommended).
+node electron/scripts/notarize.js electron/dist/openOpusClip-<version>-<arch>.dmg
+
+# With no argument it picks the most recent .dmg in dist/.
+node electron/scripts/notarize.js
+```
+
+Passing a `.app` also works — the script zips it first, because Apple's notary
+service only accepts `.zip`, `.pkg`, or `.dmg`. Notarizing the DMG is usually
+what you want, since that is the file being distributed.
+
+Confirm it worked (this is the check that reflects what a user's Mac does):
+
+```bash
+spctl -a -vvv /Volumes/openOpusClip*/openOpusClip.app
+#   -> accepted
+#      source=Notarized Developer ID
 ```
 
 Set `CSC_IDENTITY_AUTO_DISCOVERY=false` to deliberately build unsigned.

@@ -451,6 +451,12 @@ function createWindow() {
     title: 'openOpusClip',
   });
   win.loadURL(BACKEND_URL);
+
+  // An update found during startup (before any window existed) is held until
+  // now. Wait for the page so the prompt doesn't land on a blank window.
+  win.webContents.once('did-finish-load', () => {
+    if (pendingUpdate) promptForUpdate(pendingUpdate);
+  });
 }
 
 // --- Step 5: clean shutdown --------------------------------------------
@@ -540,22 +546,58 @@ autoUpdater.setFeedURL({
   repo: 'openOpusClip',
 });
 
-autoUpdater.on('update-available', (info) => {
+// GitHub can answer before the window exists: startup waits on the backend,
+// which can take up to 60s on a cold launch. Remember the update and prompt
+// once a window is available, otherwise the offer would be dropped silently
+// and the user would never see it until some later launch.
+let pendingUpdate = null;
+
+function promptForUpdate(info) {
   const win = BrowserWindow.getAllWindows()[0];
-  if (!win) return;
+  if (!win) {
+    pendingUpdate = info;
+    return;
+  }
+  pendingUpdate = null;
   dialog.showMessageBox(win, {
     type: 'info',
     title: 'Update Available',
     message: `openOpusClip ${info.version} is available. Download it now?`,
+    detail: 'The download runs in the background. The app restarts to finish installing.',
     buttons: ['Download', 'Later'],
     defaultId: 0,
+    cancelId: 1,
   }).then(({ response }) => {
-    if (response === 0) autoUpdater.downloadUpdate();
+    if (response === 0) autoUpdater.downloadUpdate().catch(() => {});
   });
-});
+}
 
-autoUpdater.on('update-downloaded', () => {
-  autoUpdater.quitAndInstall();
+autoUpdater.on('update-available', promptForUpdate);
+
+autoUpdater.on('update-downloaded', (info) => {
+  const win = BrowserWindow.getAllWindows()[0];
+  const restartNow = () => {
+    // quitAndInstall bypasses 'will-quit', so the backend/renderer process
+    // groups would be orphaned (holding ports 8000/3100) across the restart.
+    quitting = true;
+    killProcessGroup(spawned.backend);
+    killProcessGroup(spawned.renderer);
+    autoUpdater.quitAndInstall();
+  };
+
+  // Restarting unannounced mid-export would lose the user's work.
+  if (!win) return restartNow();
+  dialog.showMessageBox(win, {
+    type: 'info',
+    title: 'Update Ready',
+    message: `openOpusClip ${info.version} is ready to install.`,
+    detail: 'The app needs to restart. Finish any export in progress first.',
+    buttons: ['Restart Now', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+  }).then(({ response }) => {
+    if (response === 0) restartNow();
+  });
 });
 
 

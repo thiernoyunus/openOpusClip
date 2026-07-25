@@ -7,6 +7,7 @@
 // Usage:
 //   node scripts/notarize.js                       # newest .dmg in dist/
 //   node scripts/notarize.js dist/<name>.dmg       # a specific artifact
+//   node scripts/notarize.js dist/mac/Some.app     # zipped automatically
 //
 // Credentials come from electron/.env (git-ignored) or the environment:
 //   APPLE_ID="you@example.com"
@@ -16,6 +17,7 @@
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
 
 const ELECTRON_DIR = path.join(__dirname, '..');
 const DIST_DIR = path.join(ELECTRON_DIR, 'dist');
@@ -59,9 +61,6 @@ function resolveTarget(arg) {
   const resolved = path.resolve(arg);
   if (!fs.existsSync(resolved)) throw new Error(`not found: ${resolved}`);
 
-  // Notarize the .app directly when given one. Deriving a DMG name from an .app
-  // path is how this script previously mismatched architectures (it always
-  // guessed -arm64), so don't guess — submit exactly what was asked for.
   return resolved;
 }
 
@@ -73,18 +72,40 @@ try {
   process.exit(1);
 }
 
-console.log(`Submitting ${path.basename(target)} to Apple (team ${teamId})...`);
+// The notary service only accepts .zip, .pkg, or .dmg — a raw .app bundle is
+// rejected during pre-flight. Zip it (ditto preserves the symlinks and
+// extended attributes that code signatures depend on; a plain `zip` can
+// invalidate the signature). Stapling still has to target the ORIGINAL .app,
+// since the ticket cannot be attached to a throwaway archive.
+let uploadPath = target;
+let stapleTarget = target;
+let tempDir = null;
+
+if (target.endsWith('.app')) {
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'notarize-'));
+  uploadPath = path.join(tempDir, `${path.basename(target, '.app')}.zip`);
+  console.log(`Archiving ${path.basename(target)} for submission...`);
+  execFileSync('ditto', ['-c', '-k', '--keepParent', target, uploadPath], { stdio: 'inherit' });
+}
+
+function cleanup() {
+  if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+}
+process.on('exit', cleanup);
+
+console.log(`Submitting ${path.basename(uploadPath)} to Apple (team ${teamId})...`);
 console.log('This uploads the whole artifact and waits for the scan — expect several minutes.');
 execFileSync('xcrun', [
-  'notarytool', 'submit', target,
+  'notarytool', 'submit', uploadPath,
   '--apple-id', appleId,
   '--team-id', teamId,
   '--password', password,
   '--wait',
 ], { stdio: 'inherit' });
 
-// Stapling attaches the ticket so Gatekeeper can verify offline.
+// Stapling attaches the ticket so Gatekeeper can verify offline. This targets
+// the original artifact, not the temporary zip.
 console.log('Stapling notarization ticket...');
-execFileSync('xcrun', ['stapler', 'staple', target], { stdio: 'inherit' });
+execFileSync('xcrun', ['stapler', 'staple', stapleTarget], { stdio: 'inherit' });
 
-console.log(`\nDone. Verify with:\n  spctl -a -vvv "${target}"`);
+console.log(`\nDone. Verify with:\n  spctl -a -vvv "${stapleTarget}"`);

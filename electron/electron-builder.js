@@ -7,6 +7,12 @@
 // wrong stage produces an app that launches and then fails at the first
 // ffmpeg/Python call.
 //
+// The filename matters: electron-builder only auto-discovers
+// `electron-builder.{yml,yaml,json,json5,toml,js,cjs,ts}`. Naming this
+// `electron-builder.config.js` would make it load silently as if no config
+// existed — no bundled runtime, no signing, no entitlements — so do not rename
+// it without also passing --config.
+//
 // Build with:
 //   npx electron-builder --mac dmg --arm64
 //   npx electron-builder --mac dmg --x64
