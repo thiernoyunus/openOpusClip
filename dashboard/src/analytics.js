@@ -140,7 +140,11 @@ export async function initAnalytics() {
     before_send: beforeSend,
     session_recording: {
       maskAllInputs: true,
-      maskTextSelector: 'body',
+      // '*' matches every element's immediate parent check, so descendant
+      // text (transcript words, captions, project titles, etc.) is masked
+      // too. 'body' only masked text nodes whose DIRECT parent was <body> —
+      // effectively nothing, since the app renders through nested divs.
+      maskTextSelector: '*',
       blockSelector: 'video, audio, canvas, img, [data-posthog-block]',
       recordHeaders: false,
       recordBody: false,
