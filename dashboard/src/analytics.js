@@ -95,12 +95,14 @@ export async function initAnalytics() {
   if (initialized || (!import.meta.env.PROD && !DEV_OPT_IN)) return initialized;
 
   let context = null;
-  if (window.openOpusTelemetry?.getContext) {
+  const hasElectronBridge = Boolean(window.openOpusTelemetry?.getContext);
+  if (hasElectronBridge) {
     try {
       context = await window.openOpusTelemetry.getContext();
       desktopRuntime = true;
     } catch {
-      // Fall back to PostHog's anonymous localStorage identity.
+      // An Electron bridge failure must not look like a production web app.
+      if (!DEV_OPT_IN) return false;
     }
   }
 
@@ -133,7 +135,7 @@ export async function initAnalytics() {
     before_send: beforeSend,
     session_recording: {
       maskAllInputs: true,
-      maskTextSelector: 'body',
+        maskTextSelector: '*',
       blockSelector: 'video, audio, canvas, img, [data-posthog-block]',
       recordHeaders: false,
       recordBody: false,
@@ -161,7 +163,9 @@ export function track(eventName, properties = {}) {
   for (const [key, value] of Object.entries(properties)) {
     if (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key)) continue;
     if (['string', 'number', 'boolean'].includes(typeof value)) {
-      safeProperties[key] = typeof value === 'string' ? safeContextValue(value) : value;
+      safeProperties[key] = key === 'detail' || value.length > 40
+        ? scrubText(value)
+        : safeContextValue(value);
     }
   }
   posthog.capture(eventName, safeProperties);

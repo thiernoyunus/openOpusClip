@@ -108,7 +108,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
         setScheduling(true);
         setDone(false);
         const _platforms = [...new Set(selectedAccounts.map((a) => a.platform))].sort().join(',');
-        track('social_post_started', { mode: 'schedule', source: 'week_scheduler', platform_count: selectedAccounts.length, platforms: _platforms });
+        const platformCount = _platforms ? _platforms.split(',').length : 0;
         const total = schedule.length;
         setProgress({ current: 0, total, results: [] });
 
@@ -133,6 +133,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
             };
 
             try {
+                track('social_post_started', { mode: 'schedule', source: 'week_scheduler', platform_count: platformCount, platforms: _platforms });
                 const res = await fetch(getApiUrl('/api/social/post'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -145,10 +146,10 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                 }
 
                 results.push({ index: i, success: true });
-                track('social_post_completed', { mode: 'schedule', source: 'week_scheduler', platform_count: selectedAccounts.length, platforms: _platforms });
+                track('social_post_completed', { mode: 'schedule', source: 'week_scheduler', platform_count: platformCount, platforms: _platforms });
             } catch (e) {
                 results.push({ index: i, success: false, error: e.message });
-                track('social_post_failed', { mode: 'schedule', source: 'week_scheduler', platform_count: selectedAccounts.length, platforms: _platforms, error_category: 'client' });
+                track('social_post_failed', { mode: 'schedule', source: 'week_scheduler', platform_count: platformCount, platforms: _platforms, error_category: 'client' });
             }
 
             setProgress({ current: i + 1, total, results: [...results] });

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { track } from '../analytics.js';
+import { track, analyticsEnabled } from '../analytics.js';
 
 const CATEGORIES = [
   { value: 'bug', label: 'Something broke' },
@@ -23,6 +23,7 @@ export default function FeedbackModal({ onClose }) {
 
   const handleCategorySubmit = () => {
     if (!category) return;
+    if (!analyticsEnabled()) return;
     if (category === 'feature') {
       track('feedback_submitted', { category, detail: '' });
       setSubmitted(true);
@@ -32,6 +33,7 @@ export default function FeedbackModal({ onClose }) {
   };
 
   const handleDetailSubmit = () => {
+    if (!analyticsEnabled()) return;
     track('feedback_submitted', { category, detail: detail.trim() });
     setSubmitted(true);
   };

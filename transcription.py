@@ -6,6 +6,23 @@ from functools import lru_cache
 
 
 WHISPER_MODELS = {"tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"}
+
+# Speed tuning: OPENSHORTS_WHISPER_VAD=0 disables VAD filtering (default: 1).
+# VAD skips silent/non-speech regions before sending audio to the model —
+# often a 2-5× speedup on typical video content. Safe with word_timestamps=True.
+#
+# Silence-gap recovery (OPENSHORTS_SILENCE_GAPS, default: 1) re-decodes the
+# full audio via ffmpeg to carve real pauses into word timestamps. Set to 0
+# for maximum speed; word timestamps will still exist but may show no gap.
+#
+# Both are read lazily at call time, so .env values are honoured even when
+# this module is imported before load_dotenv() (see app.py / main.py).
+def _vad_enabled():
+    return os.getenv("OPENSHORTS_WHISPER_VAD", "1").strip() != "0"
+
+
+def _silence_gaps_enabled():
+    return os.getenv("OPENSHORTS_SILENCE_GAPS", "1").strip() != "0"
 MLX_MODELS = {
     # mlx-community repos use a -mlx suffix, except large-v3-turbo which doesn't
     model: f"mlx-community/whisper-{model}" + ("" if model == "large-v3-turbo" else "-mlx")
@@ -46,6 +63,8 @@ def resolve_backend(backend=None):
 
     if _is_apple_silicon() and importlib.util.find_spec("mlx_whisper"):
         return "mlx-whisper"
+    if _is_apple_silicon():
+        print("ℹ️  Apple Silicon detected but mlx_whisper not installed; using Faster-Whisper.")
     return "faster-whisper"
 
 
@@ -119,7 +138,10 @@ def _transcribe_faster_whisper(video_path, model_size, strip_words=False):
     device, compute_type = _faster_whisper_device()
     print(f"🎙️  Transcribing with Faster-Whisper '{model_size}' ({device}/{compute_type})...")
     model = _load_faster_whisper(model_size, device, compute_type)
-    segments, info = model.transcribe(video_path, word_timestamps=True)
+    transcribe_opts = {"word_timestamps": True}
+    if _vad_enabled():
+        transcribe_opts["vad_filter"] = True
+    segments, info = model.transcribe(video_path, **transcribe_opts)
 
     transcript_segments = []
     full_text = ""
@@ -482,6 +504,10 @@ def _apply_silence_gaps(segments, silences):
 def transcribe(video_path, model_size="base", backend=None, strip_words=False):
     model = normalize_model(model_size)
     selected = resolve_backend(backend)
+    # Only Faster-Whisper honours OPENSHORTS_WHISPER_VAD; MLX and Soniox apply
+    # their own (or no) voice filtering internally — don't claim "+VAD" for them.
+    vad_note = " +VAD" if (selected == "faster-whisper" and _vad_enabled()) else ""
+    print(f"📦 Transcription backend: {selected} | model: {model}{vad_note}")
     result = None
     if selected == "soniox":
         # No silent fallback: if the user picked Soniox, surface its errors.
@@ -497,13 +523,14 @@ def transcribe(video_path, model_size="base", backend=None, strip_words=False):
 
     # Recover real word gaps from the audio so pause/silence editing works
     # regardless of backend. Best-effort: never fail transcription over this.
-    try:
-        silences = detect_silences(video_path)
-        if silences:
-            _apply_silence_gaps(result["segments"], silences)
-            print(f"   🔇 Recovered {len(silences)} silence gap(s) in word timings.")
-    except Exception as exc:
-        print(f"⚠️  Silence-gap pass skipped: {exc}")
+    if _silence_gaps_enabled():
+        try:
+            silences = detect_silences(video_path)
+            if silences:
+                _apply_silence_gaps(result["segments"], silences)
+                print(f"   🔇 Recovered {len(silences)} silence gap(s) in word timings.")
+        except Exception as exc:
+            print(f"⚠️  Silence-gap pass skipped: {exc}")
 
     return result
 
