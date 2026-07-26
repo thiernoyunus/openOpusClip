@@ -350,6 +350,11 @@ def _start_whisper_worker():
         if announced_port != port:
             # Shouldn't happen with port=0; defensive.
             os.environ["OPENSHORTS_WHISPER_WORKER_PORT"] = str(announced_port)
+        def drain_worker_output(stream):
+            for output in iter(stream.readline, b""):
+                sys.stdout.buffer.write(output)
+                sys.stdout.buffer.flush()
+        threading.Thread(target=drain_worker_output, args=(proc.stdout,), daemon=True).start()
         _whisper_worker_proc = proc
         print(f"🎙️  Whisper worker ready on 127.0.0.1:{announced_port} (pid {proc.pid})")
 
@@ -3233,4 +3238,3 @@ if os.path.isdir(_DASHBOARD_DIST):
     app.mount("/", StaticFiles(directory=_DASHBOARD_DIST, html=True), name="dashboard")
 else:
     print("🚀 No dashboard/dist found — skipping static UI mount (run `npm run build` in dashboard/ to enable it).")
-

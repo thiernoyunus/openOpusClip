@@ -9,6 +9,14 @@ from functools import lru_cache
 
 
 WHISPER_MODELS = {"tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"}
+# ponytail: keep VAD and silence-gap switches as env knobs; model-specific
+# tuning can be added if measurements show the defaults are insufficient.
+def _vad_enabled():
+    return os.getenv("OPENSHORTS_WHISPER_VAD", "1").strip() != "0"
+
+
+def _silence_gaps_enabled():
+    return os.getenv("OPENSHORTS_SILENCE_GAPS", "1").strip() != "0"
 MLX_MODELS = {
     # mlx-community repos use a -mlx suffix, except large-v3-turbo which doesn't
     model: f"mlx-community/whisper-{model}" + ("" if model == "large-v3-turbo" else "-mlx")
@@ -85,7 +93,7 @@ def _faster_whisper_device():
 # One connection per request keeps the client stateless and crash-safe: a
 # dead worker just produces a failed call that falls back to inline.
 
-_WORKER_TIMEOUT_S = 30.0
+_WORKER_TIMEOUT_S = 1800.0
 
 
 class _WorkerClient:
@@ -226,7 +234,10 @@ def _transcribe_faster_whisper(video_path, model_size, strip_words=False):
     device, compute_type = _faster_whisper_device()
     print(f"🎙️  Transcribing with Faster-Whisper '{model_size}' ({device}/{compute_type})...")
     model = _load_faster_whisper(model_size, device, compute_type)
-    segments, info = model.transcribe(video_path, word_timestamps=True)
+    options = {"word_timestamps": True}
+    if _vad_enabled():
+        options["vad_filter"] = True
+    segments, info = model.transcribe(video_path, **options)
 
     transcript_segments = []
     full_text = ""
@@ -596,7 +607,7 @@ def transcribe(video_path, model_size="base", backend=None, strip_words=False):
     # instead of once per video. Falls through to the inline path below on
     # any failure so dev workflows (no FastAPI, no worker) keep working.
     worker = get_worker_client()
-    if worker is not None:
+    if worker is not None and selected != "soniox":
         try:
             result = worker.request(video_path, model, selected, strip_words)
         except Exception as exc:
