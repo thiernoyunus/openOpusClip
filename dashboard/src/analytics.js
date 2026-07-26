@@ -95,12 +95,14 @@ export async function initAnalytics() {
   if (initialized) return initialized;
 
   let context = null;
-  if (window.openOpusTelemetry?.getContext) {
+  const hasElectronBridge = Boolean(window.openOpusTelemetry?.getContext);
+  if (hasElectronBridge) {
     try {
       context = await window.openOpusTelemetry.getContext();
       desktopRuntime = true;
     } catch {
-      // Fall back to PostHog's anonymous localStorage identity.
+      // An Electron bridge failure must not look like a production web app.
+      if (!DEV_OPT_IN) return false;
     }
   }
 
