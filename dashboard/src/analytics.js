@@ -92,7 +92,7 @@ function wasRecentlyCaptured(fingerprint) {
 }
 
 export async function initAnalytics() {
-  if (initialized || (!import.meta.env.PROD && !DEV_OPT_IN)) return initialized;
+  if (initialized) return initialized;
 
   let context = null;
   if (window.openOpusTelemetry?.getContext) {
@@ -103,6 +103,13 @@ export async function initAnalytics() {
       // Fall back to PostHog's anonymous localStorage identity.
     }
   }
+
+  // Honor the same packaged/opt-in gate as telemetry.js: dev builds of the
+  // Electron app stay silent unless VITE_POSTHOG_DEV=true. Web builds (no
+  // Electron context) opt in only when the production bundle is loaded.
+  const desktopDev = context && context.packaged === false;
+  if (desktopDev && !DEV_OPT_IN) return false;
+  if (!desktopRuntime && !import.meta.env.PROD && !DEV_OPT_IN) return false;
 
   const bootstrap = context?.distinctId
     ? { distinctID: context.distinctId, isIdentifiedID: false }
