@@ -7,16 +7,22 @@ from functools import lru_cache
 
 WHISPER_MODELS = {"tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"}
 
-# Speed tuning: set OPENSHORTS_WHISPER_VAD=0 to disable VAD filtering, or
-# OPENSHORTS_WHISPER_VAD=1 (default) to enable it. VAD skips silent/non-speech
-# regions before sending audio to the model — often a 2-5× speedup on typical
-# video content. Safe with word_timestamps=True.
-WHISPER_VAD_ENABLED = os.getenv("OPENSHORTS_WHISPER_VAD", "1").strip() != "0"
+# Speed tuning: OPENSHORTS_WHISPER_VAD=0 disables VAD filtering (default: 1).
+# VAD skips silent/non-speech regions before sending audio to the model —
+# often a 2-5× speedup on typical video content. Safe with word_timestamps=True.
+#
+# Silence-gap recovery (OPENSHORTS_SILENCE_GAPS, default: 1) re-decodes the
+# full audio via ffmpeg to carve real pauses into word timestamps. Set to 0
+# for maximum speed; word timestamps will still exist but may show no gap.
+#
+# Both are read lazily at call time, so .env values are honoured even when
+# this module is imported before load_dotenv() (see app.py / main.py).
+def _vad_enabled():
+    return os.getenv("OPENSHORTS_WHISPER_VAD", "1").strip() != "0"
 
-# Silence-gap recovery re-decodes the full audio via ffmpeg to carve real pauses
-# into word timestamps. Set OPENSHORTS_SILENCE_GAPS=0 to skip it for maximum
-# speed (word timestamps will still exist but may show no gap between words).
-SILENCE_GAPS_ENABLED = os.getenv("OPENSHORTS_SILENCE_GAPS", "1").strip() != "0"
+
+def _silence_gaps_enabled():
+    return os.getenv("OPENSHORTS_SILENCE_GAPS", "1").strip() != "0"
 MLX_MODELS = {
     # mlx-community repos use a -mlx suffix, except large-v3-turbo which doesn't
     model: f"mlx-community/whisper-{model}" + ("" if model == "large-v3-turbo" else "-mlx")
@@ -133,7 +139,7 @@ def _transcribe_faster_whisper(video_path, model_size, strip_words=False):
     print(f"🎙️  Transcribing with Faster-Whisper '{model_size}' ({device}/{compute_type})...")
     model = _load_faster_whisper(model_size, device, compute_type)
     transcribe_opts = {"word_timestamps": True}
-    if WHISPER_VAD_ENABLED:
+    if _vad_enabled():
         transcribe_opts["vad_filter"] = True
     segments, info = model.transcribe(video_path, **transcribe_opts)
 
@@ -498,7 +504,9 @@ def _apply_silence_gaps(segments, silences):
 def transcribe(video_path, model_size="base", backend=None, strip_words=False):
     model = normalize_model(model_size)
     selected = resolve_backend(backend)
-    vad_note = " +VAD" if WHISPER_VAD_ENABLED else ""
+    # Only Faster-Whisper honours OPENSHORTS_WHISPER_VAD; MLX and Soniox apply
+    # their own (or no) voice filtering internally — don't claim "+VAD" for them.
+    vad_note = " +VAD" if (selected == "faster-whisper" and _vad_enabled()) else ""
     print(f"📦 Transcription backend: {selected} | model: {model}{vad_note}")
     result = None
     if selected == "soniox":
@@ -515,7 +523,7 @@ def transcribe(video_path, model_size="base", backend=None, strip_words=False):
 
     # Recover real word gaps from the audio so pause/silence editing works
     # regardless of backend. Best-effort: never fail transcription over this.
-    if SILENCE_GAPS_ENABLED:
+    if _silence_gaps_enabled():
         try:
             silences = detect_silences(video_path)
             if silences:
