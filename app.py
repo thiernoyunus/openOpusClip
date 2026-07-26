@@ -273,13 +273,120 @@ async def run_job_wrapper(job_id):
         job_queue.task_done()
         print(f"✅ Released slot for job: {job_id}")
 
+# Persistent Whisper worker: started in lifespan, shared with the
+# main.py subprocesses via env var. Keeps the model loaded once across every
+# transcribe() call. See transcription_worker.py for the protocol.
+
+# Skip booting the worker when transcription is explicitly disabled (CI / tests).
+_WHISPER_WORKER_ENABLED = os.environ.get("OPENSHORTS_WHISPER_WORKER", "1").strip() != "0"
+_whisper_worker_proc = None
+_whisper_worker_lock = threading.Lock()
+
+
+def _pick_free_port():
+    """Bind port 0, let the kernel assign one, release. Best-effort: a tiny
+    race window exists between release and the worker binding it, so we still
+    retry connection from the client side via transcription.get_worker_client."""
+    import socket as _socket
+    s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def _start_whisper_worker():
+    """Spawn the persistent worker; advertise its port via env so subprocesses
+    (main.py) inherit it. Worker is best-effort: if it fails to boot we keep
+    running with inline transcription rather than refuse to serve requests."""
+    global _whisper_worker_proc
+    if not _WHISPER_WORKER_ENABLED:
+        print("ℹ️  Whisper worker disabled via OPENSHORTS_WHISPER_WORKER=0; "
+              "transcription will run inline.")
+        return
+    with _whisper_worker_lock:
+        if _whisper_worker_proc is not None and _whisper_worker_proc.poll() is None:
+            return  # already running
+        port = _pick_free_port()
+        env = os.environ.copy()
+        env["OPENSHORTS_WHISPER_WORKER_PORT"] = str(port)
+        env.setdefault("OPENSHORTS_WHISPER_WORKER_HOST", "127.0.0.1")
+        # Make sure subprocesses (main.py) inherit the worker address too.
+        os.environ["OPENSHORTS_WHISPER_WORKER_PORT"] = str(port)
+        cmd = [sys.executable, "-u", "transcription_worker.py"]
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # worker logs surface in uvicorn output
+                env=env,
+                cwd=os.getcwd(),
+            )
+        except Exception as exc:
+            print(f"⚠️  Failed to start Whisper worker: {exc}; "
+                  f"transcription will run inline.")
+            return
+        # Wait for "READY <port>" handshake so the first request doesn't race
+        # the worker bind. Generous timeout because cold-start model loads
+        # happen lazily on the FIRST request, not on worker boot.
+        try:
+            line = proc.stdout.readline()
+        except Exception as exc:
+            print(f"⚠️  Whisper worker handshake failed: {exc}; "
+                  f"transcription will run inline.")
+            proc.terminate()
+            return
+        if not line:
+            print("⚠️  Whisper worker exited before announcing READY; "
+                  "transcription will run inline.")
+            return
+        announcement = line.decode("utf-8", errors="replace").strip()
+        if not announcement.startswith("READY "):
+            print(f"⚠️  Unexpected Whisper worker banner: {announcement!r}; "
+                  f"transcription will run inline.")
+            proc.terminate()
+            return
+        announced_port = int(announcement.split()[1])
+        if announced_port != port:
+            # Shouldn't happen with port=0; defensive.
+            os.environ["OPENSHORTS_WHISPER_WORKER_PORT"] = str(announced_port)
+        _whisper_worker_proc = proc
+        print(f"🎙️  Whisper worker ready on 127.0.0.1:{announced_port} (pid {proc.pid})")
+
+
+def _stop_whisper_worker():
+    """Terminate the worker subprocess if it's still alive. Safe to call
+    multiple times and from signal handlers."""
+    global _whisper_worker_proc
+    with _whisper_worker_lock:
+        proc = _whisper_worker_proc
+        if proc is None:
+            return
+        _whisper_worker_proc = None
+    if proc.poll() is None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        except Exception:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Start worker and cleanup
     worker_task = asyncio.create_task(process_queue())
     cleanup_task = asyncio.create_task(cleanup_jobs())
-    yield
-    # Cleanup (optional: cancel worker)
+    # Boot the persistent Whisper worker. It loads the model exactly ONCE
+    # for the lifetime of this process; every transcribe() call from
+    # thumbnails, subtitles, and main.py subprocesses (which inherit the
+    # env var we set below) reuses that loaded model.
+    _start_whisper_worker()
+    try:
+        yield
+    finally:
+        _stop_whisper_worker()
 
 app = FastAPI(lifespan=lifespan)
 

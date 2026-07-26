@@ -1,7 +1,10 @@
 import importlib.util
+import json
 import os
 import platform
+import socket as _socket
 import subprocess
+import uuid
 from functools import lru_cache
 
 
@@ -66,6 +69,110 @@ def _faster_whisper_device():
     except Exception:
         pass
     return "cpu", compute_type or "int8"
+
+
+# ---------------------------------------------------------------------------
+# Persistent worker client
+# ---------------------------------------------------------------------------
+#
+# The local Whisper worker (transcription_worker.py) keeps a single Whisper
+# model loaded for the lifetime of the FastAPI process. When the env var
+# `OPENSHORTS_WHISPER_WORKER_PORT` is set, every call here tries to ship the
+# job to that worker instead of loading the model again. If the worker is
+# unreachable (no env var, socket missing, transient crash) we fall back to
+# the in-process path - exactly what we used to do unconditionally.
+#
+# One connection per request keeps the client stateless and crash-safe: a
+# dead worker just produces a failed call that falls back to inline.
+
+_WORKER_TIMEOUT_S = 30.0
+
+
+class _WorkerClient:
+    """Thin TCP client for the local Whisper worker (started by the FastAPI
+    lifespan)."""
+
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+
+    def request(self, video_path, model_size, backend, strip_words):
+        """Send one job, return the result dict. Raises on any I/O or worker-
+        reported error so the caller can fall back to inline."""
+        payload = {
+            "id": uuid.uuid4().hex,
+            "video_path": video_path,
+            "model_size": model_size,
+            "backend": backend or "auto",
+            "strip_words": bool(strip_words),
+        }
+        data = (json.dumps(payload) + "\n").encode("utf-8")
+
+        sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        sock.settimeout(_WORKER_TIMEOUT_S)
+        try:
+            sock.connect((self.host, self.port))
+            sock.sendall(data)
+            buf = bytearray()
+            while True:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                buf.extend(chunk)
+                if b"\n" in buf:
+                    break
+            line = bytes(buf).split(b"\n", 1)[0]
+            response = json.loads(line.decode("utf-8") or "{}")
+        finally:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+        if "error" in response:
+            raise RuntimeError(response["error"])
+        if "result" not in response:
+            raise RuntimeError(f"worker returned malformed response: {response!r}")
+        return response["result"]
+
+
+_WORKER_INSTANCE = {"client": None, "checked": False}
+
+
+def get_worker_client():
+    """Return a connected worker client, or None if no worker is configured
+    or the socket is unreachable. Caches the negative answer so a missing
+    worker doesn't add a connect-fail to every transcribe() call."""
+    if _WORKER_INSTANCE["checked"]:
+        return _WORKER_INSTANCE["client"]
+
+    client = None
+    port_env = os.getenv("OPENSHORTS_WHISPER_WORKER_PORT")
+    if port_env:
+        try:
+            host = os.getenv("OPENSHORTS_WHISPER_WORKER_HOST", "127.0.0.1")
+            port = int(port_env)
+            probe = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+            probe.settimeout(0.5)
+            try:
+                probe.connect((host, port))
+            finally:
+                probe.close()
+            client = _WorkerClient(host, port)
+        except (OSError, ValueError):
+            client = None
+
+    _WORKER_INSTANCE["client"] = client
+    _WORKER_INSTANCE["checked"] = True
+    return client
+
+
+def reset_worker_client():
+    """Drop the cached worker probe. Used when the worker has just been
+    restarted by the parent so the next call reconnects instead of looping
+    on a stale cached client."""
+    _WORKER_INSTANCE["client"] = None
+    _WORKER_INSTANCE["checked"] = False
 
 
 @lru_cache(maxsize=4)
@@ -482,6 +589,29 @@ def _apply_silence_gaps(segments, silences):
 def transcribe(video_path, model_size="base", backend=None, strip_words=False):
     model = normalize_model(model_size)
     selected = resolve_backend(backend)
+
+    # Fast path: ship the job to the persistent worker when one\'s running.
+    # The worker keeps the Whisper model loaded across all callers in this
+    # process lifetime, so we pay the model-load cost ONCE per app boot
+    # instead of once per video. Falls through to the inline path below on
+    # any failure so dev workflows (no FastAPI, no worker) keep working.
+    worker = get_worker_client()
+    if worker is not None:
+        try:
+            result = worker.request(video_path, model, selected, strip_words)
+        except Exception as exc:
+            print(
+                f"\u26a0\ufe0f  Whisper worker call failed ({exc}); "
+                f"falling back to inline transcription."
+            )
+            # The startup probe said the worker was reachable; if it\'s now
+            # gone (e.g. crashed mid-request) reset so the next call re-
+            # probes and the inline fallback can take over cleanly.
+            reset_worker_client()
+        else:
+            _recover_silence_gaps(video_path, result)
+            return result
+
     result = None
     if selected == "soniox":
         # No silent fallback: if the user picked Soniox, surface its errors.
@@ -491,22 +621,26 @@ def transcribe(video_path, model_size="base", backend=None, strip_words=False):
             result = _transcribe_mlx_whisper(video_path, model, strip_words=strip_words)
         except Exception as exc:
             # ponytail: MLX is optional; faster-whisper remains the portable path.
-            print(f"⚠️  MLX Whisper failed ({exc}); falling back to Faster-Whisper.")
+            print(f"\u26a0\ufe0f  MLX Whisper failed ({exc}); falling back to Faster-Whisper.")
     if result is None:
         result = _transcribe_faster_whisper(video_path, model, strip_words=strip_words)
 
-    # Recover real word gaps from the audio so pause/silence editing works
-    # regardless of backend. Best-effort: never fail transcription over this.
+    _recover_silence_gaps(video_path, result)
+    return result
+
+
+def _recover_silence_gaps(video_path, result):
+    """Recover real word gaps from the audio so pause/silence editing works
+    regardless of backend. Best-effort: never fail transcription over this.
+    Extracted so the worker path and the inline path share the exact same
+    post-processing."""
     try:
         silences = detect_silences(video_path)
         if silences:
             _apply_silence_gaps(result["segments"], silences)
-            print(f"   🔇 Recovered {len(silences)} silence gap(s) in word timings.")
+            print(f"   \U0001f507 Recovered {len(silences)} silence gap(s) in word timings.")
     except Exception as exc:
-        print(f"⚠️  Silence-gap pass skipped: {exc}")
-
-    return result
-
+        print(f"\u26a0\ufe0f  Silence-gap pass skipped: {exc}")
 
 def _self_check():
     assert normalize_model("turbo") == "large-v3-turbo"

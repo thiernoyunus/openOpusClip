@@ -325,6 +325,7 @@ Docker also serves the dashboard at **`http://localhost:5175/#app`**.
 | `AWS_REGION` | Region — AWS only ('auto' is used for R2) |
 | `AWS_S3_BUCKET` | Private bucket for clip backup |
 | `MAX_CONCURRENT_JOBS` | Concurrent processing limit (default: 1) |
+| `OPENSHORTS_WHISPER_WORKER` | Set to `0` to disable the persistent Whisper worker (transcription loads per-call instead). Default: `1` (enabled). |
 
 **Client-side (encrypted in localStorage):**
 | Key | Description |
@@ -338,6 +339,7 @@ Docker also serves the dashboard at **`http://localhost:5175/#app`**.
 ## Security & Performance
 
 - **Non-Root Execution**: Containers run as dedicated `appuser`
+- **Persistent Whisper Worker**: Transcription model loads once per app lifetime instead of per-job. Set `OPENSHORTS_WHISPER_WORKER=0` to disable (e.g. CI). The worker is cross-platform: MLX on Apple Silicon, Faster-Whisper everywhere else.
 - **Concurrency Control**: Semaphore-based job queue (`MAX_CONCURRENT_JOBS`)
 - **Auto-Cleanup**: Automatic purging of old jobs (1h retention)
 - **Encrypted Keys**: API keys encrypted client-side, never stored server-side
