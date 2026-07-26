@@ -106,7 +106,12 @@ async function fatal(title, message, pendingTelemetry) {
   // Drain any pending telemetry before exiting so the fatal capture isn't
   // dropped on the floor by the synchronous process.exit() below.
   if (pendingTelemetry) {
-    try { await pendingTelemetry; } catch (_) { /* best-effort */ }
+    try {
+      await Promise.race([
+        pendingTelemetry,
+        new Promise((resolve) => setTimeout(resolve, 750)),
+      ]);
+    } catch (_) { /* best-effort */ }
   }
   app.quit();
   process.exit(1);
