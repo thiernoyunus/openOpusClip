@@ -111,8 +111,10 @@ export async function initAnalytics() {
   posthog.init(POSTHOG_TOKEN, {
     api_host: POSTHOG_HOST,
     ui_host: 'https://us.posthog.com',
-    defaults: '2026-05-30',
     person_profiles: 'identified_only',
+    // Disable PostHog's built-in surveys — feedback uses a custom native modal
+    surveys: false,
+    disable_surveys_automatic_display: true,
     persistence: 'localStorage',
     bootstrap,
     autocapture: false,

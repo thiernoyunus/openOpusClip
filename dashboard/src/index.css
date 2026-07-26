@@ -81,4 +81,16 @@
   100% {
     top: 100%;
   }
+}/* Hide PostHog's survey widget — feedback uses a native custom modal */
+#__POSTHOG_SURVEY__,
+.ph-survey,
+.ph-survey-modal,
+[class^="PostHogSurvey"],
+[class*="posthog-survey"],
+.ph-widget,
+div:has(> [href*="posthog.com/surveys"]),
+.ph-no-survey * .ph-survey * {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }

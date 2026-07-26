@@ -8,6 +8,7 @@ import Legal from './Legal.jsx'
 import TrailerPage from './TrailerPage.jsx'
 import EditorView from './components/editor/EditorView.jsx'
 import ResultCard from './components/ResultCard.jsx'
+import FeedbackModal from './components/FeedbackModal.jsx'
 import { analyticsClient, analyticsRuntime, initAnalytics, track } from './analytics.js'
 
 const buildDevTranscript = (items) => {
@@ -195,19 +196,19 @@ function Root() {
 }
 
 function FeedbackButton() {
+  const [showModal, setShowModal] = useState(false);
   return (
-    <button
-      id="posthog-feedback-button"
-      type="button"
-      className="fixed bottom-4 right-4 z-[100] rounded-lg border border-white/10 bg-zinc-900/95 px-3 py-2 text-xs font-medium text-zinc-300 shadow-lg hover:bg-zinc-800 hover:text-white focus:outline-none focus:ring-2 focus:ring-primary"
-      onClick={() => {
-        if (analyticsClient?.renderSurvey) {
-          analyticsClient.renderSurvey("019f9b37-0d93-0000-f07e-c4f19c01caa8", "#posthog-feedback-button");
-        }
-      }}
-    >
-      Feedback
-    </button>
+    <>
+      <button
+        id="app-feedback-button"
+        type="button"
+        className="fixed bottom-4 right-4 z-[100] rounded-lg border border-white/10 bg-zinc-900/95 px-3 py-2 text-xs font-medium text-zinc-300 shadow-lg hover:bg-zinc-800 hover:text-white focus:outline-none focus:ring-2 focus:ring-primary"
+        onClick={() => setShowModal(true)}
+      >
+        Feedback
+      </button>
+      {showModal && <FeedbackModal onClose={() => setShowModal(false)} />}
+    </>
   );
 }
 
