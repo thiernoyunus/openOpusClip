@@ -339,9 +339,19 @@ function App() {
           }
 
           if (data.status === 'completed') {
-            if (!trackedProcessOutcomes.current.has(`completed:${id}`)) {
-              trackedProcessOutcomes.current.add(`completed:${id}`);
-              track('process_completed', { result_category: 'clips_ready' });
+            // Generate-more runs reuse the same job ID, so namespace the
+            // dedupe key with the run-index instead of `id` alone. The
+            // first outcome fires only on the very first completion of the
+            // id; subsequent completions (additional_clips) always emit.
+            const isGenerateMore = generatingMore;
+            const outcomeKey = isGenerateMore
+              ? `completed:${id}:generate_more`
+              : `completed:${id}`;
+            if (!trackedProcessOutcomes.current.has(outcomeKey)) {
+              trackedProcessOutcomes.current.add(outcomeKey);
+              track('process_completed', {
+                result_category: isGenerateMore ? 'additional_clips' : 'clips_ready',
+              });
             }
             setProjects(updateProject(id, {
               status: 'complete',
