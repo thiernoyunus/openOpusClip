@@ -13,6 +13,7 @@ export default function FeedbackModal({ onClose }) {
   const [category, setCategory] = useState(null);
   const [detail, setDetail] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [submitFailed, setSubmitFailed] = useState(false);
   const textRef = useRef(null);
 
   useEffect(() => {
@@ -23,7 +24,10 @@ export default function FeedbackModal({ onClose }) {
 
   const handleCategorySubmit = () => {
     if (!category) return;
-    if (!analyticsEnabled()) return;
+    if (!analyticsEnabled()) {
+      setSubmitFailed(true);
+      return;
+    }
     if (category === 'feature') {
       track('feedback_submitted', { category, detail: '' });
       setSubmitted(true);
@@ -33,7 +37,10 @@ export default function FeedbackModal({ onClose }) {
   };
 
   const handleDetailSubmit = () => {
-    if (!analyticsEnabled()) return;
+    if (!analyticsEnabled()) {
+      setSubmitFailed(true);
+      return;
+    }
     track('feedback_submitted', { category, detail: detail.trim() });
     setSubmitted(true);
   };
@@ -45,6 +52,20 @@ export default function FeedbackModal({ onClose }) {
   const handleKeyDown = (e) => {
     if (e.key === 'Escape') onClose();
   };
+
+  if (submitFailed) {
+    return (
+      <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+        <div className="mx-4 w-full max-w-sm rounded-xl border border-white/10 bg-zinc-900 p-6 text-center shadow-2xl">
+          <h3 className="text-base font-semibold text-white">Feedback unavailable</h3>
+          <p className="mt-2 text-sm text-zinc-400">Analytics is disabled in this build. Feedback can’t be sent right now.</p>
+          <button onClick={onClose} className="mt-5 w-full rounded-lg bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-700">
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (submitted) {
     return (
