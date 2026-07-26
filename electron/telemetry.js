@@ -12,6 +12,15 @@ try {
 const POSTHOG_TOKEN = 'phc_kUQRck5LKwiSJJC2Zv8H8xxFbGksCtmuxdV5Uw7pTpne';
 const POSTHOG_HOST = 'https://us.i.posthog.com';
 const INSTALLATION_ID_FILE = 'anonymous-installation-id';
+const DEV_OPT_IN_ENV = 'OPENSHORTS_TELEMETRY_OPT_IN';
+
+function telemetryDisabled(packaged) {
+  // Packaged builds always opt in. Development builds (npm start from a source
+  // checkout) stay silent unless the developer explicitly sets the opt-in env.
+  if (packaged) return false;
+  const raw = (process.env[DEV_OPT_IN_ENV] || '').trim().toLowerCase();
+  return !(raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on');
+}
 
 const ALLOWED_EVENTS = new Set([
   'desktop_app_started',
@@ -119,16 +128,21 @@ function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
   });
 
   let client = null;
-  try {
-    if (!PostHog) throw new Error('PostHog unavailable');
-    client = new PostHog(POSTHOG_TOKEN, {
-      host: POSTHOG_HOST,
-      flushAt: 1,
-      flushInterval: 10_000,
-      enableExceptionAutocapture: false,
-    });
-  } catch (_) {
-    // A telemetry setup problem must not affect app startup.
+  if (telemetryDisabled(packaged)) {
+    // No-op client: dev builds stay silent unless OPENSHORTS_TELEMETRY_OPT_IN
+    // is set explicitly. The packaged app is always allowed.
+  } else {
+    try {
+      if (!PostHog) throw new Error('PostHog unavailable');
+      client = new PostHog(POSTHOG_TOKEN, {
+        host: POSTHOG_HOST,
+        flushAt: 1,
+        flushInterval: 10_000,
+        enableExceptionAutocapture: false,
+      });
+    } catch (_) {
+      // A telemetry setup problem must not affect app startup.
+    }
   }
 
   function capture(event, details = {}) {

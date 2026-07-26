@@ -92,17 +92,26 @@ function wasRecentlyCaptured(fingerprint) {
 }
 
 export async function initAnalytics() {
-  if (initialized || (!import.meta.env.PROD && !DEV_OPT_IN)) return initialized;
+  if (initialized) return initialized;
 
   let context = null;
-  if (window.openOpusTelemetry?.getContext) {
+  const hasElectronBridge = Boolean(window.openOpusTelemetry?.getContext);
+  if (hasElectronBridge) {
     try {
       context = await window.openOpusTelemetry.getContext();
       desktopRuntime = true;
     } catch {
-      // Fall back to PostHog's anonymous localStorage identity.
+      // An Electron bridge failure must not look like a production web app.
+      if (!DEV_OPT_IN) return false;
     }
   }
+
+  // Honor the same packaged/opt-in gate as telemetry.js: dev builds of the
+  // Electron app stay silent unless VITE_POSTHOG_DEV=true. Web builds (no
+  // Electron context) opt in only when the production bundle is loaded.
+  const desktopDev = context && context.packaged === false;
+  if (desktopDev && !DEV_OPT_IN) return false;
+  if (!desktopRuntime && !import.meta.env.PROD && !DEV_OPT_IN) return false;
 
   const bootstrap = context?.distinctId
     ? { distinctID: context.distinctId, isIdentifiedID: false }
@@ -133,7 +142,11 @@ export async function initAnalytics() {
     before_send: beforeSend,
     session_recording: {
       maskAllInputs: true,
-      maskTextSelector: 'body',
+      // '*' matches every element's immediate parent check, so descendant
+      // text (transcript words, captions, project titles, etc.) is masked
+      // too. 'body' only masked text nodes whose DIRECT parent was <body> —
+      // effectively nothing, since the app renders through nested divs.
+      maskTextSelector: '*',
       blockSelector: 'video, audio, canvas, img, [data-posthog-block]',
       recordHeaders: false,
       recordBody: false,
