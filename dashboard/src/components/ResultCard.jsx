@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Type, Calendar, Clock, Languages, Play, ArrowUp, ArrowDown, FileText, Crop, Flame } from 'lucide-react';
 import { getApiUrl } from '../config';
+import { track } from '../analytics';
 import SubtitleModal from './SubtitleModal';
 import HookModal from './HookModal';
 import TranslateModal from './TranslateModal';
@@ -552,6 +553,8 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
         setPosting(true);
         setPostResult(null);
+        const _platforms = [...new Set(selectedAccounts.map((a) => a.platform))].sort().join(',');
+        track('social_post_started', { mode: isScheduling ? 'schedule' : 'post', source: 'clip_card', platform_count: selectedAccounts.length, platforms: _platforms });
 
         try {
             // Burn edits/captions before upload so social matches the card preview
@@ -595,6 +598,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             }
 
             setPostResult({ success: true, msg: isScheduling ? "Scheduled successfully!" : "Posted successfully!" });
+            track('social_post_completed', { mode: isScheduling ? 'schedule' : 'post', source: 'clip_card', platform_count: selectedAccounts.length, platforms: _platforms });
             setTimeout(() => {
                 setShowModal(false);
                 setPostResult(null);
@@ -602,6 +606,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
         } catch (e) {
             setPostResult({ success: false, msg: `Failed: ${e.message}` });
+            track('social_post_failed', { mode: isScheduling ? 'schedule' : 'post', source: 'clip_card', platform_count: selectedAccounts.length, platforms: _platforms, error_category: 'client' });
         } finally {
             setPosting(false);
         }
