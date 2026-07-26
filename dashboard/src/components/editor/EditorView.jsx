@@ -14,6 +14,7 @@ import TextPanel from './TextPanel';
 import MediaPanel from './MediaPanel';
 import ExtendClipModal from './ExtendClipModal';
 import { renderClipOnServer, applyRender } from '../../lib/renderClip';
+import { captureError, track } from '../../analytics';
 
 const LAYOUT_LABEL = {
     fill: 'Fill',
@@ -284,6 +285,9 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     const [saving, setSaving] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [exportProgress, setExportProgress] = useState(0);
+    useEffect(() => {
+        track('editor_opened', { entry_category: 'clip' });
+    }, []);
     // Local transcript-panel copy of the captions. Once framing.subtitles
     // exists, the effect below keeps this synced FROM it — subtitles.captions
     // is the actual undo/redo-tracked source of truth (via the reducer's
@@ -479,10 +483,14 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     }, [jobId, index, state.framing, dispatch]);
 
     const handleSave = useCallback(async () => {
+        track('editor_save_started', { operation_category: 'framing' });
         setSaving(true);
         try {
             await saveFraming();
+            track('editor_save_completed', { result_category: 'saved' });
         } catch (e) {
+            track('editor_save_failed', { failure_category: 'save' });
+            captureError(e, { area: 'editor_save' });
             showError(e.message);
         } finally {
             setSaving(false);
@@ -490,6 +498,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     }, [saveFraming, showError]);
 
     const handleExport = useCallback(async () => {
+        track('editor_export_started', { operation_category: 'video' });
         setExporting(true);
         setExportProgress(0);
         try {
@@ -522,7 +531,10 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
             // also keeps a copy under output/, but the export should "land" where
             // downloads go). Fetch→blob so it saves instead of navigating.
             await downloadVideo(getApiUrl(applied.new_video_url), `clip-${index + 1}.mp4`);
+            track('editor_export_completed', { result_category: 'downloaded' });
         } catch (e) {
+            track('editor_export_failed', { failure_category: 'export' });
+            captureError(e, { area: 'editor_export' });
             showError(e.message);
         } finally {
             setExporting(false);

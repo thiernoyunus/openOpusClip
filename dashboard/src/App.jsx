@@ -11,6 +11,7 @@ import ProcessingModal from './components/ProcessingModal';
 import EditorView from './components/editor/EditorView';
 import { getProjects, addProject, updateProject, removeProject, phaseFromLogs, titleFromPayload, thumbFromPayload, coverFromString, fetchVideoTitle, captureVideoFrame, isTrailerProject } from './lib/projectHistory';
 import { getApiUrl } from './config';
+import { captureError, track } from './analytics';
 
 // Enhanced "Encryption" using XOR + Base64 with a Salt
 // This is better than plain Base64 but still client-side.
@@ -157,6 +158,7 @@ function App() {
     getProjects().filter((p) => p.status === 'processing').map((p) => p.id)
   ));
   const pollFailureCounts = useRef({});
+  const trackedProcessOutcomes = useRef(new Set());
   const fallbackDurationSeconds = (id) => {
     const project = getProjects().find((p) => p.id === id);
     return project?.createdAt ? (Date.now() - project.createdAt) / 1000 : null;
@@ -176,6 +178,10 @@ function App() {
   const handleClipPause = () => {
     setIsSyncedPlaying(false);
   };
+
+  useEffect(() => {
+    track('view_changed', { view: activeTab });
+  }, [activeTab]);
 
   // Session Recovery: Restore on mount
   useEffect(() => {
@@ -333,6 +339,10 @@ function App() {
           }
 
           if (data.status === 'completed') {
+            if (!trackedProcessOutcomes.current.has(`completed:${id}`)) {
+              trackedProcessOutcomes.current.add(`completed:${id}`);
+              track('process_completed', { result_category: 'clips_ready' });
+            }
             setProjects(updateProject(id, {
               status: 'complete',
               clipCount: data.result?.clips?.length || 0,
@@ -353,6 +363,10 @@ function App() {
               }
             }
           } else if (data.status === 'failed') {
+            if (!trackedProcessOutcomes.current.has(`failed:${id}`)) {
+              trackedProcessOutcomes.current.add(`failed:${id}`);
+              track('process_failed', { failure_category: 'processing' });
+            }
             setProjects(updateProject(id, {
               status: 'failed',
               durationSeconds: data.duration_seconds ?? fallbackDurationSeconds(id),
@@ -496,6 +510,10 @@ function App() {
     if (!res.ok) throw new Error(await res.text());
     const resData = await res.json();
     const newId = resData.job_id;
+    track('process_queued', {
+      source_category: data.type === 'url' ? 'remote_video' : 'local_file',
+      operation_category: data.tool || 'clip_generation',
+    });
 
     setProjects(addProject({
       id: newId,
@@ -537,6 +555,7 @@ function App() {
     if (!jobId || generatingMore) return;
     setMoreClipsNotice('');
     setGeneratingMore(true);
+    track('generate_more_started', { operation_category: 'additional_clips' });
     try {
       const res = await fetch(getApiUrl(`/api/jobs/${jobId}/more-clips`), {
         method: 'POST',
@@ -561,6 +580,7 @@ function App() {
       setProcessingJobIds((ids) => (ids.includes(jobId) ? ids : [...ids, jobId]));
     } catch (e) {
       setGeneratingMore(false);
+      captureError(e, { area: 'generate_more' });
       alert(e.message || 'Could not generate more clips.');
     }
   };
@@ -570,6 +590,10 @@ function App() {
       setShowKeyModal(true);
       return;
     }
+    track('process_started', {
+      source_category: data.type === 'url' ? 'remote_video' : data.type === 'files' ? 'local_files' : 'local_file',
+      operation_category: data.tool || 'clip_generation',
+    });
     setStatus('processing');
     setLogs(data.type === 'files' ? [`Starting ${data.payload.length} video jobs...`] : ["Starting process..."]);
     setResults(null);
@@ -610,6 +634,8 @@ function App() {
       return true;
     } catch (e) {
       setStatus('error');
+      track('process_failed', { failure_category: 'queueing' });
+      captureError(e, { area: 'process_start' });
       setLogs(l => [...l, `Error starting job: ${e.message}`]);
       return false;
     }
@@ -632,6 +658,9 @@ function App() {
   // Open a project from the grid: resume the active job, or restore a past one
   // from the backend (jobs live ~1h server-side).
   const openProject = async (p) => {
+    track('project_opened', {
+      state_category: ['processing', 'failed', 'expired', 'complete'].includes(p.status) ? p.status : 'saved',
+    });
     if (p.id === jobId) {
       if (status === 'complete') { setViewingResults(true); setShowProcessingModal(false); }
       else {

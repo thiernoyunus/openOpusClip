@@ -178,8 +178,19 @@
     }
     </script>
 
-  <!-- Analytics -->
-  <script defer data-domain="openshorts.app" src="https://analytics.fotoexamen.com/js/script.js"></script>
+  <!-- Website analytics only. Desktop and local development use neither this script nor duplicate tracking. -->
+  <script>
+    (() => {
+      const isLocal = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+      const isElectron = Boolean(window.openOpusTelemetry) || navigator.userAgent.includes('Electron') || window.location.protocol === 'file:';
+      if (isLocal || isElectron) return;
+      const script = document.createElement('script');
+      script.defer = true;
+      script.dataset.domain = 'openshorts.app';
+      script.src = 'https://analytics.fotoexamen.com/js/script.js';
+      document.head.appendChild(script);
+    })();
+  </script>
 </head>
 
 <body>

@@ -1,7 +1,7 @@
 import React from 'react';
 import { ArrowLeft } from 'lucide-react';
 
-const LAST_UPDATED = '2026-05-06';
+const LAST_UPDATED = '2026-07-25';
 const ISSUES_URL = 'https://github.com/mutonby/openshorts/issues';
 
 function Section({ title, children }) {
@@ -40,6 +40,26 @@ export default function Legal() {
                         OpenShorts is a free, open-source AI clip generator. There are no accounts, no payments, and we
                         do not persistently store the videos you upload or the clips we generate. By using the Service
                         you agree to the points below.
+                    </p>
+                </Section>
+
+                <Section title="Privacy-first product analytics">
+                    <p>
+                        The production app uses PostHog to measure a small set of actions such as opening the app,
+                        starting or finishing processing, opening the editor, saving, exporting, and sending feedback.
+                        This helps us find reliability problems and understand which parts of the app are useful.
+                    </p>
+                    <p>
+                        Analytics use an anonymous device identifier. We do not send API keys, uploaded media, URLs,
+                        file names, project or video titles, prompts, transcripts, captions, job IDs, raw logs, social
+                        usernames, or request headers and bodies. Error messages are filtered to remove links, local
+                        paths, file names, and key-like text before they leave the app.
+                    </p>
+                    <p>
+                        Session replay is configured to mask all typed input and all visible text, and to block media,
+                        images, and editor canvases. Network request and response bodies and headers are not recorded.
+                        PostHog processes this anonymous analytics data in the United States. Development builds do not
+                        send analytics unless a developer explicitly enables them.
                     </p>
                 </Section>
 

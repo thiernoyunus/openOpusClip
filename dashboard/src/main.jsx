@@ -1,5 +1,6 @@
 import { StrictMode, useState, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
+import { PostHogProvider } from '@posthog/react'
 import './index.css'
 import App from './App.jsx'
 import Landing from './Landing.jsx'
@@ -7,6 +8,8 @@ import Legal from './Legal.jsx'
 import TrailerPage from './TrailerPage.jsx'
 import EditorView from './components/editor/EditorView.jsx'
 import ResultCard from './components/ResultCard.jsx'
+import FeedbackModal from './components/FeedbackModal.jsx'
+import { analyticsClient, analyticsRuntime, initAnalytics, track } from './analytics.js'
 
 const buildDevTranscript = (items) => {
   let t = 0;
@@ -143,6 +146,10 @@ function Root() {
   const [view, setView] = useState(resolveView);
 
   useEffect(() => {
+    track('view_changed', { view });
+  }, [view]);
+
+  useEffect(() => {
     const handleHashChange = () => setView(resolveView());
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
@@ -188,8 +195,35 @@ function Root() {
   return <Landing onLaunchApp={handleLaunchApp} />;
 }
 
-createRoot(document.getElementById('root')).render(
-  <StrictMode>
-    <Root />
-  </StrictMode>,
-)
+function FeedbackButton() {
+  const [showModal, setShowModal] = useState(false);
+  return (
+    <>
+      <button
+        id="app-feedback-button"
+        type="button"
+        className="fixed bottom-4 right-4 z-[100] rounded-lg border border-white/10 bg-zinc-900/95 px-3 py-2 text-xs font-medium text-zinc-300 shadow-lg hover:bg-zinc-800 hover:text-white focus:outline-none focus:ring-2 focus:ring-primary"
+        onClick={() => setShowModal(true)}
+      >
+        Feedback
+      </button>
+      {showModal && <FeedbackModal onClose={() => setShowModal(false)} />}
+    </>
+  );
+}
+
+async function renderApp() {
+  await initAnalytics();
+  track('app_opened', { runtime: analyticsRuntime() });
+
+  createRoot(document.getElementById('root')).render(
+    <StrictMode>
+      <PostHogProvider client={analyticsClient}>
+        <Root />
+        <FeedbackButton />
+      </PostHogProvider>
+    </StrictMode>,
+  );
+}
+
+renderApp();

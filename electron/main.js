@@ -835,6 +835,7 @@ app.whenReady().then(async () => {
       ],
     },
     { role: 'editMenu' },
+    { role: 'viewMenu' },
     { role: 'windowMenu' },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
