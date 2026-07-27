@@ -24,16 +24,14 @@ export default function FeedbackModal({ onClose }) {
   const handleCategorySubmit = () => {
     if (!category) return;
     if (category === 'feature') {
-      track('feedback_submitted', { category, detail: '' });
-      setSubmitted(true);
+      if (track('feedback_submitted', { category, detail: '' })) setSubmitted(true);
       return;
     }
     setStep('detail');
   };
 
   const handleDetailSubmit = () => {
-    track('feedback_submitted', { category, detail: detail.trim() });
-    setSubmitted(true);
+    if (track('feedback_submitted', { category, detail: detail.trim() })) setSubmitted(true);
   };
 
   const handleBackdropClick = (e) => {

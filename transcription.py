@@ -645,6 +645,8 @@ def _recover_silence_gaps(video_path, result):
     regardless of backend. Best-effort: never fail transcription over this.
     Extracted so the worker path and the inline path share the exact same
     post-processing."""
+    if not _silence_gaps_enabled():
+        return
     try:
         silences = detect_silences(video_path)
         if silences:

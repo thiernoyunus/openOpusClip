@@ -156,15 +156,20 @@ export async function initAnalytics() {
 }
 
 export function track(eventName, properties = {}) {
-  if (!initialized) return;
+  if (!initialized) return false;
   const safeProperties = {};
   for (const [key, value] of Object.entries(properties)) {
     if (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key)) continue;
-    if (['string', 'number', 'boolean'].includes(typeof value)) {
-      safeProperties[key] = typeof value === 'string' ? safeContextValue(value) : value;
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      safeProperties[key] = value;
+    } else if (typeof value === 'string') {
+      safeProperties[key] = key === 'detail' || value.length > 40
+        ? scrubText(value)
+        : safeContextValue(value);
     }
   }
   posthog.capture(eventName, safeProperties);
+  return true;
 }
 
 export function captureError(error, { area = 'renderer' } = {}) {
