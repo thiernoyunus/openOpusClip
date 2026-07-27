@@ -176,10 +176,6 @@ export function track(eventName, properties = {}) {
     if (typeof value === 'number' || typeof value === 'boolean') {
       safeProperties[key] = value;
     } else if (typeof value === 'string') {
-      // Free-form text (e.g. feedback detail) goes through scrubText first so
-      // URLs, paths, and API keys are redacted BEFORE the 40-char clamp;
-      // safeContextValue() strips the delimiters the scrubber relies on.
-      // Categorical short values (category, area, etc.) use the safe clamp.
       safeProperties[key] = key === 'detail' || value.length > 40
         ? scrubText(value)
         : safeContextValue(value);
@@ -187,10 +183,6 @@ export function track(eventName, properties = {}) {
   }
   posthog.capture(eventName, safeProperties);
   return true;
-}
-
-export function analyticsCaptured() {
-  return initialized;
 }
 
 export function captureError(error, { area = 'renderer' } = {}) {
