@@ -65,31 +65,43 @@ HOST = os.environ.get("OPENSHORTS_WHISPER_WORKER_HOST", "127.0.0.1")
 # the same socket (one per connection in practice, but cheap insurance).
 _WRITE_LOCK = threading.Lock()
 
+# Serialise cold model init (and inference) so concurrent threads never load
+# multiple large Whisper models at once. Only the first request per model pays
+# the load cost; lru_cache keeps it warm afterwards.
+_MODEL_LOCK = threading.Lock()
+
 
 # ---------------------------------------------------------------------------
 # Job execution
 # ---------------------------------------------------------------------------
 
-def _do_transcribe(video_path, model_size, backend, strip_words):
+def _do_transcribe(video_path, model_size, backend, strip_words, on_segment=None):
     """Resolve backend + dispatch. Mirrors transcription.transcribe() but
     without the silence-gap follow-up - that lives in the parent so the
-    worker stays focused on the model."""
+    worker stays focused on the model.
+
+    on_segment is forwarded to the backend so the handler can stream
+    progress through the socket before the final result.
+
+    Called inside _MODEL_LOCK; the handler manages heartbeat and lock."""
     selected = resolve_backend(backend)
     if selected == "soniox":
         return _transcribe_soniox(video_path, strip_words=strip_words)
     if selected == "mlx-whisper":
         try:
             return _transcribe_mlx_whisper(
-                video_path, model_size, strip_words=strip_words
+                video_path, model_size, strip_words=strip_words,
+                on_segment=on_segment,
             )
         except Exception as exc:
             print(
-                f"⚠️  MLX Whisper failed inside worker ({exc}); falling back "
+                f"\u26a0\ufe0f  MLX Whisper failed inside worker ({exc}); falling back "
                 f"to Faster-Whisper.",
                 file=sys.stderr,
                 flush=True,
             )
-    return _transcribe_faster_whisper(video_path, model_size, strip_words=strip_words)
+    return _transcribe_faster_whisper(video_path, model_size, strip_words=strip_words,
+                                      on_segment=on_segment)
 
 
 # ---------------------------------------------------------------------------
@@ -117,9 +129,26 @@ def _send_message(conn, payload):
         conn.sendall(data)
 
 
+def _make_progress_sender(conn, req_id):
+    """Return a progress callback that silently swallows transport errors.
+    Prevents BrokenPipeError from being misclassified as an MLX/faster-whisper
+    failure, which would trigger an unnecessary full re-transcription."""
+    def _send(seg):
+        try:
+            _send_message(conn, {
+                "id": req_id,
+                "progress": f"   [{seg.get('start', 0):.2f}s -> {seg.get('end', 0):.2f}s] {seg.get('text', '')}",
+            })
+        except Exception:
+            pass  # client gone; best-effort progress
+    return _send
+
+
 def _handle(conn, addr):
-    """One request per connection - keeps client state trivial and avoids
-    needing a multiplexer on top of the worker."""
+    """One request per connection. Acquires the model lock with heartbeats,
+    runs transcription in a background thread, and sends heartbeats from this
+    thread so the client socket never times out -- even during long MLX calls
+    that yield no segments until they return."""
     try:
         msg = _recv_message(conn)
         if not msg:
@@ -138,36 +167,75 @@ def _handle(conn, addr):
             return
 
         print(
-            f"📥 [worker] job {req_id[:8]} -> {os.path.basename(video_path)} "
+            f"\U0001f4e5 [worker] job {req_id[:8]} -> {os.path.basename(video_path)} "
             f"(model={model_size}, backend={backend})",
             file=sys.stderr,
             flush=True,
         )
-        start = time.time()
+
+        # Acquire the model lock with heartbeats so the client socket never
+        # times out while queued behind another job.
+        while not _MODEL_LOCK.acquire(blocking=False):
+            _send_message(conn, {"id": req_id, "heartbeat": True})
+            time.sleep(5)
+
+        # Run transcription in a background thread so this thread can keep
+        # sending heartbeats. MLX transcribe() is a single blocking call that
+        # yields no segments until it returns -- without heartbeats the client
+        # times out and falls back to inline, defeating the serialization.
+        result_holder = [None]
+        error_holder = [None]
+
+        def _run():
+            try:
+                result_holder[0] = _do_transcribe(
+                    video_path, model_size, backend, strip_words,
+                    on_segment=_make_progress_sender(conn, req_id),
+                )
+            except Exception as e:
+                error_holder[0] = e
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+
         try:
-            result = _do_transcribe(video_path, model_size, backend, strip_words)
-        except Exception as exc:
-            tb = traceback.format_exc(limit=4)
+            heartbeat_ok = True
+            while t.is_alive():
+                t.join(timeout=10)
+                if t.is_alive() and heartbeat_ok:
+                    try:
+                        _send_message(conn, {"id": req_id, "heartbeat": True})
+                    except Exception:
+                        # Client disconnected — stop sending but keep waiting
+                        # for the transcription thread so the lock is released
+                        # only after inference finishes.
+                        heartbeat_ok = False
+
+            if error_holder[0] is not None:
+                exc = error_holder[0]
+                tb = traceback.format_exception(type(exc), exc, exc.__traceback__)
+                print(
+                    f"\u274c [worker] job {req_id[:8]} failed: {exc}\n{''.join(tb[:4])}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                _send_message(conn, {"id": req_id, "error": str(exc)})
+                return
+
+            result = result_holder[0]
             print(
-                f"❌ [worker] job {req_id[:8]} failed: {exc}\n{tb}",
+                f"\u2705 [worker] job {req_id[:8]} done "
+                f"(backend={result.get('backend')!r})",
                 file=sys.stderr,
                 flush=True,
             )
-            _send_message(conn, {"id": req_id, "error": str(exc)})
-            return
-        elapsed = time.time() - start
-        print(
-            f"✅ [worker] job {req_id[:8]} done in {elapsed:.1f}s "
-            f"(backend={result.get('backend')!r})",
-            file=sys.stderr,
-            flush=True,
-        )
-        _send_message(conn, {"id": req_id, "result": result})
+            _send_message(conn, {"id": req_id, "result": result})
+        finally:
+            _MODEL_LOCK.release()
+
     except Exception as exc:
-        # Last-resort guard: we never want a single bad message to kill the
-        # worker. Log + drop the connection.
         print(
-            f"💥 [worker] handler crashed: {exc}\n{traceback.format_exc()}",
+            f"\U0001f4a5 [worker] handler crashed: {exc}\n{traceback.format_exc()}",
             file=sys.stderr,
             flush=True,
         )
