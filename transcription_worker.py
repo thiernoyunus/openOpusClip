@@ -64,6 +64,11 @@ HOST = os.environ.get("OPENSHORTS_WHISPER_WORKER_HOST", "127.0.0.1")
 # Serialise sends so two handlers writing concurrently do not interleave on
 # the same socket (one per connection in practice, but cheap insurance).
 _WRITE_LOCK = threading.Lock()
+# ponytail: global lock serialises all transcription so concurrent handlers
+# can't race on the first model load (two WhisperModel instances = OOM).
+# Fine because inference is sequential anyway (faster-whisper holds GIL);
+# upgrade to a per-model lock or worker pool if we ever need parallelism.
+_MODEL_LOAD_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +150,8 @@ def _handle(conn, addr):
         )
         start = time.time()
         try:
-            result = _do_transcribe(video_path, model_size, backend, strip_words)
+            with _MODEL_LOAD_LOCK:
+                result = _do_transcribe(video_path, model_size, backend, strip_words)
         except Exception as exc:
             tb = traceback.format_exc(limit=4)
             print(

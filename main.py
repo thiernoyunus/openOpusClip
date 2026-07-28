@@ -2963,7 +2963,10 @@ if __name__ == '__main__':
             transcript = json.load(f)
         print(f"📄 More-clips mode: loaded transcript from {args.transcript_file} (skipped download + transcription).")
     else:
+        print(f"🔊 Transcribing audio ({args.whisper_model})...")
         transcript = transcribe_video(input_video, args.whisper_model)
+        print(f"🔊 Transcription done: {len(transcript.get('segments', []))} segment(s), "
+              f"lang={transcript.get('language', 'unknown')}.")
 
     # Get duration (guard against a corrupt/unreadable video reporting fps 0)
     cap = cv2.VideoCapture(input_video)
