@@ -169,7 +169,9 @@ export function track(eventName, properties = {}) {
   const safeProperties = {};
   for (const [key, value] of Object.entries(properties)) {
     if (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key)) continue;
-    if (['string', 'number', 'boolean'].includes(typeof value)) {
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      safeProperties[key] = value;
+    } else if (typeof value === 'string') {
       safeProperties[key] = key === 'detail' || value.length > 40
         ? scrubText(value)
         : safeContextValue(value);

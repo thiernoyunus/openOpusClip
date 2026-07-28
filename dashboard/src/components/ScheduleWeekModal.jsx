@@ -107,8 +107,8 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
 
         setScheduling(true);
         setDone(false);
-        const _platforms = [...new Set(selectedAccounts.map((a) => a.platform))].sort().join(',');
-        const platformCount = _platforms ? _platforms.split(',').length : 0;
+        const _platforms = [...new Set(selectedAccounts.map((a) => a.platform))].sort().join('-');
+        const platformCount = _platforms ? _platforms.split('-').length : 0;
         const total = schedule.length;
         setProgress({ current: 0, total, results: [] });
 

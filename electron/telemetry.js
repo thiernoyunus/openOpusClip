@@ -171,7 +171,14 @@ function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
       // the queued HTTP request has actually left the process before the
       // caller (potentially) exits.
       if (typeof client.flush === 'function') {
-        try { await client.flush(); } catch (_) { /* best-effort */ }
+        // Bound best-effort telemetry so a dead PostHog endpoint cannot hold
+        // a fatal startup exit for the SDK's full retry window.
+        try {
+          await Promise.race([
+            client.flush(),
+            new Promise((resolve) => setTimeout(resolve, 750)),
+          ]);
+        } catch (_) { /* best-effort */ }
       }
     } catch (_) {
       // Sending telemetry is always best-effort.

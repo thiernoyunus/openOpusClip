@@ -553,8 +553,8 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
         setPosting(true);
         setPostResult(null);
-        const _platforms = [...new Set(selectedAccounts.map((a) => a.platform))].sort().join(',');
-        const platformCount = _platforms ? _platforms.split(',').length : 0;
+        const _platforms = [...new Set(selectedAccounts.map((a) => a.platform))].sort().join('-');
+        const platformCount = _platforms ? _platforms.split('-').length : 0;
         track('social_post_started', { mode: isScheduling ? 'schedule' : 'post', source: 'clip_card', platform_count: platformCount, platforms: _platforms });
 
         try {
