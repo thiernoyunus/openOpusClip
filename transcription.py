@@ -1,5 +1,7 @@
 import importlib.util
 import json
+from collections import OrderedDict
+import threading
 import os
 import platform
 import socket as _socket
@@ -197,11 +199,34 @@ def reset_worker_client():
     _WORKER_INSTANCE["checked"] = False
 
 
-@lru_cache(maxsize=4)
+# ponytail: lru_cache does NOT serialize concurrent misses — two threads
+# can each construct a separate ~2GB WhisperModel. Manual double-checked
+# locking with an OrderedDict prevents the race, the OOM, and unbounded
+# growth. maxsize=2 keeps one active model + one recent; evicted model
+# objects are garbage-collected (faster-whisper holds no global refs).
+_MODEL_BUILD_LOCK = threading.Lock()
+_MODEL_CACHE = OrderedDict()
+_MODEL_CACHE_MAX = 2
+
 def _load_faster_whisper(model_size, device, compute_type):
     from faster_whisper import WhisperModel
-
-    return WhisperModel(model_size, device=device, compute_type=compute_type)
+    key = (model_size, device, compute_type)
+    with _MODEL_BUILD_LOCK:
+        model = _MODEL_CACHE.get(key)
+        if model is not None:
+            # Move to end (most-recently-used).
+            _MODEL_CACHE.move_to_end(key)
+            return model
+        # Evict oldest if at capacity. Explicitly delete the evicted model
+        # so it can be garbage-collected before we allocate the replacement
+        # — otherwise both coexist and we hit the OOM we're trying to avoid.
+        while len(_MODEL_CACHE) >= _MODEL_CACHE_MAX:
+            evicted_key, evicted_model = _MODEL_CACHE.popitem(last=False)
+            del evicted_model
+            print(f"🗑️  Evicted Whisper model {evicted_key[0]} from cache.", flush=True)
+        model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        _MODEL_CACHE[key] = model
+        return model
 
 
 def _word_dict(word, strip=False):
