@@ -184,17 +184,25 @@ def reset_worker_client():
     _WORKER_INSTANCE["checked"] = False
 
 
-_MODEL_BUILD_LOCK = threading.Lock()  # ponytail: serialise model construction only, not inference
+# ponytail: lru_cache does NOT serialize concurrent misses — two threads
+# can each construct a separate ~2GB WhisperModel. Manual double-checked
+# locking with a dict cache prevents the race and the OOM.
+_MODEL_BUILD_LOCK = threading.Lock()
+_MODEL_CACHE = {}  # {(model_size, device, compute_type): WhisperModel}
 
-@lru_cache(maxsize=4)
 def _load_faster_whisper(model_size, device, compute_type):
     from faster_whisper import WhisperModel
-
-    # Serialise the first construction so two threads loading the same model
-    # don't each build a separate ~2GB WhisperModel. After the first call,
-    # lru_cache returns instantly and the lock is never contested.
+    key = (model_size, device, compute_type)
+    model = _MODEL_CACHE.get(key)
+    if model is not None:
+        return model
     with _MODEL_BUILD_LOCK:
-        return WhisperModel(model_size, device=device, compute_type=compute_type)
+        # Re-check after acquiring lock: another thread may have loaded it.
+        model = _MODEL_CACHE.get(key)
+        if model is None:
+            model = WhisperModel(model_size, device=device, compute_type=compute_type)
+            _MODEL_CACHE[key] = model
+    return model
 
 
 def _word_dict(word, strip=False):
