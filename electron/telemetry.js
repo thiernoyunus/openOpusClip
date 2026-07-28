@@ -145,7 +145,11 @@ function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
     }
   }
 
-  function capture(event, details = {}) {
+  // Returns a Promise that resolves when the capture has been handed to the
+  // PostHog client AND any pending batch has been flushed. Callers (e.g. the
+  // fatal() helper in main.js) can await this before exiting so a synchronous
+  // process.exit() doesn't drop the last telemetry event.
+  async function capture(event, details = {}) {
     if (!client || !ALLOWED_EVENTS.has(event)) return;
     const properties = { ...baseProperties };
     if (ALLOWED_STAGES.has(details.stage)) properties.stage = details.stage;
@@ -157,12 +161,25 @@ function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
     if (ALLOWED_SIGNALS.has(details.signal)) properties.signal = details.signal;
 
     try {
-      client.capture({
+      await client.capture({
         distinctId,
         event,
         properties,
         disableGeoip: true,
       });
+      // flushAt:1 schedules a flush on the next tick; await a short window so
+      // the queued HTTP request has actually left the process before the
+      // caller (potentially) exits.
+      if (typeof client.flush === 'function') {
+        // Bound best-effort telemetry so a dead PostHog endpoint cannot hold
+        // a fatal startup exit for the SDK's full retry window.
+        try {
+          await Promise.race([
+            client.flush(),
+            new Promise((resolve) => setTimeout(resolve, 750)),
+          ]);
+        } catch (_) { /* best-effort */ }
+      }
     } catch (_) {
       // Sending telemetry is always best-effort.
     }

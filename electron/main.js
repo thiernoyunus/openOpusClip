@@ -94,7 +94,7 @@ function rememberBackendStderr(chunk) {
   }
 }
 
-function fatal(title, message) {
+async function fatal(title, message, pendingTelemetry) {
   // Kill children FIRST (before the modal blocks), then inform the user. The
   // process.exit() below skips the 'will-quit' handler, so without this a
   // fatal after spawnStack() leaks the backend/renderer process groups
@@ -103,6 +103,11 @@ function fatal(title, message) {
   killProcessGroup(spawned.backend);
   killProcessGroup(spawned.renderer);
   dialog.showErrorBox(title, message);
+  // Drain any pending telemetry before exiting so the fatal capture isn't
+  // dropped on the floor by the synchronous process.exit() below.
+  if (pendingTelemetry) {
+    try { await pendingTelemetry; } catch (_) { /* best-effort */ }
+  }
   app.quit();
   process.exit(1);
 }
@@ -115,7 +120,7 @@ function runPreflightChecks() {
     // missing is a corrupt/incomplete build, so point the user at that.
     const appPy = path.join(RES, 'backend', 'app.py');
     if (!fs.existsSync(appPy)) {
-      telemetry.capture('desktop_stack_startup_failed', {
+      const pending = telemetry.capture('desktop_stack_startup_failed', {
         stage: 'preflight',
         errorCategory: 'missing_backend_bundle',
       });
@@ -124,12 +129,12 @@ function runPreflightChecks() {
         'A required file is missing from the app bundle:\n\n' +
           '  ' + appPy + '\n\n' +
           'The app may be damaged. Please reinstall openOpusClip.'
-      );
+      , pending);
       return false;
     }
     const py = path.join(RES, 'python', 'bin', 'python3');
     if (!fs.existsSync(py)) {
-      telemetry.capture('desktop_stack_startup_failed', {
+      const pending = telemetry.capture('desktop_stack_startup_failed', {
         stage: 'preflight',
         errorCategory: 'missing_python_runtime',
       });
@@ -138,7 +143,7 @@ function runPreflightChecks() {
         'The bundled Python runtime is missing:\n\n' +
           '  ' + py + '\n\n' +
           'The app may be damaged. Please reinstall openOpusClip.'
-      );
+      , pending);
       return false;
     }
     return true;
@@ -146,7 +151,7 @@ function runPreflightChecks() {
 
   const venvDir = path.join(ROOT, '.venv');
   if (!fs.existsSync(venvDir)) {
-    telemetry.capture('desktop_stack_startup_failed', {
+    const pending = telemetry.capture('desktop_stack_startup_failed', {
       stage: 'preflight',
       errorCategory: 'missing_python_environment',
     });
@@ -155,13 +160,13 @@ function runPreflightChecks() {
       'The Python virtual environment (.venv) was not found.\n\n' +
         'To fix this, open a terminal in the project folder and run:\n\n' +
         '  python3.11 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt'
-    );
+    , pending);
     return false;
   }
 
   const dashboardIndex = path.join(ROOT, 'dashboard', 'dist', 'index.html');
   if (!fs.existsSync(dashboardIndex)) {
-    telemetry.capture('desktop_stack_startup_failed', {
+    const pending = telemetry.capture('desktop_stack_startup_failed', {
       stage: 'preflight',
       errorCategory: 'missing_dashboard_build',
     });
@@ -170,7 +175,7 @@ function runPreflightChecks() {
       'The dashboard has not been built yet (dashboard/dist/index.html is missing).\n\n' +
         'To fix this, open a terminal in the project folder and run:\n\n' +
         '  cd dashboard && npm run build'
-    );
+    , pending);
     return false;
   }
 
@@ -362,7 +367,7 @@ function spawnStack() {
   // is essential, so report it and quit cleanly instead of waiting out the
   // 60s health-check timeout.
   backend.on('error', (err) => {
-    telemetry.capture('desktop_backend_startup_failed', {
+    const pending = telemetry.capture('desktop_backend_startup_failed', {
       stage: 'backend_spawn',
       errorCategory: launchErrorCategory(err),
     });
@@ -370,7 +375,7 @@ function spawnStack() {
       'openOpusClip: backend failed to start',
       'Could not launch the backend process:\n\n  ' + err.message +
         '\n\nThe app may be damaged. Please reinstall openOpusClip.'
-    );
+    , pending);
   });
   // The backend can also launch fine but exit immediately — port 8000 already
   // in use, a Python import error, etc. Fail fast with its output instead of
@@ -388,7 +393,7 @@ function spawnStack() {
     // killing the app.
     checkUrlIsUp(BACKEND_URL + '/api/config', 2000).then((up) => {
       if (up) { spawned.backend = null; return; }
-      telemetry.capture('desktop_backend_exited', {
+      const pending = telemetry.capture('desktop_backend_exited', {
         stage: 'backend_runtime',
         errorCategory: signal ? 'fault_signal' : 'nonzero_exit',
         exitCode: code,
@@ -398,7 +403,7 @@ function spawnStack() {
         'openOpusClip: backend stopped',
         'The backend exited unexpectedly (' + (signal ? 'signal ' + signal : 'code ' + code) + ').\n\n' +
           'Last backend output:\n\n' + (backendStderrTail.join('\n') || '(no output captured)')
-      );
+      , pending);
     });
   });
   spawned.backend = backend;
@@ -514,7 +519,7 @@ async function waitForBackendThenShowWindow() {
   const tail = backendStderrTail.length
     ? backendStderrTail.join('\n')
     : '(no backend output captured)';
-  telemetry.capture('desktop_backend_startup_failed', {
+  const pending = telemetry.capture('desktop_backend_startup_failed', {
     stage: 'backend_healthcheck',
     errorCategory: 'health_check_timeout',
   });
@@ -524,7 +529,7 @@ async function waitForBackendThenShowWindow() {
       BACKEND_URL +
       '/api/config.\n\nLast backend output:\n\n' +
       tail
-  );
+  , pending);
 }
 
 function createWindow() {

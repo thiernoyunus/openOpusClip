@@ -142,11 +142,7 @@ export async function initAnalytics() {
     before_send: beforeSend,
     session_recording: {
       maskAllInputs: true,
-      // '*' matches every element's immediate parent check, so descendant
-      // text (transcript words, captions, project titles, etc.) is masked
-      // too. 'body' only masked text nodes whose DIRECT parent was <body> —
-      // effectively nothing, since the app renders through nested divs.
-      maskTextSelector: '*',
+        maskTextSelector: '*',
       blockSelector: 'video, audio, canvas, img, [data-posthog-block]',
       recordHeaders: false,
       recordBody: false,
@@ -169,7 +165,7 @@ export async function initAnalytics() {
 }
 
 export function track(eventName, properties = {}) {
-  if (!initialized) return false;
+  if (!initialized) return;
   const safeProperties = {};
   for (const [key, value] of Object.entries(properties)) {
     if (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key)) continue;
@@ -182,7 +178,7 @@ export function track(eventName, properties = {}) {
     }
   }
   posthog.capture(eventName, safeProperties);
-  return true;
+
 }
 
 export function captureError(error, { area = 'renderer' } = {}) {

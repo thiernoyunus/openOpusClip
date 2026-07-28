@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { X, Loader2, Calendar, Clock, CheckCircle, AlertCircle, Video, Instagram, Youtube, ChevronLeft, ChevronRight, Globe, ExternalLink } from 'lucide-react';
 import { getApiUrl } from '../config';
+import { track } from '../analytics';
 
 const DAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -106,6 +107,8 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
 
         setScheduling(true);
         setDone(false);
+        const _platforms = [...new Set(selectedAccounts.map((a) => a.platform))].sort().join('-');
+        const platformCount = _platforms ? _platforms.split('-').length : 0;
         const total = schedule.length;
         setProgress({ current: 0, total, results: [] });
 
@@ -130,6 +133,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
             };
 
             try {
+                track('social_post_started', { mode: 'schedule', source: 'week_scheduler', platform_count: platformCount, platforms: _platforms });
                 const res = await fetch(getApiUrl('/api/social/post'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -142,8 +146,10 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                 }
 
                 results.push({ index: i, success: true });
+                track('social_post_completed', { mode: 'schedule', source: 'week_scheduler', platform_count: platformCount, platforms: _platforms });
             } catch (e) {
                 results.push({ index: i, success: false, error: e.message });
+                track('social_post_failed', { mode: 'schedule', source: 'week_scheduler', platform_count: platformCount, platforms: _platforms, error_category: 'client' });
             }
 
             setProgress({ current: i + 1, total, results: [...results] });
