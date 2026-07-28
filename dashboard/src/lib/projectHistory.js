@@ -97,6 +97,8 @@ const PHASES = [
 
 export function phaseFromLogs(logs) {
   if (!logs || logs.length === 0) return 'Starting up';
+  const explicit = explicitPhaseIndex(logs);
+  if (explicit !== null) return PHASE_LABELS[Math.min(explicit, PHASE_LABELS.length - 1)] || 'Processing';
   for (let i = logs.length - 1; i >= 0; i--) {
     const line = logs[i] || '';
     const match = PHASES.find((p) => p.re.test(line));
@@ -108,6 +110,32 @@ export function phaseFromLogs(logs) {
 // Ordered, friendly stage labels for the processing checklist.
 export const PHASE_LABELS = PHASES.map((p) => p.label);
 
+const EXPLICIT_STAGE_INDEX = {
+  download: 0,
+  transcribe: 1,
+  scenes: 2,
+  analyze: 3,
+  extract: 4,
+  reframe: 5,
+  subtitles: 6,
+  finalize: 7,
+};
+const EXPLICIT_STAGE_RE = /OPENSHORTS_STAGE:([a-z]+):(start|done)/i;
+
+function explicitPhaseIndex(logs) {
+  let reached = -1;
+  let found = false;
+  for (const line of logs || []) {
+    const match = String(line || '').match(EXPLICIT_STAGE_RE);
+    if (!match) continue;
+    const index = EXPLICIT_STAGE_INDEX[match[1].toLowerCase()];
+    if (index === undefined) continue;
+    found = true;
+    reached = Math.max(reached, match[2].toLowerCase() === 'done' ? index + 1 : index);
+  }
+  return found ? reached : null;
+}
+
 // Index of the furthest stage the logs have reached (-1 = not started yet).
 // Uses the MAX matched index, not the newest match: the per-clip pipeline
 // re-logs "Step 1: Detecting scenes…" for every clip during extraction, so a
@@ -115,6 +143,8 @@ export const PHASE_LABELS = PHASES.map((p) => p.label);
 // monotonic, so take the highest stage any line has reached.
 export function phaseIndexFromLogs(logs) {
   if (!logs || logs.length === 0) return -1;
+  const explicit = explicitPhaseIndex(logs);
+  if (explicit !== null) return explicit;
   let max = -1;
   for (const line of logs) {
     const idx = PHASES.findIndex((p) => p.re.test(line || ''));
