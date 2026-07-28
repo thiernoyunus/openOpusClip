@@ -104,9 +104,12 @@ class _WorkerClient:
         self.host = host
         self.port = port
 
-    def request(self, video_path, model_size, backend, strip_words):
-        """Send one job, return the result dict. Raises on any I/O or worker-
-        reported error so the caller can fall back to inline."""
+    def request(self, video_path, model_size, backend, strip_words,
+                on_progress=None):
+        """Send one job, return the result dict.
+        The worker may emit progress lines before the final result.
+        If on_progress is provided, each progress string is forwarded
+        immediately (not buffered until the result arrives)."""
         payload = {
             "id": uuid.uuid4().hex,
             "video_path": video_path,
@@ -122,26 +125,37 @@ class _WorkerClient:
             sock.connect((self.host, self.port))
             sock.sendall(data)
             buf = bytearray()
-            while True:
+            result = None
+            while result is None:
                 chunk = sock.recv(65536)
                 if not chunk:
                     break
                 buf.extend(chunk)
-                if b"\n" in buf:
-                    break
-            line = bytes(buf).split(b"\n", 1)[0]
-            response = json.loads(line.decode("utf-8") or "{}")
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    if not line:
+                        continue
+                    msg = json.loads(line.decode("utf-8"))
+                    if "heartbeat" in msg:
+                        pass  # keep socket alive while queued
+                    elif "progress" in msg:
+                        if on_progress:
+                            on_progress(msg["progress"])
+                    else:
+                        result = msg
         finally:
             try:
                 sock.close()
             except OSError:
                 pass
 
-        if "error" in response:
-            raise RuntimeError(response["error"])
-        if "result" not in response:
-            raise RuntimeError(f"worker returned malformed response: {response!r}")
-        return response["result"]
+        if result is None:
+            raise RuntimeError("worker closed connection before sending result")
+        if "error" in result:
+            raise RuntimeError(result["error"])
+        if "result" not in result:
+            raise RuntimeError(f"worker returned malformed response: {result!r}")
+        return result["result"]
 
 
 _WORKER_INSTANCE = {"client": None, "checked": False}
@@ -230,7 +244,7 @@ def _segment_dict(segment, strip_words=False):
     }
 
 
-def _transcribe_faster_whisper(video_path, model_size, strip_words=False):
+def _transcribe_faster_whisper(video_path, model_size, strip_words=False, on_segment=None):
     device, compute_type = _faster_whisper_device()
     print(f"🎙️  Transcribing with Faster-Whisper '{model_size}' ({device}/{compute_type})...")
     model = _load_faster_whisper(model_size, device, compute_type)
@@ -246,6 +260,8 @@ def _transcribe_faster_whisper(video_path, model_size, strip_words=False):
         seg = _segment_dict(segment, strip_words=strip_words)
         transcript_segments.append(seg)
         full_text += seg["text"] + " "
+        if on_segment:
+            on_segment(seg)
 
     language = getattr(info, "language", None)
     probability = getattr(info, "language_probability", None)
@@ -260,7 +276,7 @@ def _transcribe_faster_whisper(video_path, model_size, strip_words=False):
     }
 
 
-def _transcribe_mlx_whisper(video_path, model_size, strip_words=False):
+def _transcribe_mlx_whisper(video_path, model_size, strip_words=False, on_segment=None):
     import mlx_whisper
 
     repo = MLX_MODELS[model_size]
@@ -273,6 +289,8 @@ def _transcribe_mlx_whisper(video_path, model_size, strip_words=False):
     segments = [_segment_dict(segment, strip_words=strip_words) for segment in result.get("segments", [])]
     for segment in segments:
         print(f"   [{segment['start']:.2f}s -> {segment['end']:.2f}s] {segment['text']}")
+        if on_segment:
+            on_segment(segment)
     return {
         "text": result.get("text", "").strip(),
         "segments": segments,
@@ -597,7 +615,8 @@ def _apply_silence_gaps(segments, silences):
             nxt["start"] = min(e, nxt["end"])
 
 
-def transcribe(video_path, model_size="base", backend=None, strip_words=False):
+def transcribe(video_path, model_size="base", backend=None, strip_words=False,
+               on_segment=None):
     model = normalize_model(model_size)
     selected = resolve_backend(backend)
 
@@ -609,7 +628,8 @@ def transcribe(video_path, model_size="base", backend=None, strip_words=False):
     worker = get_worker_client()
     if worker is not None and selected != "soniox":
         try:
-            result = worker.request(video_path, model, selected, strip_words)
+            result = worker.request(video_path, model, selected, strip_words,
+                                        on_progress=print)
         except Exception as exc:
             print(
                 f"\u26a0\ufe0f  Whisper worker call failed ({exc}); "
@@ -629,12 +649,14 @@ def transcribe(video_path, model_size="base", backend=None, strip_words=False):
         result = _transcribe_soniox(video_path, strip_words=strip_words)
     if selected == "mlx-whisper":
         try:
-            result = _transcribe_mlx_whisper(video_path, model, strip_words=strip_words)
+            result = _transcribe_mlx_whisper(video_path, model, strip_words=strip_words,
+                                             on_segment=on_segment)
         except Exception as exc:
             # ponytail: MLX is optional; faster-whisper remains the portable path.
             print(f"\u26a0\ufe0f  MLX Whisper failed ({exc}); falling back to Faster-Whisper.")
     if result is None:
-        result = _transcribe_faster_whisper(video_path, model, strip_words=strip_words)
+        result = _transcribe_faster_whisper(video_path, model, strip_words=strip_words,
+                                            on_segment=on_segment)
 
     _recover_silence_gaps(video_path, result)
     return result
