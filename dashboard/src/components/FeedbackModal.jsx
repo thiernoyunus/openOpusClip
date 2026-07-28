@@ -13,6 +13,7 @@ export default function FeedbackModal({ onClose }) {
   const [category, setCategory] = useState(null);
   const [detail, setDetail] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [submitFailed, setSubmitFailed] = useState(false);
   const textRef = useRef(null);
 
   useEffect(() => {
