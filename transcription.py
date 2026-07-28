@@ -203,9 +203,12 @@ def _load_faster_whisper(model_size, device, compute_type):
             # Move to end (most-recently-used).
             _MODEL_CACHE.move_to_end(key)
             return model
-        # Evict oldest if at capacity.
+        # Evict oldest if at capacity. Explicitly delete the evicted model
+        # so it can be garbage-collected before we allocate the replacement
+        # — otherwise both coexist and we hit the OOM we're trying to avoid.
         while len(_MODEL_CACHE) >= _MODEL_CACHE_MAX:
-            evicted_key, _ = _MODEL_CACHE.popitem(last=False)
+            evicted_key, evicted_model = _MODEL_CACHE.popitem(last=False)
+            del evicted_model
             print(f"🗑️  Evicted Whisper model {evicted_key[0]} from cache.", flush=True)
         model = WhisperModel(model_size, device=device, compute_type=compute_type)
         _MODEL_CACHE[key] = model
