@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import threading
 import os
 import platform
 import socket as _socket
@@ -183,11 +184,17 @@ def reset_worker_client():
     _WORKER_INSTANCE["checked"] = False
 
 
+_MODEL_BUILD_LOCK = threading.Lock()  # ponytail: serialise model construction only, not inference
+
 @lru_cache(maxsize=4)
 def _load_faster_whisper(model_size, device, compute_type):
     from faster_whisper import WhisperModel
 
-    return WhisperModel(model_size, device=device, compute_type=compute_type)
+    # Serialise the first construction so two threads loading the same model
+    # don't each build a separate ~2GB WhisperModel. After the first call,
+    # lru_cache returns instantly and the lock is never contested.
+    with _MODEL_BUILD_LOCK:
+        return WhisperModel(model_size, device=device, compute_type=compute_type)
 
 
 def _word_dict(word, strip=False):
