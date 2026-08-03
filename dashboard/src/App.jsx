@@ -159,6 +159,8 @@ function App() {
   ));
   const pollFailureCounts = useRef({});
   const trackedProcessOutcomes = useRef(new Set());
+  const processingOperations = useRef(new Map());
+  const generateMoreRun = useRef(0);
   const fallbackDurationSeconds = (id) => {
     const project = getProjects().find((p) => p.id === id);
     return project?.createdAt ? (Date.now() - project.createdAt) / 1000 : null;
@@ -339,9 +341,14 @@ function App() {
           }
 
           if (data.status === 'completed') {
-            if (!trackedProcessOutcomes.current.has(`completed:${id}`)) {
-              trackedProcessOutcomes.current.add(`completed:${id}`);
-              track('process_completed', { result_category: 'clips_ready' });
+            const operation = processingOperations.current.get(id) || { type: 'initial', run: id };
+            const isGenerateMore = operation.type === 'generate_more';
+            const outcomeKey = `completed:${id}:${operation.type}:${operation.run}`;
+            if (!trackedProcessOutcomes.current.has(outcomeKey)) {
+              trackedProcessOutcomes.current.add(outcomeKey);
+              track('process_completed', {
+                result_category: isGenerateMore ? 'additional_clips' : 'clips_ready',
+              });
             }
             setProjects(updateProject(id, {
               status: 'complete',
@@ -363,8 +370,10 @@ function App() {
               }
             }
           } else if (data.status === 'failed') {
-            if (!trackedProcessOutcomes.current.has(`failed:${id}`)) {
-              trackedProcessOutcomes.current.add(`failed:${id}`);
+            const operation = processingOperations.current.get(id) || { type: 'initial', run: id };
+            const failureKey = `failed:${id}:${operation.type}:${operation.run}`;
+            if (!trackedProcessOutcomes.current.has(failureKey)) {
+              trackedProcessOutcomes.current.add(failureKey);
               track('process_failed', { failure_category: 'processing' });
             }
             setProjects(updateProject(id, {
@@ -510,6 +519,7 @@ function App() {
     if (!res.ok) throw new Error(await res.text());
     const resData = await res.json();
     const newId = resData.job_id;
+    processingOperations.current.set(newId, { type: 'initial', run: newId });
     track('process_queued', {
       source_category: data.type === 'url' ? 'remote_video' : 'local_file',
       operation_category: data.tool || 'clip_generation',
@@ -576,6 +586,8 @@ function App() {
         }
         throw new Error(detail);
       }
+      const run = ++generateMoreRun.current;
+      processingOperations.current.set(jobId, { type: 'generate_more', run });
       setProjects(updateProject(jobId, { status: 'processing' }));
       setProcessingJobIds((ids) => (ids.includes(jobId) ? ids : [...ids, jobId]));
     } catch (e) {
