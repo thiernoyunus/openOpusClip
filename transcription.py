@@ -1,22 +1,18 @@
 import importlib.util
+import json
+from collections import OrderedDict
+import threading
 import os
 import platform
+import socket as _socket
 import subprocess
+import uuid
 from functools import lru_cache
 
 
 WHISPER_MODELS = {"tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"}
-
-# Speed tuning: OPENSHORTS_WHISPER_VAD=0 disables VAD filtering (default: 1).
-# VAD skips silent/non-speech regions before sending audio to the model —
-# often a 2-5× speedup on typical video content. Safe with word_timestamps=True.
-#
-# Silence-gap recovery (OPENSHORTS_SILENCE_GAPS, default: 1) re-decodes the
-# full audio via ffmpeg to carve real pauses into word timestamps. Set to 0
-# for maximum speed; word timestamps will still exist but may show no gap.
-#
-# Both are read lazily at call time, so .env values are honoured even when
-# this module is imported before load_dotenv() (see app.py / main.py).
+# ponytail: keep VAD and silence-gap switches as env knobs; model-specific
+# tuning can be added if measurements show the defaults are insufficient.
 def _vad_enabled():
     return os.getenv("OPENSHORTS_WHISPER_VAD", "1").strip() != "0"
 
@@ -63,8 +59,6 @@ def resolve_backend(backend=None):
 
     if _is_apple_silicon() and importlib.util.find_spec("mlx_whisper"):
         return "mlx-whisper"
-    if _is_apple_silicon():
-        print("ℹ️  Apple Silicon detected but mlx_whisper not installed; using Faster-Whisper.")
     return "faster-whisper"
 
 
@@ -87,11 +81,152 @@ def _faster_whisper_device():
     return "cpu", compute_type or "int8"
 
 
-@lru_cache(maxsize=4)
+# ---------------------------------------------------------------------------
+# Persistent worker client
+# ---------------------------------------------------------------------------
+#
+# The local Whisper worker (transcription_worker.py) keeps a single Whisper
+# model loaded for the lifetime of the FastAPI process. When the env var
+# `OPENSHORTS_WHISPER_WORKER_PORT` is set, every call here tries to ship the
+# job to that worker instead of loading the model again. If the worker is
+# unreachable (no env var, socket missing, transient crash) we fall back to
+# the in-process path - exactly what we used to do unconditionally.
+#
+# One connection per request keeps the client stateless and crash-safe: a
+# dead worker just produces a failed call that falls back to inline.
+
+_WORKER_TIMEOUT_S = 1800.0
+
+
+class _WorkerClient:
+    """Thin TCP client for the local Whisper worker (started by the FastAPI
+    lifespan)."""
+
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+
+    def request(self, video_path, model_size, backend, strip_words,
+                on_progress=None):
+        """Send one job, return the result dict.
+        The worker may emit progress lines before the final result.
+        If on_progress is provided, each progress string is forwarded
+        immediately (not buffered until the result arrives)."""
+        payload = {
+            "id": uuid.uuid4().hex,
+            "video_path": video_path,
+            "model_size": model_size,
+            "backend": backend or "auto",
+            "strip_words": bool(strip_words),
+        }
+        data = (json.dumps(payload) + "\n").encode("utf-8")
+
+        sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        sock.settimeout(_WORKER_TIMEOUT_S)
+        try:
+            sock.connect((self.host, self.port))
+            sock.sendall(data)
+            buf = bytearray()
+            result = None
+            while result is None:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                buf.extend(chunk)
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    if not line:
+                        continue
+                    msg = json.loads(line.decode("utf-8"))
+                    if "heartbeat" in msg:
+                        pass  # keep socket alive while queued
+                    elif "progress" in msg:
+                        if on_progress:
+                            on_progress(msg["progress"])
+                    else:
+                        result = msg
+        finally:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+        if result is None:
+            raise RuntimeError("worker closed connection before sending result")
+        if "error" in result:
+            raise RuntimeError(result["error"])
+        if "result" not in result:
+            raise RuntimeError(f"worker returned malformed response: {result!r}")
+        return result["result"]
+
+
+_WORKER_INSTANCE = {"client": None, "checked": False}
+
+
+def get_worker_client():
+    """Return a connected worker client, or None if no worker is configured
+    or the socket is unreachable. Caches the negative answer so a missing
+    worker doesn't add a connect-fail to every transcribe() call."""
+    if _WORKER_INSTANCE["checked"]:
+        return _WORKER_INSTANCE["client"]
+
+    client = None
+    port_env = os.getenv("OPENSHORTS_WHISPER_WORKER_PORT")
+    if port_env:
+        try:
+            host = os.getenv("OPENSHORTS_WHISPER_WORKER_HOST", "127.0.0.1")
+            port = int(port_env)
+            probe = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+            probe.settimeout(0.5)
+            try:
+                probe.connect((host, port))
+            finally:
+                probe.close()
+            client = _WorkerClient(host, port)
+        except (OSError, ValueError):
+            client = None
+
+    _WORKER_INSTANCE["client"] = client
+    _WORKER_INSTANCE["checked"] = True
+    return client
+
+
+def reset_worker_client():
+    """Drop the cached worker probe. Used when the worker has just been
+    restarted by the parent so the next call reconnects instead of looping
+    on a stale cached client."""
+    _WORKER_INSTANCE["client"] = None
+    _WORKER_INSTANCE["checked"] = False
+
+
+# ponytail: lru_cache does NOT serialize concurrent misses — two threads
+# can each construct a separate ~2GB WhisperModel. Manual double-checked
+# locking with an OrderedDict prevents the race, the OOM, and unbounded
+# growth. maxsize=2 keeps one active model + one recent; evicted model
+# objects are garbage-collected (faster-whisper holds no global refs).
+_MODEL_BUILD_LOCK = threading.Lock()
+_MODEL_CACHE = OrderedDict()
+_MODEL_CACHE_MAX = 2
+
 def _load_faster_whisper(model_size, device, compute_type):
     from faster_whisper import WhisperModel
-
-    return WhisperModel(model_size, device=device, compute_type=compute_type)
+    key = (model_size, device, compute_type)
+    with _MODEL_BUILD_LOCK:
+        model = _MODEL_CACHE.get(key)
+        if model is not None:
+            # Move to end (most-recently-used).
+            _MODEL_CACHE.move_to_end(key)
+            return model
+        # Evict oldest if at capacity. Explicitly delete the evicted model
+        # so it can be garbage-collected before we allocate the replacement
+        # — otherwise both coexist and we hit the OOM we're trying to avoid.
+        while len(_MODEL_CACHE) >= _MODEL_CACHE_MAX:
+            evicted_key, evicted_model = _MODEL_CACHE.popitem(last=False)
+            del evicted_model
+            print(f"🗑️  Evicted Whisper model {evicted_key[0]} from cache.", flush=True)
+        model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        _MODEL_CACHE[key] = model
+        return model
 
 
 def _word_dict(word, strip=False):
@@ -134,14 +269,14 @@ def _segment_dict(segment, strip_words=False):
     }
 
 
-def _transcribe_faster_whisper(video_path, model_size, strip_words=False):
+def _transcribe_faster_whisper(video_path, model_size, strip_words=False, on_segment=None):
     device, compute_type = _faster_whisper_device()
     print(f"🎙️  Transcribing with Faster-Whisper '{model_size}' ({device}/{compute_type})...")
     model = _load_faster_whisper(model_size, device, compute_type)
-    transcribe_opts = {"word_timestamps": True}
+    options = {"word_timestamps": True}
     if _vad_enabled():
-        transcribe_opts["vad_filter"] = True
-    segments, info = model.transcribe(video_path, **transcribe_opts)
+        options["vad_filter"] = True
+    segments, info = model.transcribe(video_path, **options)
 
     transcript_segments = []
     full_text = ""
@@ -150,6 +285,8 @@ def _transcribe_faster_whisper(video_path, model_size, strip_words=False):
         seg = _segment_dict(segment, strip_words=strip_words)
         transcript_segments.append(seg)
         full_text += seg["text"] + " "
+        if on_segment:
+            on_segment(seg)
 
     language = getattr(info, "language", None)
     probability = getattr(info, "language_probability", None)
@@ -164,7 +301,7 @@ def _transcribe_faster_whisper(video_path, model_size, strip_words=False):
     }
 
 
-def _transcribe_mlx_whisper(video_path, model_size, strip_words=False):
+def _transcribe_mlx_whisper(video_path, model_size, strip_words=False, on_segment=None):
     import mlx_whisper
 
     repo = MLX_MODELS[model_size]
@@ -177,6 +314,8 @@ def _transcribe_mlx_whisper(video_path, model_size, strip_words=False):
     segments = [_segment_dict(segment, strip_words=strip_words) for segment in result.get("segments", [])]
     for segment in segments:
         print(f"   [{segment['start']:.2f}s -> {segment['end']:.2f}s] {segment['text']}")
+        if on_segment:
+            on_segment(segment)
     return {
         "text": result.get("text", "").strip(),
         "segments": segments,
@@ -501,39 +640,67 @@ def _apply_silence_gaps(segments, silences):
             nxt["start"] = min(e, nxt["end"])
 
 
-def transcribe(video_path, model_size="base", backend=None, strip_words=False):
+def transcribe(video_path, model_size="base", backend=None, strip_words=False,
+               on_segment=None):
     model = normalize_model(model_size)
     selected = resolve_backend(backend)
-    # Only Faster-Whisper honours OPENSHORTS_WHISPER_VAD; MLX and Soniox apply
-    # their own (or no) voice filtering internally — don't claim "+VAD" for them.
-    vad_note = " +VAD" if (selected == "faster-whisper" and _vad_enabled()) else ""
-    print(f"📦 Transcription backend: {selected} | model: {model}{vad_note}")
+
+    # Fast path: ship the job to the persistent worker when one\'s running.
+    # The worker keeps the Whisper model loaded across all callers in this
+    # process lifetime, so we pay the model-load cost ONCE per app boot
+    # instead of once per video. Falls through to the inline path below on
+    # any failure so dev workflows (no FastAPI, no worker) keep working.
+    worker = get_worker_client()
+    if worker is not None and selected != "soniox":
+        try:
+            result = worker.request(video_path, model, selected, strip_words,
+                                        on_progress=print)
+        except Exception as exc:
+            print(
+                f"\u26a0\ufe0f  Whisper worker call failed ({exc}); "
+                f"falling back to inline transcription."
+            )
+            # The startup probe said the worker was reachable; if it\'s now
+            # gone (e.g. crashed mid-request) reset so the next call re-
+            # probes and the inline fallback can take over cleanly.
+            reset_worker_client()
+        else:
+            _recover_silence_gaps(video_path, result)
+            return result
+
     result = None
     if selected == "soniox":
         # No silent fallback: if the user picked Soniox, surface its errors.
         result = _transcribe_soniox(video_path, strip_words=strip_words)
     if selected == "mlx-whisper":
         try:
-            result = _transcribe_mlx_whisper(video_path, model, strip_words=strip_words)
+            result = _transcribe_mlx_whisper(video_path, model, strip_words=strip_words,
+                                             on_segment=on_segment)
         except Exception as exc:
             # ponytail: MLX is optional; faster-whisper remains the portable path.
-            print(f"⚠️  MLX Whisper failed ({exc}); falling back to Faster-Whisper.")
+            print(f"\u26a0\ufe0f  MLX Whisper failed ({exc}); falling back to Faster-Whisper.")
     if result is None:
-        result = _transcribe_faster_whisper(video_path, model, strip_words=strip_words)
+        result = _transcribe_faster_whisper(video_path, model, strip_words=strip_words,
+                                            on_segment=on_segment)
 
-    # Recover real word gaps from the audio so pause/silence editing works
-    # regardless of backend. Best-effort: never fail transcription over this.
-    if _silence_gaps_enabled():
-        try:
-            silences = detect_silences(video_path)
-            if silences:
-                _apply_silence_gaps(result["segments"], silences)
-                print(f"   🔇 Recovered {len(silences)} silence gap(s) in word timings.")
-        except Exception as exc:
-            print(f"⚠️  Silence-gap pass skipped: {exc}")
-
+    _recover_silence_gaps(video_path, result)
     return result
 
+
+def _recover_silence_gaps(video_path, result):
+    """Recover real word gaps from the audio so pause/silence editing works
+    regardless of backend. Best-effort: never fail transcription over this.
+    Extracted so the worker path and the inline path share the exact same
+    post-processing."""
+    if not _silence_gaps_enabled():
+        return
+    try:
+        silences = detect_silences(video_path)
+        if silences:
+            _apply_silence_gaps(result["segments"], silences)
+            print(f"   \U0001f507 Recovered {len(silences)} silence gap(s) in word timings.")
+    except Exception as exc:
+        print(f"\u26a0\ufe0f  Silence-gap pass skipped: {exc}")
 
 def _self_check():
     assert normalize_model("turbo") == "large-v3-turbo"

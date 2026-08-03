@@ -92,17 +92,26 @@ function wasRecentlyCaptured(fingerprint) {
 }
 
 export async function initAnalytics() {
-  if (initialized || (!import.meta.env.PROD && !DEV_OPT_IN)) return initialized;
+  if (initialized) return initialized;
 
   let context = null;
-  if (window.openOpusTelemetry?.getContext) {
+  const hasElectronBridge = Boolean(window.openOpusTelemetry?.getContext);
+  if (hasElectronBridge) {
     try {
       context = await window.openOpusTelemetry.getContext();
       desktopRuntime = true;
     } catch {
-      // Fall back to PostHog's anonymous localStorage identity.
+      // An Electron bridge failure must not look like a production web app.
+      if (!DEV_OPT_IN) return false;
     }
   }
+
+  // Honor the same packaged/opt-in gate as telemetry.js: dev builds of the
+  // Electron app stay silent unless VITE_POSTHOG_DEV=true. Web builds (no
+  // Electron context) opt in only when the production bundle is loaded.
+  const desktopDev = context && context.packaged === false;
+  if (desktopDev && !DEV_OPT_IN) return false;
+  if (!desktopRuntime && !import.meta.env.PROD && !DEV_OPT_IN) return false;
 
   const bootstrap = context?.distinctId
     ? { distinctID: context.distinctId, isIdentifiedID: false }
@@ -133,7 +142,7 @@ export async function initAnalytics() {
     before_send: beforeSend,
     session_recording: {
       maskAllInputs: true,
-      maskTextSelector: 'body',
+        maskTextSelector: '*',
       blockSelector: 'video, audio, canvas, img, [data-posthog-block]',
       recordHeaders: false,
       recordBody: false,
@@ -156,28 +165,20 @@ export async function initAnalytics() {
 }
 
 export function track(eventName, properties = {}) {
-  if (!initialized) return false;
+  if (!initialized) return;
   const safeProperties = {};
   for (const [key, value] of Object.entries(properties)) {
     if (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key)) continue;
     if (typeof value === 'number' || typeof value === 'boolean') {
       safeProperties[key] = value;
     } else if (typeof value === 'string') {
-      // Free-form text (e.g. feedback detail) goes through scrubText first so
-      // URLs, paths, and API keys are redacted BEFORE the 40-char clamp;
-      // safeContextValue() strips the delimiters the scrubber relies on.
-      // Categorical short values (category, area, etc.) use the safe clamp.
       safeProperties[key] = key === 'detail' || value.length > 40
         ? scrubText(value)
         : safeContextValue(value);
     }
   }
   posthog.capture(eventName, safeProperties);
-  return true;
-}
 
-export function analyticsCaptured() {
-  return initialized;
 }
 
 export function captureError(error, { area = 'renderer' } = {}) {
