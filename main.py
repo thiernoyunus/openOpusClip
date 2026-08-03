@@ -29,6 +29,10 @@ warnings.filterwarnings("ignore", category=UserWarning, module='google.protobuf'
 # Load environment variables
 load_dotenv()
 
+def report_stage(name, state):
+    """Emit a machine-readable stage marker for the dashboard checklist."""
+    print(f"📍 OPENSHORTS_STAGE:{name}:{state}", flush=True)
+
 # --- Constants ---
 ASPECT_RATIO = 9 / 16
 
@@ -1316,6 +1320,7 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
     if os.path.exists(final_output_video): os.remove(final_output_video)
 
     window_active = bool(bake_in_frame) or bake_out_frame is not None
+    report_stage("reframe", "start")
 
     print(f"🎬 Processing clip: {input_video}")
     print("   Step 1: Detecting scenes...")
@@ -2691,8 +2696,10 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
     base = video_title
 
     # 2. Select + order moments (raises ClipAnalysisError -> caller sys.exit(2))
+    report_stage("analyze", "start")
     trailer = get_trailer_moments(transcript, duration, pace=pace)
     moments_ordered = trailer['moments_ordered']
+    report_stage("analyze", "done")
     print(f"🎞️  Trailer: {len(moments_ordered)} ordered moments.")
 
     # 3. Cut each moment (playback order) as a re-encoded segment. The cuts are
@@ -2724,6 +2731,7 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
         return seg_path
 
     from concurrent.futures import ThreadPoolExecutor
+    report_stage("extract", "start")
     with ThreadPoolExecutor(max_workers=4) as pool:
         # list() preserves playback order regardless of completion order.
         seg_paths = list(pool.map(lambda km: _cut_segment(*km), enumerate(moments_ordered)))
@@ -2785,6 +2793,7 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
             trailer_source,
         ]
         run_logged_command(concat_reencode, "Re-encoding trailer concat", trailer_source)
+    report_stage("extract", "done")
 
     # 5. Concat offsets in FRAMES (authoritative coordinate space).
     offsets_frames = [0] * len(seg_frames)
@@ -2913,6 +2922,7 @@ if __name__ == '__main__':
         return path
     
     # 1. Get Input Video
+    report_stage("download", "start")
     if args.url:
         # For multi-clip runs, treat --output as an OUTPUT DIRECTORY (create it if needed).
         # For whole-video runs (--skip-analysis), --output can be a file path.
@@ -2949,6 +2959,8 @@ if __name__ == '__main__':
             else:
                 output_dir = os.path.dirname(input_video)
 
+    report_stage("download", "done")
+
     if not os.path.exists(input_video):
         print(f"❌ Input file not found: {input_video}")
         exit(1)
@@ -2963,10 +2975,14 @@ if __name__ == '__main__':
             transcript = json.load(f)
         print(f"📄 More-clips mode: loaded transcript from {args.transcript_file} (skipped download + transcription).")
     else:
+        report_stage("transcribe", "start")
+        transcribe_start = time.monotonic()
         print(f"🔊 Transcribing audio ({args.whisper_model})...")
         transcript = transcribe_video(input_video, args.whisper_model)
         print(f"🔊 Transcription done: {len(transcript.get('segments', []))} segment(s), "
-              f"lang={transcript.get('language', 'unknown')}.")
+              f"lang={transcript.get('language', 'unknown')}, "
+              f"elapsed={time.monotonic() - transcribe_start:.2f}s.")
+        report_stage("transcribe", "done")
 
     # Get duration (guard against a corrupt/unreadable video reporting fps 0)
     cap = cv2.VideoCapture(input_video)
@@ -2992,10 +3008,12 @@ if __name__ == '__main__':
             sys.exit(2)
 
         # Retain the full original (or clean it up) for the editor's Extend feature.
+        report_stage("finalize", "start")
         retain_or_cleanup_original(input_video, output_dir, bool(args.url), args.keep_original)
 
         total_time = time.time() - script_start_time
         print(f"\n⏱️  Total execution time: {total_time:.2f}s")
+        report_stage("finalize", "done")
         sys.exit(0)
 
     # 3. Pick moments: AI viral detection, or one synthetic moment ("Don't clip")
@@ -3030,6 +3048,7 @@ if __name__ == '__main__':
         if exclude_ranges:
             moment_prompt = build_more_clips_prompt(exclude_ranges, args.num_clips, moment_prompt)
         try:
+            report_stage("analyze", "start")
             clips_data = get_viral_clips(
                 transcript, duration,
                 min_clip_length=args.min_clip_length,
@@ -3071,6 +3090,7 @@ if __name__ == '__main__':
             print(f"✂️  Capped {over} returned moment(s) to the {args.num_clips} requested (kept the highest-scoring).")
 
         print(f"🔥 Found {len(clips_data['shorts'])} viral clips!")
+        report_stage("analyze", "done")
 
         # Save metadata
         clips_data['transcript'] = transcript # Save full transcript for subtitles
@@ -3235,6 +3255,7 @@ if __name__ == '__main__':
         if clip_workers <= 0:
             clip_workers = auto_clip_workers()
         shorts = clips_data['shorts']
+        report_stage("extract", "start")
         if clip_workers > 1 and len(shorts) > 1:
             print(f"\n⚡ Processing {len(shorts)} clips with {clip_workers} parallel workers...")
             from concurrent.futures import ThreadPoolExecutor
@@ -3243,6 +3264,7 @@ if __name__ == '__main__':
         else:
             results = [process_one_clip_safe(i, c) for i, c in enumerate(shorts)]
         ok = sum(results)
+        report_stage("extract", "done")
         print(f"\n📊 Clips ready: {ok}/{len(shorts)}")
         if ok < len(shorts):
             # app.py maps shorts[i] -> clip_{i+1}.mp4 by POSITION, so we can't
@@ -3253,8 +3275,10 @@ if __name__ == '__main__':
             print(f"❌ {len(shorts) - ok} clip(s) failed; failing the job so no broken clip links are served.")
             sys.exit(2)
 
+    report_stage("finalize", "start")
     # Retain the full original (or clean it up) for the editor's Extend feature.
     retain_or_cleanup_original(input_video, output_dir, bool(args.url), args.keep_original)
 
     total_time = time.time() - script_start_time
     print(f"\n⏱️  Total execution time: {total_time:.2f}s")
+    report_stage("finalize", "done")
