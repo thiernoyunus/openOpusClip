@@ -2696,8 +2696,10 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
     base = video_title
 
     # 2. Select + order moments (raises ClipAnalysisError -> caller sys.exit(2))
+    report_stage("analyze", "start")
     trailer = get_trailer_moments(transcript, duration, pace=pace)
     moments_ordered = trailer['moments_ordered']
+    report_stage("analyze", "done")
     print(f"🎞️  Trailer: {len(moments_ordered)} ordered moments.")
 
     # 3. Cut each moment (playback order) as a re-encoded segment. The cuts are
@@ -2729,6 +2731,7 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
         return seg_path
 
     from concurrent.futures import ThreadPoolExecutor
+    report_stage("extract", "start")
     with ThreadPoolExecutor(max_workers=4) as pool:
         # list() preserves playback order regardless of completion order.
         seg_paths = list(pool.map(lambda km: _cut_segment(*km), enumerate(moments_ordered)))
@@ -2790,6 +2793,7 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
             trailer_source,
         ]
         run_logged_command(concat_reencode, "Re-encoding trailer concat", trailer_source)
+    report_stage("extract", "done")
 
     # 5. Concat offsets in FRAMES (authoritative coordinate space).
     offsets_frames = [0] * len(seg_frames)
@@ -3004,10 +3008,12 @@ if __name__ == '__main__':
             sys.exit(2)
 
         # Retain the full original (or clean it up) for the editor's Extend feature.
+        report_stage("finalize", "start")
         retain_or_cleanup_original(input_video, output_dir, bool(args.url), args.keep_original)
 
         total_time = time.time() - script_start_time
         print(f"\n⏱️  Total execution time: {total_time:.2f}s")
+        report_stage("finalize", "done")
         sys.exit(0)
 
     # 3. Pick moments: AI viral detection, or one synthetic moment ("Don't clip")
@@ -3049,7 +3055,6 @@ if __name__ == '__main__':
                 max_clip_length=args.max_clip_length,
                 moment_prompt=moment_prompt,
             )
-            report_stage("analyze", "done")
         except ClipAnalysisError as e:
             print(f"❌ Clip detection failed: {e}")
             print("🛑 Stopping job. Not converting the whole video as a fallback.")
@@ -3085,6 +3090,7 @@ if __name__ == '__main__':
             print(f"✂️  Capped {over} returned moment(s) to the {args.num_clips} requested (kept the highest-scoring).")
 
         print(f"🔥 Found {len(clips_data['shorts'])} viral clips!")
+        report_stage("analyze", "done")
 
         # Save metadata
         clips_data['transcript'] = transcript # Save full transcript for subtitles

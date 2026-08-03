@@ -133,7 +133,7 @@ function explicitPhaseIndex(logs) {
     found = true;
     reached = Math.max(reached, match[2].toLowerCase() === 'done' ? index + 1 : index);
   }
-  return found ? reached : null;
+  return found ? Math.min(reached, PHASE_LABELS.length - 1) : null;
 }
 
 // Index of the furthest stage the logs have reached (-1 = not started yet).
