@@ -51,8 +51,9 @@ interface FramingLike {
   }> | null;
 }
 
-/** One panel of a layout: its height as a fraction of the canvas. */
+/** One panel of a layout: its size as a fraction of the canvas. */
 interface Panel {
+  wFrac: number;
   hFrac: number;
   /** Screen/gameplay capture: shows the whole frame, never a face crop. */
   content?: boolean;
@@ -65,22 +66,35 @@ interface Panel {
 const panelsForLayout = (layout: string | undefined): Panel[] => {
   switch (layout) {
     case "split":
-      return [{ hFrac: 1 / 2 }, { hFrac: 1 / 2 }];
+      return [
+        { wFrac: 1, hFrac: 1 / 2 },
+        { wFrac: 1, hFrac: 1 / 2 },
+      ];
     case "three":
-      return [{ hFrac: 1 / 3 }, { hFrac: 1 / 3 }, { hFrac: 1 / 3 }];
+      return [
+        { wFrac: 1, hFrac: 1 / 3 },
+        { wFrac: 1, hFrac: 1 / 3 },
+        { wFrac: 1, hFrac: 1 / 3 },
+      ];
     case "four":
       return [
-        { hFrac: 1 / 2 },
-        { hFrac: 1 / 2 },
-        { hFrac: 1 / 2 },
-        { hFrac: 1 / 2 },
+        { wFrac: 1 / 2, hFrac: 1 / 2 },
+        { wFrac: 1 / 2, hFrac: 1 / 2 },
+        { wFrac: 1 / 2, hFrac: 1 / 2 },
+        { wFrac: 1 / 2, hFrac: 1 / 2 },
       ];
     case "screenshare":
-      return [{ hFrac: 0.6, content: true }, { hFrac: 0.4 }];
+      return [
+        { wFrac: 1, hFrac: 0.6, content: true },
+        { wFrac: 1, hFrac: 0.4 },
+      ];
     case "gameplay":
-      return [{ hFrac: 0.3 }, { hFrac: 0.7, content: true }];
+      return [
+        { wFrac: 1, hFrac: 0.3 },
+        { wFrac: 1, hFrac: 0.7, content: true },
+      ];
     default:
-      return [{ hFrac: 1 }];
+      return [{ wFrac: 1, hFrac: 1 }];
   }
 };
 
@@ -145,47 +159,71 @@ export const requiredSourceSize = (
     ? framing.clips
     : framing.segments ?? [];
 
+  /**
+   * Source height a crop needs to fill its panel without upscaling.
+   *
+   * Both axes matter. CroppedVideo scales by max(panelW/cropWpx,
+   * panelH/cropHpx), so whichever axis is tighter wins — and a saved crop is
+   * NOT always aspect-locked to its panel (real pinned panel crops run ~33% off
+   * their panel's aspect). Sizing on height alone under-fed narrow crops.
+   * Expressed as a height because the proxy keeps the source aspect ratio.
+   */
+  const needFor = (panelW: number, panelH: number, crop: Crop): number =>
+    Math.max(
+      panelH / Math.max(crop.h || 1, 0.01),
+      panelW / Math.max(crop.w || 1, 0.01) / srcAspect
+    );
+
+  /** A face crop is aspect-locked to its panel by construction (cropForFace). */
+  const needForFace = (panelH: number, cropH: number): number => panelH / cropH;
+
   for (const clip of clips) {
     // A manual crop wins over the layout and covers the whole canvas.
     if (clip.manualCrop) {
-      neededH = Math.max(neededH, outH / Math.max(clip.manualCrop.h || 1, 0.01));
+      neededH = Math.max(neededH, needFor(outW, outH, clip.manualCrop));
       continue;
     }
 
     if (!is916) {
-      neededH = Math.max(neededH, outH / faceCropHeight(framing, clip, 0));
+      neededH = Math.max(neededH, needForFace(outH, faceCropHeight(framing, clip, 0)));
       continue;
     }
 
     if (clip.layout === "fit") continue; // whole frame — the floor covers it
 
     if (clip.layout === "fill") {
-      const cropH = (clip.cameraKeyframes ?? []).reduce(
-        (m, c) => Math.min(m, c.h || 1),
-        1
-      );
-      neededH = Math.max(neededH, outH / Math.max(cropH, 0.01));
+      for (const kf of clip.cameraKeyframes ?? []) {
+        neededH = Math.max(neededH, needFor(outW, outH, kf));
+      }
+      // No keyframes: the renderer center-crops at full height.
+      if (!clip.cameraKeyframes?.length) neededH = Math.max(neededH, outH);
       continue;
     }
 
     panelsForLayout(clip.layout).forEach((panel, i) => {
       const pinned = clip.panelCrops?.[i] ?? null;
+      const panelW = outW * panel.wFrac;
+      const panelH = outH * panel.hFrac;
       // Un-pinned content panels show the whole frame contained in the panel,
       // so they never need more than the floor already guarantees.
       if (panel.content && !pinned) return;
-      const cropH = pinned
-        ? pinned.h || 1
-        : faceCropHeight(framing, clip, i);
       neededH = Math.max(
         neededH,
-        (outH * panel.hFrac) / Math.max(cropH, 0.01)
+        pinned
+          ? needFor(panelW, panelH, pinned)
+          : needForFace(panelH, faceCropHeight(framing, clip, i))
       );
     });
   }
 
+  // Shave float dust before rounding up: an exact requirement like 1920 comes
+  // out of the width term as 1920.0000000000002 and would otherwise ask for an
+  // extra pixel.
+  const ceil = (n: number) => Math.ceil(n - 1e-6);
+
   return {
-    width: Math.ceil(neededH * srcAspect),
-    height: Math.ceil(neededH),
+    width: ceil(neededH * srcAspect),
+    height: ceil(neededH),
   };
 };
 

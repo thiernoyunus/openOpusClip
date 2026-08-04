@@ -31,7 +31,7 @@ const track = (id: number, h: number) => ({
 {
   const r = requiredSourceSize({
     ...base,
-    clips: [{ layout: "fill", cameraKeyframes: [{ w: 0.3164, h: 1 }] }],
+    clips: [{ layout: "fill", cameraKeyframes: [{ w: 81 / 256, h: 1 }] }],
   })!;
   assert.strictEqual(r.height, 1920, `fill/full-height -> ${r.height}`);
   assert.strictEqual(r.width, 3414, `fill/full-height width -> ${r.width}`);
@@ -80,6 +80,39 @@ const track = (id: number, h: number) => ({
   assert.strictEqual(r.height, 4800, `split/pinned tile -> ${r.height}`); // 960 / 0.2
 }
 
+// Crops are NOT always aspect-locked to their panel, so the narrow axis can be
+// the binding one. Sizing on height alone silently starved these of width.
+{
+  // A full-height but very narrow crop: height says 1920, width says
+  // (1080/0.1)/1.778 = 6075. Width must win.
+  const r = requiredSourceSize({
+    ...base,
+    clips: [{ layout: "fill", cameraKeyframes: [{ w: 0.1, h: 1 }] }],
+  })!;
+  assert.strictEqual(r.height, 6075, `fill/narrow crop -> ${r.height}`);
+  assert.ok(r.width >= 10800, `fill/narrow crop width -> ${r.width}`);
+}
+{
+  // Real shape from a saved project: a pinned screenshare tile whose aspect is
+  // ~33% off its 1080x768 panel.
+  const r = requiredSourceSize({
+    ...base,
+    clips: [{ layout: "screenshare", panelCrops: [null, { w: 0.25, h: 0.4 }] }],
+  })!;
+  const byHeight = 768 / 0.4; // 1920
+  const byWidth = 1080 / 0.25 / (3840 / 2160); // 2430
+  assert.strictEqual(r.height, Math.ceil(Math.max(byHeight, byWidth)), `pinned screenshare tile -> ${r.height}`);
+}
+{
+  // "four" panels are half-width, so the width term uses 540, not 1080.
+  const r = requiredSourceSize({
+    ...base,
+    clips: [{ layout: "four", panelCrops: [{ w: 0.25, h: 0.9 }, null, null, null] }],
+  })!;
+  const expected = Math.ceil(Math.max(960 / 0.9, 540 / 0.25 / (3840 / 2160)));
+  assert.strictEqual(r.height, expected, `four/pinned tile -> ${r.height}`);
+}
+
 // Non-9:16 output ignores the layout and draws one full-canvas face crop.
 {
   const r = requiredSourceSize({
@@ -95,7 +128,7 @@ const track = (id: number, h: number) => ({
 {
   const r = requiredSourceSize({
     ...base,
-    segments: [{ layout: "fill", cameraKeyframes: [{ w: 0.3164, h: 1 }] }],
+    segments: [{ layout: "fill", cameraKeyframes: [{ w: 81 / 256, h: 1 }] }],
   })!;
   assert.strictEqual(r.height, 1920, `v2 segments -> ${r.height}`);
 }
@@ -106,7 +139,7 @@ const track = (id: number, h: number) => ({
     ...base,
     clips: [
       { layout: "fit" },
-      { layout: "fill", cameraKeyframes: [{ w: 0.3164, h: 1 }] },
+      { layout: "fill", cameraKeyframes: [{ w: 81 / 256, h: 1 }] },
     ],
   })!;
   assert.strictEqual(r.height, 1920, `mixed -> ${r.height}`);
@@ -122,7 +155,7 @@ const track = (id: number, h: number) => ({
 {
   const r = requiredSourceSize({
     ...base,
-    clips: [{ layout: "fit", manualCrop: { w: 0.3164, h: 0.5 } }],
+    clips: [{ layout: "fit", manualCrop: { w: 81 / 512, h: 0.5 } }],
   })!;
   assert.strictEqual(r.height, 3840, `manualCrop -> ${r.height}`);
 }
