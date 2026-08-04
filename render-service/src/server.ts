@@ -79,8 +79,27 @@ app.use(express.json({ limit: "10mb" }));
 const PORT = parseInt(process.env.PORT || "3100", 10);
 const OUTPUT_DIR = process.env.OUTPUT_DIR || "/output";
 
-// Serve video files from the shared output volume so Remotion can access them via HTTP
-app.use("/output", express.static(OUTPUT_DIR));
+// Serve video files from the shared output volume so Remotion can access them via HTTP.
+// The CORS header is required: @remotion/media decodes video with WebCodecs, which
+// fetches the file from the render page's origin. Without it the fetch is blocked and
+// the renderer silently falls back to a much slower decode path.
+// Only the local render page needs this, so echo loopback origins rather than
+// sending "*" — otherwise any site the user visits could read their videos
+// from this port.
+const LOOPBACK_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+
+app.use(
+  "/output",
+  (req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && LOOPBACK_ORIGIN.test(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+    }
+    next();
+  },
+  express.static(OUTPUT_DIR)
+);
 
 // Health check
 app.get("/health", (_req, res) => {

@@ -8,6 +8,7 @@ import {
 } from "@remotion/renderer";
 import { getBundleLocation } from "./bundle.js";
 import { renderJobs } from "./server.js";
+import { ensureSourceProxy } from "./source-proxy.js";
 
 // --- Render performance tuning (env-overridable) ---
 // These knobs trade a little encode time / file size for throughput. Defaults
@@ -85,18 +86,31 @@ export async function executeRender(params: RenderParams): Promise<void> {
 
     const bundleLocation = getBundleLocation();
 
-    // Select the composition with the provided input props
-    const composition = await selectComposition({
-      serveUrl: bundleLocation,
-      id: "ShortVideo",
-      inputProps: props,
-      browserExecutable: RENDER_BROWSER_EXECUTABLE,
-    });
-
     // Determine output directory and file path
     const outputDir = process.env.OUTPUT_DIR
       ? path.resolve(process.env.OUTPUT_DIR)
       : path.resolve(import.meta.dirname, "../../output");
+
+    // Swap in a right-sized copy of the source when the export can't use all
+    // its pixels anyway (see source-proxy.ts). No-op when it already fits.
+    const renderProps = props.sourceVideoUrl
+      ? {
+          ...props,
+          sourceVideoUrl: await ensureSourceProxy({
+            sourceUrl: props.sourceVideoUrl,
+            framing: props.framing,
+            outputDir,
+          }),
+        }
+      : props;
+
+    // Select the composition with the provided input props
+    const composition = await selectComposition({
+      serveUrl: bundleLocation,
+      id: "ShortVideo",
+      inputProps: renderProps,
+      browserExecutable: RENDER_BROWSER_EXECUTABLE,
+    });
 
     const jobOutputDir = path.join(outputDir, jobId);
     fs.mkdirSync(jobOutputDir, { recursive: true });
@@ -128,8 +142,18 @@ export async function executeRender(params: RenderParams): Promise<void> {
       // Faster x264 preset than the "medium" default (see RENDER_X264_PRESET).
       x264Preset: RENDER_X264_PRESET,
       browserExecutable: RENDER_BROWSER_EXECUTABLE,
-      onProgress: ({ progress }) => {
-        const percent = Math.round(progress * 100);
+      // Report how many frames are drawn, not Remotion's blended
+      // drawing+encoding number. Drawing is nearly all of the wall time and
+      // encoding finishes seconds later, so the blended figure crawled to ~80%
+      // and then jumped straight to done — it read as if the export had been
+      // cut short. Hold at 99% until the file is actually written.
+      onProgress: ({ renderedFrames }) => {
+        const total = composition.durationInFrames;
+        const percent =
+          total > 0
+            ? Math.min(99, Math.floor((renderedFrames / total) * 100))
+            : 0;
+        if (percent === job.progress) return;
         job.progress = percent;
 
         if (percent % 10 === 0) {
