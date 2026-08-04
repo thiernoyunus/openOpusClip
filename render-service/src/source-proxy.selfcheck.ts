@@ -7,7 +7,7 @@
  * where an earlier version of this file got that wrong.
  */
 import assert from "node:assert";
-import { requiredSourceSize } from "./source-proxy.js";
+import { requiredSourceSize, isInside } from "./source-proxy.js";
 
 const base = {
   source: { width: 3840, height: 2160 },
@@ -160,7 +160,52 @@ const track = (id: number, h: number) => ({
   assert.strictEqual(r.height, 3840, `manualCrop -> ${r.height}`);
 }
 
+// A clip starting or ending in a tracking gap can be framed by a sample just
+// OUTSIDE its own range (smoothedFaceRect reaches ±12, or nearest within 45),
+// so those samples have to count toward sizing.
+{
+  const framing = {
+    ...base,
+    faceTracks: [
+      {
+        id: 0,
+        samples: [
+          { frame: 80, h: 0.09 }, // just before the clip — a small face
+          { frame: 200, h: 0.6 }, // comfortably inside
+        ],
+      },
+    ],
+    clips: [
+      { layout: "split", trackedFaceIds: [0], sourceStart: 100, sourceEnd: 300 },
+    ],
+  };
+  const r = requiredSourceSize(framing)!;
+  // The out-of-range small face clamps cropForFace to 0.3 -> 960 / 0.3 = 3200.
+  assert.strictEqual(r.height, 3200, `tracking-gap sample -> ${r.height}`);
+
+  // A sample far outside the reach must NOT drag the requirement up.
+  const far = requiredSourceSize({
+    ...framing,
+    faceTracks: [
+      { id: 0, samples: [{ frame: 0, h: 0.09 }, { frame: 200, h: 0.6 }] },
+    ],
+  })!;
+  assert.strictEqual(far.height, 960, `far sample ignored -> ${far.height}`);
+}
+
 // No source dimensions => no opinion (caller keeps the original).
 assert.strictEqual(requiredSourceSize({ clips: [] }), null);
+
+// The render endpoint takes sourceVideoUrl from the request, so the resolved
+// path must be confined to the output volume before ffmpeg touches it.
+{
+  const out = "/Users/me/output";
+  assert.ok(isInside(out, "/Users/me/output/job/clip.mp4"), "normal path");
+  assert.ok(isInside(out, "/Users/me/output/a/b/c.mp4"), "nested path");
+  assert.ok(!isInside(out, "/Users/Movies/private.mp4"), "sibling escape");
+  assert.ok(!isInside(out, "/Users/me/output/../secret.mp4"), "dot-dot escape");
+  assert.ok(!isInside(out, "/etc/passwd"), "absolute escape");
+  assert.ok(!isInside(out, "/Users/me/output-other/x.mp4"), "prefix look-alike");
+}
 
 console.log("source-proxy self-check: ok");

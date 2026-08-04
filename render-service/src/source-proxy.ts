@@ -117,8 +117,14 @@ const faceCropHeight = (
   // No track: the renderer falls back to a full-height center crop.
   if (!track?.samples?.length) return 1;
 
-  const from = clip.sourceStart ?? clip.startFrame ?? -Infinity;
-  const to = clip.sourceEnd ?? clip.endFrame ?? Infinity;
+  // smoothedFaceRect() averages samples within ±12 frames of the rendered
+  // frame and, in a tracking gap, falls back to the nearest sample within 45.
+  // So a clip that starts or ends mid-gap can be framed by a sample outside its
+  // own range — scanning only [start, end) would miss a small face there and
+  // under-size the proxy. Widen by the larger of the two windows.
+  const SAMPLE_REACH = 45;
+  const from = (clip.sourceStart ?? clip.startFrame ?? -Infinity) - SAMPLE_REACH;
+  const to = (clip.sourceEnd ?? clip.endFrame ?? Infinity) + SAMPLE_REACH;
   let smallest = Infinity;
   for (const s of track.samples) {
     const f = s.frame ?? 0;
@@ -227,6 +233,12 @@ export const requiredSourceSize = (
   };
 };
 
+/** True when `target` resolves to `dir` itself or something beneath it. */
+export const isInside = (dir: string, target: string): boolean => {
+  const rel = path.relative(path.resolve(dir), path.resolve(target));
+  return rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+};
+
 /** ffmpeg needs even dimensions for yuv420p. */
 const even = (n: number): number => (n % 2 === 0 ? n : n + 1);
 
@@ -271,6 +283,14 @@ export async function ensureSourceProxy(opts: {
     const rel = sourceUrl.match(/\/output\/(.+)$/)?.[1];
     if (!rel) return sourceUrl;
     const localPath = path.join(outputDir, decodeURIComponent(rel));
+    // /render takes sourceVideoUrl straight from the request and only rewrites
+    // URLs shaped like /videos/<id>/<file>; anything else passes through. A
+    // path with encoded ".." segments would otherwise let this read, and write
+    // a .proxy file next to, any file on disk.
+    if (!isInside(outputDir, localPath)) {
+      console.error(`[source-proxy] refusing path outside output dir: ${localPath}`);
+      return sourceUrl;
+    }
     if (!fs.existsSync(localPath)) return sourceUrl;
 
     const w = even(needed.width);
