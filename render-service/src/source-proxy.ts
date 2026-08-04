@@ -49,7 +49,15 @@ interface FramingLike {
     id?: number;
     samples?: Array<{ frame?: number; h?: number }>;
   }> | null;
+  transitions?: { cutCrossfade?: unknown; cutStyle?: string } | null;
 }
+
+/**
+ * Extra scale the footage can be blown up to at a cut. Mirrors MAX_SCALE in
+ * remotion/src/compositions/TransitionZoom.tsx (1 + 0.12), which wraps the
+ * footage layers when zoom cuts are on — keep the two in step.
+ */
+const ZOOM_CUT_SCALE = 1.12;
 
 /** One panel of a layout: its size as a fraction of the canvas. */
 interface Panel {
@@ -220,6 +228,15 @@ export const requiredSourceSize = (
           : needForFace(panelH, faceCropHeight(framing, clip, i))
       );
     });
+  }
+
+  // Zoom cuts briefly scale the whole footage layer up at each cut boundary,
+  // so every panel is drawn larger than its layout box for those frames.
+  if (
+    framing.transitions?.cutCrossfade &&
+    framing.transitions.cutStyle === "zoom"
+  ) {
+    neededH *= ZOOM_CUT_SCALE;
   }
 
   // Shave float dust before rounding up: an exact requirement like 1920 comes

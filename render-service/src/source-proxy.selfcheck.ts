@@ -193,6 +193,36 @@ const track = (id: number, h: number) => ({
   assert.strictEqual(far.height, 960, `far sample ignored -> ${far.height}`);
 }
 
+// Zoom cuts scale the footage up to 1.12 at each cut, so every panel is drawn
+// larger than its layout box for those frames and needs proportionally more.
+{
+  const plain = requiredSourceSize({ ...base, clips: [{ layout: "fit" }] })!;
+  assert.strictEqual(plain.height, 608, `fit/no zoom -> ${plain.height}`);
+
+  const zoomed = requiredSourceSize({
+    ...base,
+    transitions: { cutCrossfade: true, cutStyle: "zoom" },
+    clips: [{ layout: "fit" }],
+  })!;
+  assert.strictEqual(zoomed.height, Math.ceil(608 * 1.12 - 1e-6), `fit/zoom cuts -> ${zoomed.height}`);
+
+  // Crossfade cuts that are not the zoom style don't scale anything.
+  const fade = requiredSourceSize({
+    ...base,
+    transitions: { cutCrossfade: true, cutStyle: "crossfade" },
+    clips: [{ layout: "fit" }],
+  })!;
+  assert.strictEqual(fade.height, 608, `fit/non-zoom cut style -> ${fade.height}`);
+
+  // cutStyle "zoom" with the transition switched off is also inert.
+  const off = requiredSourceSize({
+    ...base,
+    transitions: { cutCrossfade: false, cutStyle: "zoom" },
+    clips: [{ layout: "fit" }],
+  })!;
+  assert.strictEqual(off.height, 608, `fit/zoom disabled -> ${off.height}`);
+}
+
 // No source dimensions => no opinion (caller keeps the original).
 assert.strictEqual(requiredSourceSize({ clips: [] }), null);
 
