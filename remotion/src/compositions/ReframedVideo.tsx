@@ -321,7 +321,15 @@ const FitFrame: React.FC<{
   const fgHeight = width * (srcH / srcW);
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
-      {/* blurred background, scaled to fill */}
+      {/* Blurred background, cropped to fill the frame.
+          ponytail: sized to the canvas with objectFit "cover" rather than laid
+          out oversize (height x height*aspect) and centered. Same picture, but
+          the blur then covers ~3x fewer pixels — at full size this one filter
+          was over half the time of a typical export.
+          The 1.3 zoom (was 1.15) is what keeps that cheap: a blur fades out
+          where it runs past the edge of its element, and the element is now
+          only canvas-sized, so it has to be scaled far enough for that faded
+          border to land outside the frame. Below ~1.29 you get dark edges. */}
       <Video
         src={src}
         _experimentalInitiallyDrawCachedFrame
@@ -329,12 +337,12 @@ const FitFrame: React.FC<{
         trimBefore={trimBefore}
         style={{
           position: "absolute",
-          left: "50%",
-          top: "50%",
+          left: 0,
+          top: 0,
+          width,
           height,
-          width: height * (srcW / srcH),
-          maxWidth: "none",
-          transform: "translate(-50%, -50%) scale(1.15)",
+          objectFit: "cover",
+          transform: "scale(1.3)",
           filter: "blur(40px) brightness(0.7)",
         }}
       />
