@@ -325,6 +325,17 @@ function App() {
         if (result) nextProjects = updateProject(result.id, result.patch);
       }
       if (patches.some(Boolean)) setProjects(nextProjects);
+
+      // A card restored to "processing" needs to join the poll loop too,
+      // or it sits at "processing" forever instead of "expired" forever —
+      // the polling effect only iterates processingJobIds, which was seeded
+      // once at mount, before this recheck had a chance to run.
+      const restoredProcessingIds = patches
+        .filter((r) => r?.patch.status === 'processing')
+        .map((r) => r.id);
+      if (restoredProcessingIds.length > 0) {
+        setProcessingJobIds((ids) => [...new Set([...ids, ...restoredProcessingIds])]);
+      }
     };
 
     refreshExpiredProjects();
