@@ -275,7 +275,12 @@ function App() {
   useEffect(() => {
     let cancelled = false;
     const refreshExpiredProjects = async () => {
-      const candidates = getProjects().filter((p) => p.status === 'expired');
+      // Trailer projects own their own status vocabulary and already resume
+      // polling themselves on TrailerPage (done: completed/complete, failed:
+      // error/expired) -- writing this effect's generic 'failed' there would
+      // match neither, leaving a failed trailer stuck looking like it's still
+      // processing.
+      const candidates = getProjects().filter((p) => p.status === 'expired' && !isTrailerProject(p));
       if (candidates.length === 0) return;
 
       const patches = await Promise.all(candidates.map(async (p) => {
