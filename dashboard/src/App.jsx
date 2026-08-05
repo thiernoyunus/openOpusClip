@@ -269,6 +269,70 @@ function App() {
     }
   }, [jobId, status, results, activeTab]);
 
+  // Revalidate cards that were marked expired by an older client or a
+  // temporary backend restart. A real 404 stays expired; a successful status
+  // response restores the card without touching the project files.
+  useEffect(() => {
+    let cancelled = false;
+    const refreshExpiredProjects = async () => {
+      const candidates = getProjects().filter((p) => p.status === 'expired');
+      if (candidates.length === 0) return;
+
+      const patches = await Promise.all(candidates.map(async (p) => {
+        try {
+          const data = await pollJob(p.id);
+          if (data.status === 'completed') {
+            return {
+              id: p.id,
+              patch: {
+                status: 'complete',
+                clipCount: data.result?.clips?.length || p.clipCount || 0,
+                cost: data.result?.cost_analysis?.total_cost ?? p.cost ?? null,
+                durationSeconds: data.duration_seconds ?? p.durationSeconds ?? fallbackDurationSeconds(p.id),
+                elapsedSeconds: data.elapsed_seconds ?? p.elapsedSeconds ?? null,
+              },
+            };
+          }
+          if (data.status === 'failed') {
+            return {
+              id: p.id,
+              patch: {
+                status: 'failed',
+                durationSeconds: data.duration_seconds ?? p.durationSeconds ?? fallbackDurationSeconds(p.id),
+                elapsedSeconds: data.elapsed_seconds ?? p.elapsedSeconds ?? null,
+              },
+            };
+          }
+          if (data.status === 'processing' || data.status === 'queued') {
+            return {
+              id: p.id,
+              patch: { status: 'processing', elapsedSeconds: data.elapsed_seconds ?? p.elapsedSeconds ?? null },
+            };
+          }
+        } catch (error) {
+          // Keep the existing label on a real 404 or a temporary connection
+          // problem; neither should delete or alter the saved project.
+          if (!(error instanceof JobExpiredError)) {
+            console.warn('Could not refresh expired project', p.id, error);
+          }
+        }
+        return null;
+      }));
+
+      if (cancelled) return;
+      let nextProjects = getProjects();
+      for (const result of patches) {
+        if (result) nextProjects = updateProject(result.id, result.patch);
+      }
+      if (patches.some(Boolean)) setProjects(nextProjects);
+    };
+
+    refreshExpiredProjects();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Backfill real video titles for projects whose title is still a raw URL
   // (e.g. created before title-resolution existed, or the active job).
   useEffect(() => {
@@ -728,6 +792,13 @@ function App() {
         setProcessingMedia(null);
         setViewingResults(true);
         setShowProcessingModal(false);
+        setProjects(updateProject(p.id, {
+          status: 'complete',
+          clipCount: data.result.clips?.length || p.clipCount || 0,
+          cost: data.result.cost_analysis?.total_cost ?? p.cost ?? null,
+          durationSeconds: data.duration_seconds ?? p.durationSeconds ?? fallbackDurationSeconds(p.id),
+          elapsedSeconds: data.elapsed_seconds ?? p.elapsedSeconds ?? null,
+        }));
       } else if (data.status === 'processing' || data.status === 'queued') {
         setStatus('processing');
         setLogs(data.logs || []);
