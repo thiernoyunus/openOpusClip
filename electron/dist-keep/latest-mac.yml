@@ -1,0 +1,17 @@
+version: 1.0.1
+files:
+  - url: openOpusClip-1.0.1-x64.zip
+    sha512: r/XqUBJHOPabypMWmK7tBP3vjujdw8bck27Z6xFj5hLmkkTyRKDyJDFDyZGr29NSVKEOtjhCS6YqcTCfBphe1Q==
+    size: 777685797
+  - url: openOpusClip-1.0.1-arm64.zip
+    sha512: 8vaLrpRtt39f/yTRmN/C5X3ewxZgniP20cB9Ii2HqrfMeKTfwc6FSoE/w+Qoz+TBAbO2xUQLlXwazTPGC07kxA==
+    size: 816997804
+  - url: openOpusClip-1.0.1-x64.dmg
+    sha512: Q5wavrz9ieF1gnd8eiXRdJO0nxrF3GztGUMtdxRb72tmopVsaEDtsfRdg95/tN/A6MbUkwmX7GY9eLgLUfTNKA==
+    size: 789146547
+  - url: openOpusClip-1.0.1-arm64.dmg
+    sha512: 3Jk35G73/fNTmWbg0ulXKMrlS9W/X3SV1N7DwFX7zvprJYUG9gbRE7hccpEWGRNG/oCi03oNm162XnUqFsimdA==
+    size: 827133883
+path: openOpusClip-1.0.1-x64.zip
+sha512: r/XqUBJHOPabypMWmK7tBP3vjujdw8bck27Z6xFj5hLmkkTyRKDyJDFDyZGr29NSVKEOtjhCS6YqcTCfBphe1Q==
+releaseDate: '2026-07-25T15:36:09.714Z'

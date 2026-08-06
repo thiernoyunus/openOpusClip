@@ -7,6 +7,7 @@ import { GhostClipCard, SkeletonClipCard } from './components/GenerateMoreCards'
 import ThumbnailStudio from './components/ThumbnailStudio';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
 import SocialCalendar from './components/SocialCalendar';
+import TrailerPage from './TrailerPage';
 import ProcessingModal from './components/ProcessingModal';
 import EditorView from './components/editor/EditorView';
 import { getProjects, addProject, updateProject, removeProject, phaseFromLogs, titleFromPayload, thumbFromPayload, coverFromString, fetchVideoTitle, captureVideoFrame, isTrailerProject } from './lib/projectHistory';
@@ -130,7 +131,9 @@ function App() {
   const [sortBy, setSortBy] = useState('score'); // 'score' | 'order'
   const [logs, setLogs] = useState([]);
   const [processingMedia, setProcessingMedia] = useState(null);
-  const [activeTab, setActiveTab] = useState('dashboard'); // dashboard, settings
+  // dashboard, settings, ai-agent, thumbnails, calendar, trailer.
+  // #trailer is a legacy deep link from when the trailer tool was its own page.
+  const [activeTab, setActiveTab] = useState(() => (window.location.hash === '#trailer' ? 'trailer' : 'dashboard'));
 
   const [sessionRecovered, setSessionRecovered] = useState(false);
   const [showScheduleWeek, setShowScheduleWeek] = useState(false);
@@ -879,7 +882,7 @@ function App() {
 
       <nav className="flex-1 flex flex-col gap-1.5 w-full">
         <RailItem icon={Scissors} label="Clip Generator" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-        <RailItem icon={Film} label="Podcast Trailer" active={false} onClick={() => { window.location.hash = '#trailer'; }} />
+        <RailItem icon={Film} label="Podcast Trailer" active={activeTab === 'trailer'} onClick={() => setActiveTab('trailer')} />
         <RailItem icon={Bot} label="AI Agent" active={activeTab === 'ai-agent'} onClick={() => setActiveTab('ai-agent')} />
         <RailItem icon={Youtube} label="YouTube Studio" active={activeTab === 'thumbnails'} onClick={() => setActiveTab('thumbnails')} />
         <RailItem icon={Calendar} label="Calendar" active={activeTab === 'calendar'} onClick={() => setActiveTab('calendar')} />
@@ -1396,6 +1399,13 @@ function App() {
             <ThumbnailStudio geminiApiKey={apiKey} zernioKey={zernioKey} socialAccounts={socialAccounts} />
           )}
 
+          {/* View: Podcast Trailer */}
+          {activeTab === 'trailer' && (
+            <div className="h-full overflow-y-auto custom-scrollbar p-6 md:p-10 animate-[fadeIn_0.3s_ease-out]">
+              <TrailerPage onGoToSettings={() => setActiveTab('settings')} />
+            </div>
+          )}
+
           {/* View: Social Calendar & Analytics */}
           {activeTab === 'calendar' && (
             <SocialCalendar
@@ -1435,7 +1445,7 @@ function App() {
                 </div>
               </div>
 
-              {/* Recent projects (clip jobs only — trailers live on the #trailer page) */}
+              {/* Recent projects (clip jobs only — trailers live on the Podcast Trailer tab) */}
               {(() => {
                 const clipProjects = projects.filter((p) => !isTrailerProject(p));
                 return (

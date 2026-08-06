@@ -5,7 +5,6 @@ import './index.css'
 import App from './App.jsx'
 import Landing from './Landing.jsx'
 import Legal from './Legal.jsx'
-import TrailerPage from './TrailerPage.jsx'
 import EditorView from './components/editor/EditorView.jsx'
 import ResultCard from './components/ResultCard.jsx'
 import FeedbackModal from './components/FeedbackModal.jsx'
@@ -138,8 +137,9 @@ function Root() {
   const resolveView = () => {
     const hash = window.location.hash;
     if (hash === '#legal') return 'legal';
-    if (hash === '#trailer') return 'trailer';
-    if (hash === '#app' || localStorage.getItem('openshorts_skip_landing') === '1') return 'app';
+    // #trailer is a legacy deep link (the trailer tool used to be its own page) —
+    // treat it the same as #app; App reads the hash itself to open on that tab.
+    if (hash === '#app' || hash === '#trailer' || localStorage.getItem('openshorts_skip_landing') === '1') return 'app';
     return 'landing';
   };
 
@@ -190,7 +190,6 @@ function Root() {
     );
   }
   if (view === 'legal') return <Legal />;
-  if (view === 'trailer') return <TrailerPage />;
   if (view === 'app') return <App />;
   return <Landing onLaunchApp={handleLaunchApp} />;
 }

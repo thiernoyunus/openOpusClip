@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Youtube, Upload, FileVideo, X, ArrowLeft, Film, AlertTriangle, KeyRound } from 'lucide-react';
+import { Youtube, Upload, FileVideo, X, Film, KeyRound } from 'lucide-react';
 import ProcessingModal from './components/ProcessingModal';
 import { phaseFromLogs, addProject, updateProject, removeProject, getProjects, isTrailerProject } from './lib/projectHistory';
 import { getApiUrl } from './config';
@@ -54,7 +54,10 @@ const decrypt = (text) => {
 
 const MAX_POLL_FAILURES = 5;
 
-export default function TrailerPage() {
+// Rendered as a tab inside App (like SocialCalendar), not a standalone page —
+// onGoToSettings lets it hand off to the Settings tab in the same shell,
+// mirroring SocialCalendar's onGoToSettings prop.
+export default function TrailerPage({ onGoToSettings }) {
   // Reuse the exact same localStorage keys the main app uses.
   const apiKey = localStorage.getItem('gemini_key') || '';
   const sonioxKey = (() => {
@@ -181,9 +184,8 @@ export default function TrailerPage() {
   // moment selection on the backend).
   const submit = async () => {
     if (!apiKey) {
-      // Same prompt path App uses: bounce to Settings on the main app.
-      alert('Add your Gemini API key in Settings (on the main app) to generate a trailer.');
-      window.location.hash = '#app';
+      alert('Add your Gemini API key in Settings to generate a trailer.');
+      onGoToSettings?.();
       return;
     }
     if (!acknowledged || sonioxBlocked || submitting) return;
@@ -285,40 +287,14 @@ export default function TrailerPage() {
     window.location.search = params.toString();
   };
 
+  const hasInput = mode === 'url' ? url.trim().length > 0 : !!file;
   const phase = phaseFromLogs(logs);
   const submitDisabled =
     !acknowledged || sonioxBlocked || submitting || (mode === 'url' && !url) || (mode === 'file' && !file);
 
   return (
-    <div className="min-h-screen bg-background text-fg selection:bg-primary/30">
-      {/* Header */}
-      <header className="h-14 border-b border-edge bg-background flex items-center justify-between px-6">
-        <div className="flex items-center gap-3">
-          <a
-            href="#app"
-            className="flex items-center gap-2 text-sm text-muted hover:text-fg transition-colors"
-          >
-            <ArrowLeft size={16} />
-            <span>Back</span>
-          </a>
-          <span className="text-edge">/</span>
-          <span className="flex items-center gap-2 text-sm font-medium text-fg">
-            <Film size={16} className="text-primary" />
-            Podcast Trailer
-          </span>
-        </div>
-        {!apiKey && (
-          <a
-            href="#app"
-            className="text-xs text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1 rounded-full border border-amber-500/30 transition-colors flex items-center gap-1.5"
-          >
-            <AlertTriangle size={12} />
-            Gemini API Key Missing
-          </a>
-        )}
-      </header>
-
-      <div className="max-w-lg mx-auto px-6 py-12">
+    <>
+      <div className="max-w-lg mx-auto">
         <div className="mb-8">
           <h1 className="text-3xl font-black bg-gradient-to-b from-white to-white/60 bg-clip-text text-transparent">
             Podcast Trailer
@@ -339,12 +315,13 @@ export default function TrailerPage() {
                 <span className="text-amber-200/80">Set it in Settings on the main app first.</span>
               </span>
             </div>
-            <a
-              href="#app"
+            <button
+              type="button"
+              onClick={() => onGoToSettings?.()}
               className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black transition-colors"
             >
               Settings
-            </a>
+            </button>
           </div>
         )}
 
@@ -433,6 +410,12 @@ export default function TrailerPage() {
               </div>
             )}
 
+            {/* Options appear once there's a video to work with, same as the
+                Clip Generator (MediaInput's hasInput reveal) — the screen
+                starts simple and fills in as you go, instead of dumping every
+                setting on you before you've even picked a video. */}
+            {hasInput && (
+            <div className="animate-[optionsReveal_0.28s_ease-out]">
             <label className="block mt-5">
               <span className="block text-xs font-medium text-zinc-400 mb-2">Aspect ratio</span>
               <select
@@ -547,6 +530,8 @@ export default function TrailerPage() {
               <Film size={16} />
               Generate trailer
             </button>
+            </div>
+            )}
           </form>
         </div>
 
@@ -622,6 +607,6 @@ export default function TrailerPage() {
           }
         }}
       />
-    </div>
+    </>
   );
 }
