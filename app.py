@@ -3235,6 +3235,18 @@ async def thumbnail_publish_status(publish_id: str):
 # "/" is sufficient; no catch-all fallback route is needed.
 _DASHBOARD_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "dist")
 if os.path.isdir(_DASHBOARD_DIST):
+    # index.html has no content hash in its URL, so without this the desktop
+    # app's Chromium can keep serving a cached copy across an auto-update —
+    # the .app on disk is the new version but the window still shows the old
+    # page until a manual reload. /assets/* files are safe to cache normally
+    # since their filenames change on every build (Vite content hashing).
+    @app.middleware("http")
+    async def no_cache_index(request: Request, call_next):
+        response = await call_next(request)
+        if not request.url.path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     app.mount("/", StaticFiles(directory=_DASHBOARD_DIST, html=True), name="dashboard")
 else:
     print("🚀 No dashboard/dist found — skipping static UI mount (run `npm run build` in dashboard/ to enable it).")
