@@ -738,6 +738,14 @@ function promptForUpdate(info) {
 
 autoUpdater.on('update-available', promptForUpdate);
 
+// The only feedback a multi-hundred-MB download otherwise gets is silence
+// between "Download" and the next dialog. The dock icon's built-in progress
+// bar covers that for free — no custom UI, no polling.
+autoUpdater.on('download-progress', (progress) => {
+  const win = BrowserWindow.getAllWindows()[0];
+  win?.setProgressBar(progress.percent / 100);
+});
+
 // Only show "up to date" when the user manually clicked Check for Updates.
 // The startup check should be silent — nobody wants a dialog on every launch.
 let _manualUpdateCheck = false;
@@ -755,6 +763,7 @@ autoUpdater.on('update-not-available', () => {
 });
 
 autoUpdater.on('error', () => {
+  BrowserWindow.getAllWindows()[0]?.setProgressBar(-1);
   telemetry.capture('desktop_updater_failed', {
     stage: 'updater_event',
     errorCategory: 'updater_error',
@@ -763,6 +772,7 @@ autoUpdater.on('error', () => {
 
 autoUpdater.on('update-downloaded', (info) => {
   const win = BrowserWindow.getAllWindows()[0];
+  win?.setProgressBar(-1);
   const restartNow = async () => {
     // quitAndInstall bypasses 'will-quit', so the backend/renderer process
     // groups would be orphaned (holding ports 8000/3100) across the restart.
