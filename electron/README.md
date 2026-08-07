@@ -28,9 +28,12 @@ pointed at it instead of starting a second copy.
 
 ## Packaged mode (the built app)
 
-The built `openOpusClip.app` bundles everything it needs — a portable Python,
-ffmpeg, the renderer, and a headless browser — so nothing has to be
-installed first.
+The built app bundles everything it needs — a portable Python, ffmpeg, the
+renderer, and a headless browser — so nothing has to be installed first.
+
+There are three builds: macOS Apple Silicon, macOS Intel, and Windows x64.
+**The Mac ones are built here, the Windows one is built by CI** — see
+[Windows](#windows) below for why.
 
 Build the bundled runtime, then package it. The runtime is architecture
 specific, so each target gets its own stage folder:
@@ -87,6 +90,58 @@ npx electron-builder --mac dmg zip --arm64
 
 `npm run package` still makes a plain `.app` (arm64, no installer) for quick
 local testing.
+
+## Windows
+
+The Windows installer is built by GitHub Actions, not on a Mac. electron-builder
+could cross-build the installer itself, but the *runtime inside it* cannot be
+cross-built: it holds a Windows CPython with compiled wheels (torch, mediapipe,
+opencv) and Windows ffmpeg binaries. None of that can be assembled or
+smoke-tested from macOS, so it runs where it will actually be used.
+
+**To get a build:** Actions → **Desktop (Windows)** → *Run workflow*. It takes
+around 40–60 minutes and leaves a downloadable `openOpusClip-windows-x64`
+artifact containing the `.exe` and `latest.yml`. Nothing is published.
+
+**To ship one:** tick *publish* when running the workflow, or push a `v*` tag.
+Either uploads the installer and `latest.yml` to the matching GitHub release,
+which is what the in-app updater reads.
+
+`latest.yml` (Windows) and `latest-mac.yml` (macOS) are separate files, so a
+Windows release and a Mac release can land on the same GitHub release without
+overwriting each other's updater metadata. That is the trap described in the
+macOS section, and it does not apply across platforms.
+
+On a Windows machine you can also do it by hand:
+
+```powershell
+pwsh -File scripts/desktop/build-stage.ps1   # -> desktop-stage-win-x64\ (~2.5 GB)
+cd electron; npm ci; npm run package:win     # -> dist\openOpusClip-<ver>-x64.exe
+```
+
+Two things differ from the macOS stage, both deliberate:
+
+- **A real `node.exe` is bundled** (`stage/bin/node.exe`). yt-dlp needs Node ≥ 22
+  to solve YouTube's JS challenges. macOS gets that for free — Electron *is*
+  Node under `ELECTRON_RUN_AS_NODE=1`, so a one-line shell script on PATH is
+  enough. Windows can't: yt-dlp finds the runtime with a PATHEXT scan and then
+  launches it through `CreateProcess`, which refuses to run a `.cmd`/`.bat`
+  wrapper. A shim is not an option there.
+- **No hardware video encoding.** `ffmpeg_utils.py` only turns on VideoToolbox
+  on macOS, so every Windows export goes through libx264 on the CPU. Exports
+  will be slower than on a Mac. NVENC/QSV would fix that but needs per-GPU
+  detection and a fallback path, which nothing has asked for yet.
+
+### Windows code signing
+
+Windows builds are **unsigned**. First launch shows a blue "Windows protected
+your PC" SmartScreen box; people have to click *More info → Run anyway*. Worth
+saying so on the download page.
+
+Removing it needs a code-signing certificate (an OV cert builds reputation over
+time; an EV cert clears SmartScreen immediately). With one in hand, set `CSC_LINK`
+and `CSC_PASSWORD` as repository secrets and pass them through to the packaging
+step — electron-builder picks them up with no config change.
 
 ### Code signing and notarization
 
@@ -149,8 +204,8 @@ spctl -a -vvv /Volumes/openOpusClip*/openOpusClip.app
 
 Set `CSC_IDENTITY_AUTO_DISCOVERY=false` to deliberately build unsigned.
 
-The app icon lives at `electron/build/icon.png` / `icon.icns`. Regenerate it
-after changing the logo with:
+The app icon lives at `electron/build/icon.png`, `icon.icns` (macOS) and
+`icon.ico` (Windows). Regenerate all three after changing the logo with:
 
 ```bash
 .venv/bin/python scripts/desktop/make-icon-from-image.py electron/build/source-logo.webp

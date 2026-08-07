@@ -1,0 +1,102 @@
+# Builds the Windows desktop installer.
+#
+# This lives in CI rather than on a dev machine because the staged runtime
+# cannot be cross-built: it contains a Windows CPython with compiled wheels
+# (torch, mediapipe, opencv) and Windows ffmpeg binaries, none of which can be
+# assembled or smoke-tested from macOS. The macOS installers are still built
+# locally (see electron/README.md); only Windows needs a runner.
+#
+# Two ways to run it:
+#   * Actions -> "Desktop (Windows)" -> Run workflow. Produces a downloadable
+#     artifact and publishes nothing. This is the one to use for testing.
+#   * Push a tag like v1.0.7. Uploads the installer to the matching GitHub
+#     release as a draft, which is what the in-app updater reads.
+
+name: Desktop (Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Upload to the GitHub release as a draft (instead of just an artifact)'
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    # The Python dependency install alone (torch, mediapipe) runs long, and the
+    # ~2 GB stage is slow to compress into an installer. The default 360-minute
+    # cap would let a hung run burn the whole budget.
+    timeout-minutes: 150
+
+    steps:
+      - name: Allow long paths
+        # node_modules and site-packages both nest past Windows' 260-character
+        # MAX_PATH. Without this, checkout and npm fail on unrelated-looking
+        # "cannot find path" errors deep in a dependency tree.
+        run: git config --global core.longpaths true
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            dashboard/package-lock.json
+            render-service/package-lock.json
+            remotion/package-lock.json
+            electron/package-lock.json
+
+      - name: Cache pinned downloads
+        # Python, ffmpeg and Node are pinned by version AND checksum, so the
+        # key can be the versions themselves - a changed pin misses the cache
+        # and re-downloads, which is exactly what should happen.
+        uses: actions/cache@v4
+        with:
+          path: .desktop-build-cache
+          key: desktop-stage-downloads-${{ hashFiles('scripts/desktop/build-stage.ps1') }}
+
+      - name: Check helper self-tests
+        run: pwsh -File scripts/desktop/test-build-stage-helpers.ps1
+
+      - name: Report free disk space
+        # The stage is ~2 GB, the unpacked app another ~2 GB, and the installer
+        # ~1.5 GB on top. Windows runners start with roughly 14 GB free on C:,
+        # so if a build ever dies with an opaque I/O error this is the number
+        # to look at first.
+        run: Get-PSDrive C | Select-Object Used, Free
+
+      - name: Build the staged runtime
+        run: pwsh -File scripts/desktop/build-stage.ps1
+
+      - name: Install desktop shell dependencies
+        working-directory: electron
+        run: npm ci
+
+      - name: Package the installer
+        working-directory: electron
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $publish = if ('${{ inputs.publish }}' -eq 'true' -or '${{ github.ref_type }}' -eq 'tag') { 'always' } else { 'never' }
+          Write-Host "electron-builder --publish $publish"
+          npx electron-builder --win nsis --x64 --publish $publish
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: openOpusClip-windows-x64
+          # latest.yml rides along because it is what the in-app updater reads;
+          # an installer published without it can never update itself, the same
+          # way a macOS release without the zip can't.
+          path: |
+            electron/dist/*.exe
+            electron/dist/latest.yml
+          if-no-files-found: error
+          retention-days: 14
