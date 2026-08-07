@@ -135,10 +135,11 @@ module.exports = {
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
     shortcutName: 'openOpusClip',
-    // The staged runtime is ~40,000 mostly-small files. NSIS compresses the
-    // whole payload as one solid LZMA stream, which is what keeps that from
-    // turning into a multi-GB download.
-    differentialPackage: false,
+    // differentialPackage is left at its default (on). It writes the .blockmap
+    // next to the installer, which lets electron-updater download only the
+    // parts that changed. At this size that is the difference between a ~10 MB
+    // update and re-downloading well over a gigabyte, so it must not be turned
+    // off — and the .blockmap must be published alongside the .exe.
   },
 
   dmg: {

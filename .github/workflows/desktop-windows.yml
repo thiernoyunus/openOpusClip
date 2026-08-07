@@ -89,9 +89,29 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $publish = if ('${{ inputs.publish }}' -eq 'true' -or '${{ github.ref_type }}' -eq 'tag') { 'always' } else { 'never' }
-          Write-Host "electron-builder --publish $publish"
-          npx electron-builder --win nsis --x64 --publish $publish
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "publish mode: $publish"
+
+          # Invoked through its .cmd rather than `npx`. Under pwsh, `npx
+          # electron-builder` returned exit 0 having printed nothing and built
+          # nothing — a silent no-op that looked like a passing step. Calling
+          # the installed binary directly removes npx's resolution from the
+          # picture entirely.
+          $builder = Join-Path 'node_modules' '.bin\electron-builder.cmd'
+          if (-not (Test-Path $builder)) { throw "electron-builder not installed at $builder" }
+          & $builder --win nsis --x64 --publish $publish 2>&1 | ForEach-Object { "$_" }
+          if ($LASTEXITCODE -ne 0) { throw "electron-builder exited $LASTEXITCODE" }
+
+          # A build that produces no installer must fail here, not four steps
+          # later in the upload. The .blockmap and latest.yml are what the
+          # in-app updater needs; without them a release can install but never
+          # update itself.
+          Write-Host "`ndist/ contents:"
+          Get-ChildItem dist | Format-Table Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}} | Out-String | Write-Host
+          foreach ($required in @('*.exe', 'latest.yml')) {
+            if (-not (Get-ChildItem -Path dist -Filter $required -ErrorAction SilentlyContinue)) {
+              throw "packaging produced no $required in electron/dist"
+            }
+          }
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
@@ -99,9 +119,12 @@ jobs:
           name: openOpusClip-windows-x64
           # latest.yml rides along because it is what the in-app updater reads;
           # an installer published without it can never update itself, the same
-          # way a macOS release without the zip can't.
+          # way a macOS release without the zip can't. The .blockmap is what
+          # lets an update download only the changed parts instead of the whole
+          # gigabyte-plus installer, so it has to ship too.
           path: |
             electron/dist/*.exe
+            electron/dist/*.blockmap
             electron/dist/latest.yml
           if-no-files-found: error
           retention-days: 14
