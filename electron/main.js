@@ -705,6 +705,42 @@ autoUpdater.setFeedURL({
   repo: 'openOpusClip',
 });
 
+// electron-updater signals the same failure twice: the originating call
+// (checkForUpdates / downloadUpdate) rejects AND an 'error' event fires. If
+// both logged telemetry we'd double-count every failure (which is exactly what
+// inflated the updater failure numbers). So the 'error' handler is the single
+// reporter, and this tracks which operation was in flight so it can attach the
+// right stage without the originating .catch() having to log anything.
+let updaterStage = 'updater_check';
+
+// Bucket an updater error into a small, PII-free set of categories so failures
+// can actually be told apart (offline vs GitHub rate-limit vs a broken
+// release) instead of collapsing into one opaque "updater_error". Only the
+// bucket and a sanitized code are ever sent — never the raw message, which can
+// embed the user's home-directory path.
+function categorizeUpdaterError(err) {
+  const status = err && (err.statusCode != null ? err.statusCode : err.status);
+  const code = String((err && (err.code || err.name)) || '');
+  const msg = String((err && err.message) || '');
+  const haystack = `${code} ${msg}`;
+  if (/ENOTFOUND|EAI_AGAIN|ECONN|ETIMEDOUT|ENETUNREACH|getaddrinfo|network/i.test(haystack)) {
+    return 'updater_network';
+  }
+  if (status === 403 || status === 429 || /\brate limit|too many requests\b/i.test(msg)) {
+    return 'updater_rate_limited';
+  }
+  if (/signature|sha512|checksum|integrity/i.test(msg)) {
+    return 'updater_signature';
+  }
+  if (/latest.*\.yml|not found|No published|cannot find|unable to find/i.test(msg)) {
+    return 'updater_not_found';
+  }
+  if (Number.isInteger(status) || /HTTPError|status code|\b40\d\b|\b50\d\b/i.test(haystack)) {
+    return 'updater_http';
+  }
+  return 'updater_error';
+}
+
 // GitHub can answer before the window exists: startup waits on the backend,
 // which can take up to 60s on a cold launch. Remember the update and prompt
 // once a window is available, otherwise the offer would be dropped silently
@@ -805,12 +841,11 @@ function promptForUpdate(info) {
   }).then(({ response }) => {
     if (response !== 0) return;
     showUpdateHUD('Downloading update…');
+    updaterStage = 'updater_download';
     autoUpdater.downloadUpdate().catch(() => {
+      // The 'error' handler reports this failure (with the real error); here we
+      // only tidy the UI and swallow the rejection so it isn't unhandled.
       updateHUD?.close();
-      telemetry.capture('desktop_updater_failed', {
-        stage: 'updater_download',
-        errorCategory: 'updater_error',
-      });
     });
   });
 }
@@ -842,12 +877,17 @@ autoUpdater.on('update-not-available', () => {
   });
 });
 
-autoUpdater.on('error', () => {
+// The single place updater failures are reported. electron-updater emits
+// 'error' for every failure and hands us the actual error object here, so this
+// is where we can attach a real category and code — the originating .catch()
+// blocks only tidy up and swallow the rejection.
+autoUpdater.on('error', (err) => {
   BrowserWindow.getAllWindows()[0]?.setProgressBar(-1);
   updateHUD?.close();
   telemetry.capture('desktop_updater_failed', {
-    stage: 'updater_event',
-    errorCategory: 'updater_error',
+    stage: updaterStage,
+    errorCategory: categorizeUpdaterError(err),
+    error: err,
   });
 });
 
@@ -874,6 +914,7 @@ autoUpdater.on('update-downloaded', async (info) => {
     // process that is about to exit — leaving the new app with no backend at
     // all. Wait for them to actually go before handing over.
     await waitForProcessGroupsToExit([spawned.backend, spawned.renderer], 10000);
+    updaterStage = 'updater_install';
     await telemetry.shutdown(750);
     autoUpdater.quitAndInstall();
   };
@@ -912,12 +953,12 @@ app.whenReady().then(async () => {
   // on when a newer release is found.
   const updateMenuItem = {
     label: 'Check for Updates…',
-    click: () => { _manualUpdateCheck = true; autoUpdater.checkForUpdates().catch(() => {
-      telemetry.capture('desktop_updater_failed', {
-        stage: 'updater_check',
-        errorCategory: 'updater_error',
-      });
-    }); },
+    click: () => {
+      _manualUpdateCheck = true;
+      updaterStage = 'updater_check';
+      // Reported by the 'error' handler; swallow the rejection here.
+      autoUpdater.checkForUpdates().catch(() => {});
+    },
   };
   if (app.isPackaged) {
     // Not wired to .enabled yet — always clickable. If nothing is
@@ -950,12 +991,9 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
 
   if (app.isPackaged) {
-    autoUpdater.checkForUpdates().catch(() => {
-      telemetry.capture('desktop_updater_failed', {
-        stage: 'updater_check',
-        errorCategory: 'updater_error',
-      });
-    });
+    updaterStage = 'updater_check';
+    // Reported by the 'error' handler; swallow the rejection here.
+    autoUpdater.checkForUpdates().catch(() => {});
   }
 
   const alreadyUp = await checkUrlIsUp(BACKEND_URL + '/api/config', 1500);

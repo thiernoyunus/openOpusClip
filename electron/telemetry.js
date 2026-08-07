@@ -73,6 +73,11 @@ const ALLOWED_ERROR_CATEGORIES = new Set([
   'error',
   'non_error_rejection',
   'updater_error',
+  'updater_network',
+  'updater_rate_limited',
+  'updater_http',
+  'updater_not_found',
+  'updater_signature',
   'stack_setup_failed',
   'unknown',
 ]);
@@ -117,6 +122,19 @@ function safeExitCode(value) {
   return Number.isInteger(value) ? value : undefined;
 }
 
+// A short, PII-free identifier for an error: its HTTP status, or its
+// Node/electron-updater code (e.g. ENOTFOUND, ERR_UPDATER_LATEST_VERSION_NOT_FOUND).
+// Never the message — updater error messages routinely embed the user's
+// home-directory path, so anything free-form is rejected by the strict shape
+// check below.
+function safeErrorCode(error) {
+  if (!error || typeof error !== 'object') return undefined;
+  const status = error.statusCode != null ? error.statusCode : error.status;
+  if (Number.isInteger(status)) return String(status);
+  const raw = String(error.code || error.name || '').trim();
+  return /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(raw) ? raw : undefined;
+}
+
 function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
   const distinctId = loadOrCreateDistinctId(userData);
   const context = Object.freeze({ distinctId, appVersion, platform, arch, packaged });
@@ -159,6 +177,8 @@ function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
     const exitCode = safeExitCode(details.exitCode);
     if (exitCode !== undefined) properties.exit_code = exitCode;
     if (ALLOWED_SIGNALS.has(details.signal)) properties.signal = details.signal;
+    const errorCode = safeErrorCode(details.error);
+    if (errorCode !== undefined) properties.error_code = errorCode;
 
     try {
       await client.capture({
