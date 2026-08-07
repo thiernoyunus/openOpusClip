@@ -711,6 +711,82 @@ autoUpdater.setFeedURL({
 // and the user would never see it until some later launch.
 let pendingUpdate = null;
 
+// A small always-on-top overlay, not a change to the dashboard itself — the
+// dock icon's progress fill is easy to miss (it's not where anyone is
+// looking), and the multi-minute silence between "Download" and the next
+// dialog otherwise reads as broken. This needs no IPC/renderer changes: it's
+// a second BrowserWindow the main process fully owns and updates directly.
+let updateHUD = null;
+
+function showUpdateHUD(title) {
+  const parent = BrowserWindow.getAllWindows()[0];
+  const hud = new BrowserWindow({
+    width: 360,
+    height: 84,
+    frame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    alwaysOnTop: true,
+    parent: parent || undefined,
+    show: false,
+    transparent: true,
+    webPreferences: { contextIsolation: true },
+  });
+  if (parent) {
+    const b = parent.getBounds();
+    hud.setPosition(Math.round(b.x + (b.width - 360) / 2), Math.round(b.y + 72));
+  }
+  hud.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(`
+    <meta charset="utf-8">
+    <style>
+      @keyframes indeterminate {
+        0%   { left: -35%; width: 35%; }
+        60%  { left: 100%; width: 35%; }
+        100% { left: 100%; width: 35%; }
+      }
+      #bar.indeterminate { position: absolute; width: 35%; animation: indeterminate 1.1s ease-in-out infinite; }
+    </style>
+    <body style="margin:0;height:100vh;background:#1a1a1a;color:#fff;font:12px -apple-system,sans-serif;text-align:center;padding:14px 18px;border-radius:10px;box-sizing:border-box;overflow:hidden;">
+      <div id="t" style="margin-bottom:9px;">${title}</div>
+      <div style="position:relative;background:#3a3a3a;border-radius:3px;height:6px;overflow:hidden;">
+        <div id="bar" style="background:#6366f1;height:100%;width:0%;"></div>
+      </div>
+      <div id="sub" style="color:#999;margin-top:7px;">Starting...</div>
+    </body>
+  `));
+  hud.once('ready-to-show', () => hud.show());
+  updateHUD = {
+    setTitle(t) { if (!hud.isDestroyed()) hud.webContents.executeJavaScript(`document.getElementById('t').textContent=${JSON.stringify(t)}`).catch(() => {}); },
+    update(percent, subtitle) {
+      if (hud.isDestroyed()) return;
+      hud.webContents.executeJavaScript(
+        `document.getElementById('bar').classList.remove('indeterminate');document.getElementById('bar').style.width='${percent}%';document.getElementById('sub').textContent=${JSON.stringify(subtitle)};`
+      ).catch(() => {});
+    },
+    // For phases with no real percentage to report (the restart/install
+    // wait) — a static bar frozen at 100% is indistinguishable from a hang.
+    setBusy(subtitle) {
+      if (hud.isDestroyed()) return;
+      hud.webContents.executeJavaScript(
+        `document.getElementById('bar').classList.add('indeterminate');document.getElementById('sub').textContent=${JSON.stringify(subtitle)};`
+      ).catch(() => {});
+    },
+    // Returns a promise that resolves once the window is actually gone —
+    // showing the next native dialog on the same parent while this is still
+    // mid-close-animation is what made the restart prompt flash and vanish.
+    close() {
+      return new Promise((resolve) => {
+        if (hud.isDestroyed()) return resolve();
+        hud.once('closed', () => resolve());
+        hud.close();
+      });
+    },
+  };
+  return updateHUD;
+}
+
 function promptForUpdate(info) {
   const win = BrowserWindow.getAllWindows()[0];
   if (!win) {
@@ -727,7 +803,10 @@ function promptForUpdate(info) {
     defaultId: 0,
     cancelId: 1,
   }).then(({ response }) => {
-    if (response === 0) autoUpdater.downloadUpdate().catch(() => {
+    if (response !== 0) return;
+    showUpdateHUD('Downloading update…');
+    autoUpdater.downloadUpdate().catch(() => {
+      updateHUD?.close();
       telemetry.capture('desktop_updater_failed', {
         stage: 'updater_download',
         errorCategory: 'updater_error',
@@ -738,12 +817,13 @@ function promptForUpdate(info) {
 
 autoUpdater.on('update-available', promptForUpdate);
 
-// The only feedback a multi-hundred-MB download otherwise gets is silence
-// between "Download" and the next dialog. The dock icon's built-in progress
-// bar covers that for free — no custom UI, no polling.
+// The dock icon's progress fill is a nice-to-have, but it's easy to miss —
+// the HUD is the feedback that actually answers "is this doing anything?".
 autoUpdater.on('download-progress', (progress) => {
   const win = BrowserWindow.getAllWindows()[0];
   win?.setProgressBar(progress.percent / 100);
+  const mb = (n) => (n / 1e6).toFixed(0);
+  updateHUD?.update(progress.percent.toFixed(0), `${mb(progress.transferred)} MB / ${mb(progress.total)} MB`);
 });
 
 // Only show "up to date" when the user manually clicked Check for Updates.
@@ -764,16 +844,25 @@ autoUpdater.on('update-not-available', () => {
 
 autoUpdater.on('error', () => {
   BrowserWindow.getAllWindows()[0]?.setProgressBar(-1);
+  updateHUD?.close();
   telemetry.capture('desktop_updater_failed', {
     stage: 'updater_event',
     errorCategory: 'updater_error',
   });
 });
 
-autoUpdater.on('update-downloaded', (info) => {
+autoUpdater.on('update-downloaded', async (info) => {
   const win = BrowserWindow.getAllWindows()[0];
   win?.setProgressBar(-1);
+  // Must finish before the next dialog opens on the same parent window —
+  // starting them together made the restart prompt flash and vanish.
+  await updateHUD?.close();
   const restartNow = async () => {
+    // The kill-and-wait below can take a few seconds with nothing on screen
+    // to show for it, which is exactly the "did it freeze?" gap that's easy
+    // to mistake for a hang. Put the HUD back up immediately so there's no
+    // silent stretch before the app visibly quits.
+    showUpdateHUD('Installing update…').setBusy('Restarting the app…');
     // quitAndInstall bypasses 'will-quit', so the backend/renderer process
     // groups would be orphaned (holding ports 8000/3100) across the restart.
     quitting = true;
