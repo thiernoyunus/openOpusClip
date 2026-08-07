@@ -24,11 +24,6 @@ on:
   push:
     tags:
       - 'v*'
-    # TEMPORARY: workflow_dispatch only appears once a workflow is on the
-    # default branch, so this is the only way to exercise the build before the
-    # PR merges. Remove this branch line before merging.
-    branches:
-      - windows-desktop-support
 
 jobs:
   build:
