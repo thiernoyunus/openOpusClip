@@ -817,6 +817,20 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                         onSelectTrackItem={handleSelectTrackItem}
                         dispatch={dispatch}
                         sourceUrl={sourceUrl}
+                        // The timeline's far-left / far-right "+" open the same
+                        // picker as the transcript's "+", anchored at the very
+                        // start / very end of the short in the original video.
+                        onExtend={(edge) => {
+                            const clips = framing.clips;
+                            if (!clips.length) return;
+                            setExtendCtx(edge === 'start'
+                                ? { prepend: true, sec: usedRanges[0]?.start ?? null }
+                                : {
+                                      afterClipId: clips[clips.length - 1].id,
+                                      sec: usedRanges[usedRanges.length - 1]?.end ?? null,
+                                  });
+                            setShowExtendModal(true);
+                        }}
                     />
 
                     {showExtendModal && (
