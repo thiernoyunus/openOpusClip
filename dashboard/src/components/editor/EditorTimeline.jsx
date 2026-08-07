@@ -6,7 +6,7 @@ import {
 import { getApiUrl } from '../../config';
 import { EDITOR_FPS } from './EditorCanvas';
 import { useFilmstrip, useWaveform } from './useMediaStrips';
-import { placedClips, outputToSource, clipAtOutputFrame, sourceRangeToOutputWindows } from '@remotion-src/lib/edl';
+import { placedClips, outputToSource, clipAtOutputFrame, sourceRangeToOutputRuns } from '@remotion-src/lib/edl';
 
 const FILM_COUNT = 64; // denser filmstrip like OpusClip
 const WAVE_BUCKETS = 640;
@@ -49,7 +49,7 @@ const mediaUrl = (url) => {
  * while staying anchored to content. Mirrors the clamp math used at commit.
  */
 function itemDragPatch(framing, item, drag, fps) {
-    const wins = sourceRangeToOutputWindows(framing, item.startFrame, item.endFrame, fps);
+    const wins = sourceRangeToOutputRuns(framing, item.startFrame, item.endFrame, fps);
     if (wins.length === 0) return { startFrame: item.startFrame, endFrame: item.endFrame };
     const w = wins[0];
     const d = drag.deltaOut || 0;
@@ -134,7 +134,7 @@ function buildSnapCandidates(framing, fps, excludeId) {
     }
     for (const item of [...(framing.textOverlays || []), ...(framing.broll || []), ...(framing.overlays || [])]) {
         if (item.id === excludeId) continue;
-        for (const w of sourceRangeToOutputWindows(framing, item.startFrame, item.endFrame, fps)) {
+        for (const w of sourceRangeToOutputRuns(framing, item.startFrame, item.endFrame, fps)) {
             set.add(w.outStart);
             set.add(w.outEnd);
         }
@@ -411,7 +411,7 @@ const Playhead = React.memo(function Playhead({ playerRef, pxPerFrame, trackRef 
  * above (text, b-roll) and below (audio) show the source-anchored tracks. The
  * playhead, ruler and seeking all live on the OUTPUT timeline.
  */
-export default function EditorTimeline({ framing, playerRef, selectedIds, onSelect, dispatch, sourceUrl, onSelectTrackItem }) {
+export default function EditorTimeline({ framing, playerRef, selectedIds, onSelect, dispatch, sourceUrl, onSelectTrackItem, onExtend }) {
     const [outFrame, setOutFrame] = useState(0); // throttled — time display + split enablement only
     const [playing, setPlaying] = useState(false);
     const [pxPerSec, setPxPerSec] = useState(60);
@@ -646,7 +646,7 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                     edges = dd.kind === 'item-trim' ? [dd.edge === 'in' ? p.startFrame : p.endFrame] : [p.startFrame, p.endFrame];
                 } else if (item) {
                     const p = itemDragPatch(framing, item, { ...dd, deltaOut }, fps);
-                    const wins = sourceRangeToOutputWindows(framing, p.startFrame, p.endFrame, fps);
+                    const wins = sourceRangeToOutputRuns(framing, p.startFrame, p.endFrame, fps);
                     if (wins.length) {
                         const a = wins[0].outStart;
                         const b = wins[wins.length - 1].outEnd;
@@ -841,7 +841,7 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                 return [{ item, w: { outStart: eff.startFrame, outEnd: eff.endFrame }, wi: 0 }];
             }
             const eff = patchedFrames(item);
-            return sourceRangeToOutputWindows(framing, eff.startFrame, eff.endFrame, fps).map((w, wi) => ({ item, w, wi }));
+            return sourceRangeToOutputRuns(framing, eff.startFrame, eff.endFrame, fps).map((w, wi) => ({ item, w, wi }));
         });
     const overlayItems = framing.overlays || [];
     const textWindows = laneWindows(textItems);
@@ -1086,8 +1086,8 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                             <button
                                 type="button"
                                 onPointerDown={(e) => e.stopPropagation()}
-                                onClick={() => framing.clips.length && duplicateClip(framing.clips[0].id)}
-                                title="Add clip"
+                                onClick={() => onExtend?.('start')}
+                                title="Add a section of the original video before the start"
                                 className="w-7 h-7 rounded-full border border-white/15 text-zinc-400 hover:text-white hover:border-white/40 hover:bg-white/5 flex items-center justify-center transition-colors"
                             >
                                 <Plus size={14} />
@@ -1128,8 +1128,8 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                             <button
                                 type="button"
                                 onPointerDown={(e) => e.stopPropagation()}
-                                onClick={() => framing.clips.length && duplicateClip(framing.clips[framing.clips.length - 1].id)}
-                                title="Add a clip"
+                                onClick={() => onExtend?.('end')}
+                                title="Add a section of the original video after the end"
                                 className="w-7 h-7 rounded-full border border-white/15 text-zinc-400 hover:text-white hover:border-white/40 hover:bg-white/5 flex items-center justify-center transition-colors"
                             >
                                 <Plus size={14} />

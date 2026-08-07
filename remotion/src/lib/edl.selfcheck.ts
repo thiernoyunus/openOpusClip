@@ -13,6 +13,7 @@ import {
   wordSourceToOutput,
   sourceToOutputAll,
   sourceRangeToOutputWindows,
+  sourceRangeToOutputRuns,
   remapCaptions,
 } from "./edl.ts";
 import type { FramingConfig, CaptionWord } from "./types.ts";
@@ -127,5 +128,19 @@ const capC: CaptionWord[] = [{ text: "twice", startMs: (10 / 30) * 1000, endMs: 
 const remapC = remapCaptions(capC, dup, FPS);
 assert.deepStrictEqual(remapC.map((w) => w.text), ["twice", "twice"], "duplicated clip emits the word twice");
 assert.strictEqual(sourceToOutputAll(dup, 10, FPS).length, 2, "duplicated source frame -> two output frames");
+
+// sourceRangeToOutputRuns: the two windows above touch on the output axis
+// (…100 | 100…) so the timeline draws ONE draggable b-roll block, not a block
+// plus an untrimmable echo. Genuinely separated windows stay separate.
+assert.deepStrictEqual(
+  sourceRangeToOutputRuns(v2, 50, 200, FPS),
+  [{ outStart: 50, outEnd: 150, srcStart: 50, srcEnd: 200 }],
+  "windows adjacent on the output axis merge into one run"
+);
+assert.strictEqual(
+  sourceRangeToOutputRuns(dup, 10, 20, FPS).length,
+  2,
+  "windows with a gap between them are not merged"
+);
 
 console.log("edl.selfcheck: all assertions passed ✓");

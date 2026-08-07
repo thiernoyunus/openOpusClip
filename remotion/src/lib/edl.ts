@@ -280,6 +280,33 @@ export const sourceRangeToOutputWindows = (
   return wins;
 };
 
+/**
+ * The same windows, but runs that touch on the OUTPUT axis merged into one. A
+ * b-roll laid across a layout switch spans two clips and so yields two windows;
+ * on the timeline that draws as a block plus an untouchable "echo" you can't
+ * grab or trim. Merged, a visually continuous run is one block. Playback keeps
+ * using the unmerged windows (each clip needs its own Sequence).
+ */
+export const sourceRangeToOutputRuns = (
+  framing: FramingConfig,
+  sStart: number,
+  sEnd: number,
+  fps: number
+): OutputWindow[] => {
+  const runs: OutputWindow[] = [];
+  for (const w of sourceRangeToOutputWindows(framing, sStart, sEnd, fps)) {
+    const prev = runs[runs.length - 1];
+    // 1-frame tolerance: each window rounds its own edges independently.
+    if (prev && w.outStart - prev.outEnd <= 1) {
+      prev.outEnd = w.outEnd;
+      prev.srcEnd = w.srcEnd;
+    } else {
+      runs.push({ ...w });
+    }
+  }
+  return runs;
+};
+
 /** The clip under the output playhead. For the tracker overlay / active-clip UI. */
 export const clipAtOutputFrame = (
   framing: FramingConfig,
