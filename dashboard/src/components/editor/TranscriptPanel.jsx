@@ -33,7 +33,7 @@ const Word = React.memo(function Word({ index, word, isActive, suppressHighlight
                       ? "Caption hidden (still in the video). Click to restore."
                       : 'Click to edit or remove. Double-click to edit text.'
             }
-            className={`cursor-pointer text-sm leading-7 rounded px-0.5 transition-colors ${
+            className={`ph-mask cursor-pointer text-sm leading-7 rounded px-0.5 transition-colors ${
                 isCut
                     ? 'line-through text-zinc-600 hover:text-zinc-400'
                     : inSel

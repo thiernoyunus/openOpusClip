@@ -267,7 +267,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                     Clip {index + 1}
                                 </div>
                                 <div className="text-[10px] text-zinc-500 truncate">
-                                    {clip.video_title_for_youtube_short || 'Viral Short'}
+                                    <span className="ph-mask">{clip.video_title_for_youtube_short || 'Viral Short'}</span>
                                 </div>
                                 <div className="text-[10px] text-zinc-600 mt-0.5">
                                     {time}h &middot; {TIMEZONES.find(t => t.value === timezone)?.label || timezone}
@@ -314,7 +314,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                          acc.platform === 'instagram' ? <Instagram size={14} className="text-pink-400" /> :
                                          acc.platform === 'youtube' ? <Youtube size={14} className="text-red-400" /> :
                                          <Globe size={14} />}
-                                        {acc.displayName || acc.username}
+                                        <span className="ph-mask">{acc.displayName || acc.username}</span>
                                     </button>
                                 );
                             })}

@@ -58,7 +58,7 @@ function DragDropZone({ label, accept, onFile, file, onClear, icon: Icon }) {
             </div>
           )}
           <div className="flex-1 min-w-0">
-            <p className="text-sm text-white truncate">{file.name}</p>
+            <p className="ph-mask text-sm text-white truncate">{file.name}</p>
             <p className="text-xs text-zinc-500">{(file.size / 1024 / 1024).toFixed(1)} MB</p>
           </div>
           <button onClick={onClear} className="text-zinc-500 hover:text-white transition-colors">
@@ -616,7 +616,7 @@ export default function ThumbnailStudio({ geminiApiKey, zernioKey, socialAccount
                           ? 'bg-primary/20 text-primary border border-primary/20'
                           : 'bg-white/5 text-zinc-300 border border-white/5'
                           }`}>
-                          {msg.content}
+                          <span className="ph-mask">{msg.content}</span>
                         </div>
                       </div>
                     ))}
@@ -661,7 +661,7 @@ export default function ThumbnailStudio({ geminiApiKey, zernioKey, socialAccount
               {selectedTitle && (
                 <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-xl flex items-center gap-2 text-sm">
                   <Check size={14} className="text-green-400 shrink-0" />
-                  <span className="text-green-300 font-medium truncate">Selected: {selectedTitle}</span>
+                  <span className="text-green-300 font-medium truncate">Selected: <span className="ph-mask">{selectedTitle}</span></span>
                 </div>
               )}
 
@@ -690,7 +690,7 @@ export default function ThumbnailStudio({ geminiApiKey, zernioKey, socialAccount
                           </span>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="leading-relaxed">{title}</span>
+                              <span className="ph-mask leading-relaxed">{title}</span>
                               {rec && (
                                 <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-400/20 text-amber-400 border border-amber-400/30 shrink-0">
                                   {recRank === 0 ? '⭐ TOP PICK' : '⭐ 2nd PICK'}
@@ -698,7 +698,7 @@ export default function ThumbnailStudio({ geminiApiKey, zernioKey, socialAccount
                               )}
                             </div>
                             {rec && (
-                              <p className="text-[11px] text-amber-300/70 mt-1.5 leading-relaxed italic">{rec.reason}</p>
+                              <p className="ph-mask text-[11px] text-amber-300/70 mt-1.5 leading-relaxed italic">{rec.reason}</p>
                             )}
                           </div>
                         </div>

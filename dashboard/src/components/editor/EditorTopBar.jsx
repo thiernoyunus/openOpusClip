@@ -29,7 +29,7 @@ export default function EditorTopBar({
                 <ArrowLeft size={18} strokeWidth={1.75} />
             </button>
 
-            <h1 className="text-[13px] font-medium text-zinc-200 truncate max-w-[min(42vw,420px)] tracking-[-0.01em]">
+            <h1 className="ph-mask text-[13px] font-medium text-zinc-200 truncate max-w-[min(42vw,420px)] tracking-[-0.01em]">
                 {title}
                 {dirty && (
                     <span

@@ -373,13 +373,13 @@ export default function TrailerPage({ onGoToSettings }) {
                   <div className="space-y-3 text-white">
                     <div className="flex items-center justify-center gap-3 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-left">
                       <FileVideo size={16} className="text-primary shrink-0" />
-                      <span className="font-medium text-sm truncate flex-1">{file.name}</span>
+                      <span className="ph-mask font-medium text-sm truncate flex-1">{file.name}</span>
                       <span className="text-xs text-zinc-500 shrink-0">{(file.size / 1024 / 1024).toFixed(1)} MB</span>
                       <button
                         type="button"
                         onClick={() => setFile(null)}
                         className="p-1 hover:bg-white/10 rounded-full shrink-0"
-                        aria-label={`Remove ${file.name}`}
+                        aria-label="Remove selected video"
                       >
                         <X size={16} />
                       </button>

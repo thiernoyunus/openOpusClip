@@ -717,7 +717,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     )}
                 </div>
 
-                <h3 className="mt-2.5 text-sm font-medium text-fg leading-snug line-clamp-2 cursor-pointer hover:text-white" onClick={() => setOpenIndex(index)} title={title}>
+                <h3 className="ph-mask mt-2.5 text-sm font-medium text-fg leading-snug line-clamp-2 cursor-pointer hover:text-white" onClick={() => setOpenIndex(index)} title="Open clip">
                     {title}
                 </h3>
                 <div className="flex flex-wrap items-center gap-1.5 mt-2">
@@ -930,7 +930,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                                      acc.platform === 'instagram' ? <Instagram size={16} className="text-pink-400" /> :
                                                      acc.platform === 'youtube' ? <Youtube size={16} className="text-red-400" /> :
                                                      <Share2 size={16} className="text-zinc-400" />}
-                                                    {acc.displayName || acc.username}
+                                                    <span className="ph-mask">{acc.displayName || acc.username}</span>
                                                     <span className="text-xs text-zinc-500 capitalize">{acc.platform}</span>
                                                 </div>
                                             </label>
