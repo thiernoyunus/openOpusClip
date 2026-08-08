@@ -57,6 +57,10 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     const [playing, setPlaying] = useState(false);
     const [captions, setCaptions] = useState([]);
     const videoRef = React.useRef(null);
+    // Where the visible player was last left, in seconds. The plain <video> and
+    // the Remotion preview swap places (see useFramingPreview), so videoRef is
+    // null half the time — this is the one reading that works for both.
+    const lastPreviewTimeRef = React.useRef(0);
     const originalVideoUrl = getApiUrl(clip.video_url); // Base URL for Remotion when not EDL-edited
     const [currentVideoUrl, setCurrentVideoUrl] = useState(originalVideoUrl);
 
@@ -721,8 +725,8 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                             durationInSeconds={effectiveDuration}
                             subtitles={isEdited ? (framingFull.subtitles ?? null) : previewSubtitles}
                             loop={false}
-                            onPlay={(t) => onPlay && onPlay(clip.start + t)}
-                            onPause={() => onPause && onPause()}
+                            onPlay={(t) => { lastPreviewTimeRef.current = t; onPlay && onPlay(clip.start + t); }}
+                            onPause={(t) => { if (typeof t === 'number') lastPreviewTimeRef.current = t; onPause && onPause(); }}
                             onEnded={() => setPlaying(false)}
                         />
                     ) : (
@@ -735,6 +739,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                         className="w-full h-full object-cover"
                         onPlay={() => { const t = videoRef.current ? videoRef.current.currentTime : 0; onPlay && onPlay(clip.start + t); }}
                         onPause={() => onPause && onPause()}
+                        onTimeUpdate={(e) => { lastPreviewTimeRef.current = e.currentTarget.currentTime; }}
                         onEnded={() => { setPlaying(false); if (videoRef.current) videoRef.current.currentTime = 0; }}
                     />
                     )}
@@ -1058,7 +1063,10 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                                                 />
                                                                 <button
                                                                     type="button"
-                                                                    onClick={() => setCoverMs(acc.id, Math.round((videoRef.current?.currentTime || 0) * 1000))}
+                                                                    onClick={() => setCoverMs(acc.id, Math.min(
+                                                                        Math.round((videoRef.current?.currentTime ?? lastPreviewTimeRef.current) * 1000),
+                                                                        coverMaxMs,
+                                                                    ))}
                                                                     className="mt-1.5 text-[11px] text-muted hover:text-fg underline underline-offset-2"
                                                                 >
                                                                     Use the frame the clip is paused on

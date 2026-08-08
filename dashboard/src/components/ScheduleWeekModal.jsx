@@ -76,10 +76,6 @@ function addDays(dayKey, n) {
     return toDayKey(d);
 }
 
-function todayKey() {
-    return toDayKey(new Date());
-}
-
 /* ------------------------------------------------------------------ *
  * Post times. The list of times IS the schedule: five times a day
  * means five clips a day. Times are plain "HH:MM" strings, so they
@@ -130,9 +126,10 @@ function nextTimeSlot(existing) {
     return '12:00';
 }
 
-function formatDayKey(dayKey) {
+// `today` is the current day in the timezone being scheduled for — not the
+// browser's — so "Today"/"Tomorrow" mean what the user is actually picking.
+function formatDayKey(dayKey, today) {
     const d = parseDayKey(dayKey);
-    const today = todayKey();
     if (dayKey === today) return 'Today';
     if (dayKey === addDays(today, 1)) return 'Tomorrow';
     return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`;
@@ -158,6 +155,11 @@ function nowInTimezone(timezone) {
         const d = new Date();
         return `${toDayKey(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
+}
+
+/** Today's calendar day in an IANA timezone, as "YYYY-MM-DD". */
+function todayInTimezone(timezone) {
+    return nowInTimezone(timezone).split('T')[0];
 }
 
 /**
@@ -244,7 +246,15 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
     const [warning, setWarning] = useState(null);
 
     const clipCount = clips?.length || 0;
-    const startDate = addDays(todayKey(), startOffset);
+    // Everything hangs off the SELECTED timezone's calendar day, not the
+    // browser's. Schedule for Los Angeles from a laptop in Tokyo near midnight
+    // and the two are different dates — mixing them shifts the whole run by a
+    // day and can block a date that is still valid where you're posting.
+    const todayInTz = todayInTimezone(timezone);
+    // Called again rather than reusing todayInTz on purpose: feeding a tracked
+    // local into startDate makes the React Compiler bail on the useMemo below
+    // ("existing memoization could not be preserved"). The call is cheap.
+    const startDate = addDays(todayInTimezone(timezone), startOffset);
     const now = nowInTimezone(timezone);
 
     const slots = useMemo(
@@ -593,7 +603,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                 <ChevronLeft size={14} />
                             </button>
                             <span className="text-sm text-fg min-w-[130px] text-center tabular-nums">
-                                {formatDayKey(startDate)}
+                                {formatDayKey(startDate, todayInTz)}
                             </span>
                             <button
                                 type="button"
@@ -689,7 +699,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                                     {clip?.video_title_for_youtube_short || 'Viral Short'}
                                                 </div>
                                                 <div className="text-[11px] text-muted mt-0.5 tabular-nums">
-                                                    {formatDayKey(slot.date)} &middot; {slot.time}
+                                                    {formatDayKey(slot.date, todayInTz)} &middot; {slot.time}
                                                 </div>
                                             </div>
 
@@ -712,7 +722,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                                     <input
                                                         type="date"
                                                         value={slot.date}
-                                                        min={todayKey()}
+                                                        min={todayInTz}
                                                         onChange={(e) => e.target.value && setOverride(slot.index, { date: e.target.value })}
                                                         className={inputClass}
                                                         aria-label={`Date for clip ${slot.index + 1}`}
