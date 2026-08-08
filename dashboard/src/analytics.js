@@ -172,6 +172,7 @@ export async function initAnalytics() {
           ? '*'.repeat(value.length)
           : value;
       },
+      sampleRate: 1,
       maskTextSelector: '.ph-mask',
       blockSelector: 'video, audio, canvas, img, [data-posthog-block]',
       recordHeaders: false,
