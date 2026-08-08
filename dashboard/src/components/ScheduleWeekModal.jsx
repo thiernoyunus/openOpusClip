@@ -11,6 +11,13 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 
 const DEFAULT_TIMES = ['09:00', '13:00', '18:00'];
 
+// The only three settings YouTube accepts for who can see an upload.
+const YT_VISIBILITIES = [
+    { value: 'public', label: 'Public' },
+    { value: 'unlisted', label: 'Unlisted' },
+    { value: 'private', label: 'Private' },
+];
+
 // Zernio stores uploaded media for 7 days, so the backend rejects anything
 // scheduled further out than that (app.py -> _reject_if_beyond_media_window).
 const MEDIA_WINDOW_DAYS = 7;
@@ -229,6 +236,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
 
     // Account selection: every connected account defaults to ON until unticked
     const [accountToggles, setAccountToggles] = useState({});
+    const [ytVisibility, setYtVisibility] = useState({}); // { [accountId]: 'public' | 'unlisted' | 'private' }
 
     const [scheduling, setScheduling] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 0, results: [] });
@@ -396,7 +404,11 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                 job_id: jobId,
                 clip_index: index,
                 api_key: zernioKey,
-                accounts: selectedAccounts.map((a) => ({ accountId: a.id, platform: a.platform })),
+                accounts: selectedAccounts.map((a) => {
+                    const target = { accountId: a.id, platform: a.platform };
+                    if (a.platform === 'youtube') target.visibility = ytVisibility[a.id] || 'public';
+                    return target;
+                }),
                 title: clip.video_title_for_youtube_short || 'Viral Short',
                 description: clip.video_description_for_instagram || clip.video_description_for_tiktok || '',
                 scheduled_date: scheduledDate,
@@ -757,6 +769,37 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                         ? 'Pick at least one account.'
                                         : `Every clip goes out to all ${selectedAccounts.length} ticked account${selectedAccounts.length === 1 ? '' : 's'}.`}
                                 </p>
+
+                                {/* YouTube: who can see the uploads. Same three values the
+                                    single-clip publisher offers, so the two agree. */}
+                                {selectedAccounts.filter((a) => a.platform === 'youtube').map((acc) => (
+                                    <div key={acc.id} className="mt-3 p-3 bg-surface2 border border-edge rounded-lg">
+                                        <div className={labelClass}>
+                                            <span className="inline-flex items-center gap-1.5">
+                                                <Youtube size={12} /> Who can see it on {acc.displayName || acc.username}
+                                            </span>
+                                        </div>
+                                        <div className="flex gap-1 p-0.5 bg-black/40 border border-edge rounded-lg">
+                                            {YT_VISIBILITIES.map((v) => {
+                                                const active = (ytVisibility[acc.id] || 'public') === v.value;
+                                                return (
+                                                    <button
+                                                        key={v.value}
+                                                        type="button"
+                                                        onClick={() => setYtVisibility((s) => ({ ...s, [acc.id]: v.value }))}
+                                                        disabled={scheduling}
+                                                        className={`flex-1 py-1.5 rounded-md text-xs transition-colors disabled:opacity-50 ${active ? 'bg-surface2 text-fg' : 'text-muted hover:text-fg'}`}
+                                                    >
+                                                        {v.label}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                        <p className="mt-2 text-[11px] text-muted leading-snug">
+                                            Scheduled uploads go up right away as private, then switch to your choice at the scheduled time.
+                                        </p>
+                                    </div>
+                                ))}
                             </>
                         )}
                     </div>
