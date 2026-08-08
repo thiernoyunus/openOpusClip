@@ -43,6 +43,13 @@ const ScoreBadge = ({ score, lg, box }) => {
 
 const BREAKDOWN_LABELS = { hook: 'Hook', flow: 'Flow', value: 'Value', trend: 'Trend' };
 
+// The only three settings YouTube accepts for who can see an upload.
+const YT_VISIBILITIES = [
+    { value: 'public', label: 'Public' },
+    { value: 'unlisted', label: 'Unlisted' },
+    { value: 'private', label: 'Private' },
+];
+
 export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], geminiApiKey, elevenLabsKey, onPlay, onPause, openIndex, setOpenIndex, totalClips: _totalClips, onEdit, framingVersion = 0 }) {
     const isOpen = openIndex === index;
     const [showModal, setShowModal] = useState(false);
@@ -61,6 +68,21 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     // Account selection: default every connected account to ON until the user unticks it
     const [accountToggles, setAccountToggles] = useState({});
     const selectedAccounts = socialAccounts.filter((a) => accountToggles[a.id] ?? true);
+    // Per-account channel options. Keyed by account id, not by platform — someone
+    // can connect two YouTube channels and want different settings on each.
+    const [ytVisibility, setYtVisibility] = useState({}); // { [accountId]: 'public' | 'unlisted' | 'private' }
+    const [igCoverMs, setIgCoverMs] = useState({});       // { [accountId]: ms into the clip }
+    const coverPreviewRefs = useRef({});                  // { [accountId]: <video> showing the chosen frame }
+
+    // Move the little preview to the picked moment so the user sees the frame they chose.
+    const setCoverMs = useCallback((accountId, ms) => {
+        setIgCoverMs((prev) => ({ ...prev, [accountId]: ms }));
+        const el = coverPreviewRefs.current[accountId];
+        if (el) {
+            try { el.currentTime = ms / 1000; } catch { /* not seekable yet */ }
+        }
+    }, []);
+
     const [postTitle, setPostTitle] = useState("");
     const [postDescription, setPostDescription] = useState("");
     const [isScheduling, setIsScheduling] = useState(false);
@@ -565,7 +587,13 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                 job_id: jobId,
                 clip_index: index,
                 api_key: zernioKey,
-                accounts: selectedAccounts.map((a) => ({ accountId: a.id, platform: a.platform })),
+                accounts: selectedAccounts.map((a) => {
+                    const target = { accountId: a.id, platform: a.platform };
+                    if (a.platform === 'youtube') target.visibility = ytVisibility[a.id] || 'public';
+                    // Only send a cover offset the user actually picked; 0 = first frame = today's behaviour.
+                    if (a.platform === 'instagram' && igCoverMs[a.id]) target.thumbOffset = Math.round(igCoverMs[a.id]);
+                    return target;
+                }),
                 title: postTitle,
                 description: postDescription
             };
@@ -917,24 +945,99 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                     </p>
                                 ) : (
                                     <div className="grid grid-cols-1 gap-2">
-                                        {socialAccounts.map((acc) => (
-                                            <label key={acc.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors border border-white/5">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={accountToggles[acc.id] ?? true}
-                                                    onChange={(e) => setAccountToggles({ ...accountToggles, [acc.id]: e.target.checked })}
-                                                    className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary"
-                                                />
-                                                <div className="flex items-center gap-2 text-sm text-white">
-                                                    {acc.platform === 'tiktok' ? <Video size={16} className="text-cyan-400" /> :
-                                                     acc.platform === 'instagram' ? <Instagram size={16} className="text-pink-400" /> :
-                                                     acc.platform === 'youtube' ? <Youtube size={16} className="text-red-400" /> :
-                                                     <Share2 size={16} className="text-zinc-400" />}
-                                                    {acc.displayName || acc.username}
-                                                    <span className="text-xs text-zinc-500 capitalize">{acc.platform}</span>
-                                                </div>
-                                            </label>
-                                        ))}
+                                        {socialAccounts.map((acc) => {
+                                            const isSelected = accountToggles[acc.id] ?? true;
+                                            const coverMs = igCoverMs[acc.id] || 0;
+                                            const coverMaxMs = Math.max(1000, Math.round((clipDuration || 30) * 1000));
+                                            return (
+                                            <div key={acc.id} className="bg-white/5 rounded-lg border border-white/5 overflow-hidden">
+                                                <label className="flex items-center gap-3 p-3 cursor-pointer hover:bg-white/10 transition-colors">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isSelected}
+                                                        onChange={(e) => setAccountToggles({ ...accountToggles, [acc.id]: e.target.checked })}
+                                                        className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary"
+                                                    />
+                                                    <div className="flex items-center gap-2 text-sm text-white">
+                                                        {acc.platform === 'tiktok' ? <Video size={16} className="text-cyan-400" /> :
+                                                         acc.platform === 'instagram' ? <Instagram size={16} className="text-pink-400" /> :
+                                                         acc.platform === 'youtube' ? <Youtube size={16} className="text-red-400" /> :
+                                                         <Share2 size={16} className="text-zinc-400" />}
+                                                        {acc.displayName || acc.username}
+                                                        <span className="text-xs text-zinc-500 capitalize">{acc.platform}</span>
+                                                    </div>
+                                                </label>
+
+                                                {/* YouTube: who can see the upload */}
+                                                {isSelected && acc.platform === 'youtube' && (
+                                                    <div className="px-3 pb-3 pt-2.5 border-t border-edge">
+                                                        <div className="text-[11px] font-bold text-muted uppercase tracking-wide mb-1.5">Who can see it</div>
+                                                        <div className="flex gap-1 p-0.5 bg-black/40 border border-edge rounded-lg">
+                                                            {YT_VISIBILITIES.map((v) => {
+                                                                const active = (ytVisibility[acc.id] || 'public') === v.value;
+                                                                return (
+                                                                    <button
+                                                                        key={v.value}
+                                                                        type="button"
+                                                                        onClick={() => setYtVisibility({ ...ytVisibility, [acc.id]: v.value })}
+                                                                        className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${active ? 'bg-surface2 text-fg' : 'text-muted hover:text-fg'}`}
+                                                                    >
+                                                                        {v.label}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                        {isScheduling && (
+                                                            <p className="mt-2 text-[11px] text-muted leading-snug">
+                                                                Scheduled uploads go up right away as private, then switch to your choice at the scheduled time.
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                {/* Instagram: which frame of the clip becomes the Reel cover */}
+                                                {isSelected && acc.platform === 'instagram' && (
+                                                    <div className="px-3 pb-3 pt-2.5 border-t border-edge">
+                                                        <div className="flex items-center justify-between mb-1.5">
+                                                            <span className="text-[11px] font-bold text-muted uppercase tracking-wide">Reel cover</span>
+                                                            <span className="text-[11px] text-muted tabular-nums">{(coverMs / 1000).toFixed(1)}s in</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-3">
+                                                            {/* Preview seeks a hair past 0 so the browser decodes and paints a
+                                                                frame instead of leaving the thumbnail blank. */}
+                                                            <video
+                                                                ref={(el) => { coverPreviewRefs.current[acc.id] = el; }}
+                                                                src={currentVideoUrl}
+                                                                muted
+                                                                playsInline
+                                                                preload="metadata"
+                                                                onLoadedMetadata={(e) => { e.currentTarget.currentTime = Math.max(coverMs / 1000, 0.04); }}
+                                                                className="w-12 shrink-0 aspect-[9/16] rounded-md bg-black object-cover border border-edge"
+                                                            />
+                                                            <div className="flex-1 min-w-0">
+                                                                <input
+                                                                    type="range"
+                                                                    min={0}
+                                                                    max={coverMaxMs}
+                                                                    step={100}
+                                                                    value={Math.min(coverMs, coverMaxMs)}
+                                                                    onChange={(e) => setCoverMs(acc.id, Number(e.target.value))}
+                                                                    className="w-full accent-viral cursor-pointer"
+                                                                />
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setCoverMs(acc.id, Math.round((videoRef.current?.currentTime || 0) * 1000))}
+                                                                    className="mt-1.5 text-[11px] text-muted hover:text-fg underline underline-offset-2"
+                                                                >
+                                                                    Use the frame the clip is paused on
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            );
+                                        })}
                                     </div>
                                 )}
                             </div>

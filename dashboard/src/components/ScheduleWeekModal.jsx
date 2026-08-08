@@ -1,90 +1,277 @@
 import React, { useState, useMemo } from 'react';
-import { X, Loader2, Calendar, Clock, CheckCircle, AlertCircle, Video, Instagram, Youtube, ChevronLeft, ChevronRight, Globe, ExternalLink } from 'lucide-react';
+import {
+    X, Loader2, Calendar, Clock, CheckCircle, AlertCircle, Video, Instagram, Youtube,
+    ChevronLeft, ChevronRight, Globe, ExternalLink, Pencil, RotateCcw, Check, Plus
+} from 'lucide-react';
 import { getApiUrl } from '../config';
 import { track } from '../analytics';
 
-const DAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-const MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const DEFAULT_TIMES = ['09:00', '13:00', '18:00'];
+
+// Zernio stores uploaded media for 7 days, so the backend rejects anything
+// scheduled further out than that (app.py -> _reject_if_beyond_media_window).
+const MEDIA_WINDOW_DAYS = 7;
 
 const TIMEZONES = [
     { value: 'Pacific/Midway', label: '(GMT-11:00) Midway' },
     { value: 'Pacific/Honolulu', label: '(GMT-10:00) Honolulu' },
     { value: 'America/Anchorage', label: '(GMT-09:00) Alaska' },
-    { value: 'America/Los_Angeles', label: '(GMT-08:00) Los Ángeles' },
+    { value: 'America/Los_Angeles', label: '(GMT-08:00) Los Angeles' },
     { value: 'America/Denver', label: '(GMT-07:00) Denver' },
-    { value: 'America/Mexico_City', label: '(GMT-06:00) Ciudad de México' },
+    { value: 'America/Mexico_City', label: '(GMT-06:00) Mexico City' },
     { value: 'America/Chicago', label: '(GMT-06:00) Chicago' },
-    { value: 'America/New_York', label: '(GMT-05:00) Nueva York' },
-    { value: 'America/Bogota', label: '(GMT-05:00) Bogotá' },
+    { value: 'America/New_York', label: '(GMT-05:00) New York' },
+    { value: 'America/Bogota', label: '(GMT-05:00) Bogota' },
     { value: 'America/Caracas', label: '(GMT-04:00) Caracas' },
     { value: 'America/Santiago', label: '(GMT-04:00) Santiago' },
     { value: 'America/Argentina/Buenos_Aires', label: '(GMT-03:00) Buenos Aires' },
-    { value: 'America/Sao_Paulo', label: '(GMT-03:00) São Paulo' },
+    { value: 'America/Sao_Paulo', label: '(GMT-03:00) Sao Paulo' },
     { value: 'Atlantic/Azores', label: '(GMT-01:00) Azores' },
     { value: 'UTC', label: '(GMT+00:00) UTC' },
-    { value: 'Europe/London', label: '(GMT+00:00) Londres' },
+    { value: 'Europe/London', label: '(GMT+00:00) London' },
     { value: 'Europe/Madrid', label: '(GMT+01:00) Madrid' },
-    { value: 'Europe/Paris', label: '(GMT+01:00) París' },
-    { value: 'Europe/Berlin', label: '(GMT+01:00) Berlín' },
-    { value: 'Europe/Rome', label: '(GMT+01:00) Roma' },
+    { value: 'Europe/Paris', label: '(GMT+01:00) Paris' },
+    { value: 'Europe/Berlin', label: '(GMT+01:00) Berlin' },
+    { value: 'Europe/Rome', label: '(GMT+01:00) Rome' },
     { value: 'Africa/Lagos', label: '(GMT+01:00) Lagos' },
-    { value: 'Europe/Istanbul', label: '(GMT+03:00) Estambul' },
-    { value: 'Asia/Dubai', label: '(GMT+04:00) Dubái' },
+    { value: 'Europe/Istanbul', label: '(GMT+03:00) Istanbul' },
+    { value: 'Asia/Dubai', label: '(GMT+04:00) Dubai' },
     { value: 'Asia/Kolkata', label: '(GMT+05:30) India' },
     { value: 'Asia/Bangkok', label: '(GMT+07:00) Bangkok' },
-    { value: 'Asia/Shanghai', label: '(GMT+08:00) Shanghái' },
-    { value: 'Asia/Tokyo', label: '(GMT+09:00) Tokio' },
-    { value: 'Australia/Sydney', label: '(GMT+10:00) Sídney' },
+    { value: 'Asia/Shanghai', label: '(GMT+08:00) Shanghai' },
+    { value: 'Asia/Tokyo', label: '(GMT+09:00) Tokyo' },
+    { value: 'Australia/Sydney', label: '(GMT+10:00) Sydney' },
     { value: 'Pacific/Auckland', label: '(GMT+12:00) Auckland' },
 ];
 
-function getDayLabel(date) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const target = new Date(date);
-    target.setHours(0, 0, 0, 0);
+/* ------------------------------------------------------------------ *
+ * Date helpers. Dates move around as plain "YYYY-MM-DD" day keys so a
+ * clip's day never shifts because of a timezone conversion.
+ * ------------------------------------------------------------------ */
 
-    if (target.getTime() === today.getTime()) return 'Hoy';
-    if (target.getTime() === tomorrow.getTime()) return 'Mañana';
-    return DAYS[target.getDay()];
+const pad = (n) => String(n).padStart(2, '0');
+
+function toDayKey(date) {
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-function formatDate(date) {
-    return `${date.getDate()} ${MONTHS[date.getMonth()]}`;
+function parseDayKey(key) {
+    const [y, m, d] = key.split('-').map(Number);
+    return new Date(y, (m || 1) - 1, d || 1);
+}
+
+function addDays(dayKey, n) {
+    const d = parseDayKey(dayKey);
+    d.setDate(d.getDate() + n);
+    return toDayKey(d);
+}
+
+function todayKey() {
+    return toDayKey(new Date());
+}
+
+/* ------------------------------------------------------------------ *
+ * Post times. The list of times IS the schedule: five times a day
+ * means five clips a day. Times are plain "HH:MM" strings, so they
+ * sort and compare as text.
+ * ------------------------------------------------------------------ */
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+const isValidTime = (t) => TIME_RE.test(t || '');
+
+const timeToMinutes = (t) => {
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + m;
+};
+
+const minutesToTime = (m) => {
+    const x = ((m % 1440) + 1440) % 1440;
+    return `${pad(Math.floor(x / 60))}:${pad(x % 60)}`;
+};
+
+/**
+ * The times actually used for scheduling: junk dropped, exact duplicates
+ * collapsed, sorted earliest-first. Sorting happens here rather than as the
+ * user types, so rows never jump around under the cursor mid-edit.
+ * Never returns an empty list — zero post times has no meaning.
+ */
+function normalizeTimes(times) {
+    const clean = [...new Set((times || []).filter(isValidTime))].sort();
+    return clean.length > 0 ? clean : ['12:00'];
+}
+
+/** A fresh time for the "Add time" button: an unused default, else an hour past the latest. */
+function nextTimeSlot(existing) {
+    const taken = new Set(existing.filter(isValidTime));
+    const unusedDefault = DEFAULT_TIMES.find((t) => !taken.has(t));
+    if (unusedDefault) return unusedDefault;
+
+    const latest = [...taken].sort().pop();
+    const base = latest ? timeToMinutes(latest) : 9 * 60;
+    for (let step = 60; step <= 1440; step += 15) {
+        const candidate = minutesToTime(base + step);
+        if (!taken.has(candidate)) return candidate;
+    }
+    for (let step = 1; step <= 1440; step += 1) {
+        const candidate = minutesToTime(base + step);
+        if (!taken.has(candidate)) return candidate;
+    }
+    return '12:00';
+}
+
+function formatDayKey(dayKey) {
+    const d = parseDayKey(dayKey);
+    const today = todayKey();
+    if (dayKey === today) return 'Today';
+    if (dayKey === addDays(today, 1)) return 'Tomorrow';
+    return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
+
+/**
+ * The current wall-clock time in an IANA timezone, as "YYYY-MM-DDTHH:mm".
+ * Same shape as a slot's own date+time, so the two can be compared as strings.
+ */
+function nowInTimezone(timezone) {
+    try {
+        const parts = new Intl.DateTimeFormat('en-CA', {
+            timeZone: timezone,
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', hour12: false,
+        }).formatToParts(new Date()).reduce((acc, p) => {
+            acc[p.type] = p.value;
+            return acc;
+        }, {});
+        const hour = parts.hour === '24' ? '00' : parts.hour;
+        return `${parts.year}-${parts.month}-${parts.day}T${hour}:${parts.minute}`;
+    } catch {
+        const d = new Date();
+        return `${toDayKey(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+}
+
+/**
+ * Turns the scheduling settings into one dated slot per clip.
+ *
+ * The post times are the schedule: one clip goes out at each time, then the
+ * next day starts. Three times (09:00 / 13:00 / 18:00) means clips 1-3 land
+ * on day one and clip 4 opens day two. A per-clip override replaces that
+ * clip's slot without disturbing anyone else's.
+ *
+ * Pure — no React, no clock reads except the "is this in the past" flag,
+ * which takes the current time as an argument.
+ *
+ * @returns {Array<{index, date, time, autoDate, autoTime, edited, isPast}>}
+ */
+function computeScheduleSlots({ clipCount, startDate, times, overrides = {}, now = null }) {
+    const slotTimes = normalizeTimes(times);
+    const perDay = slotTimes.length;
+    const slots = [];
+
+    for (let i = 0; i < clipCount; i++) {
+        const autoDate = addDays(startDate, Math.floor(i / perDay));
+        const autoTime = slotTimes[i % perDay];
+        const override = overrides[i];
+        const date = override?.date || autoDate;
+        const time = override?.time || autoTime;
+        slots.push({
+            index: i,
+            date,
+            time,
+            autoDate,
+            autoTime,
+            edited: Boolean(override) && (date !== autoDate || time !== autoTime),
+            isPast: now ? `${date}T${time}` <= now : false,
+        });
+    }
+    return slots;
+}
+
+/**
+ * The smallest number of daily post times that fits every clip inside the
+ * 7-day window, assuming the day's latest post stays where it is.
+ * Returns null when even posting everything on the start day is too late.
+ */
+function suggestPerDay({ clipCount, startDate, latestTime, windowEnd }) {
+    for (let n = 1; n <= Math.max(1, clipCount); n++) {
+        const lastDay = addDays(startDate, Math.floor((clipCount - 1) / n));
+        if (`${lastDay}T${latestTime}` <= windowEnd) return n;
+    }
+    return null;
 }
 
 function detectTimezone() {
     try {
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        if (TIMEZONES.find(t => t.value === tz)) return tz;
+        if (TIMEZONES.find((t) => t.value === tz)) return tz;
         return 'UTC';
     } catch {
         return 'UTC';
     }
 }
 
+function PlatformIcon({ platform }) {
+    if (platform === 'tiktok') return <Video size={14} className="text-cyan-400" />;
+    if (platform === 'instagram') return <Instagram size={14} className="text-pink-400" />;
+    if (platform === 'youtube') return <Youtube size={14} className="text-red-400" />;
+    return <Globe size={14} className="text-muted" />;
+}
+
 export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zernioKey, socialAccounts = [], onViewCalendar }) {
-    const [time, setTime] = useState('12:00');
     const [timezone, setTimezone] = useState(detectTimezone);
+    const [times, setTimes] = useState(DEFAULT_TIMES); // one clip goes out at each time, every day
+    const [startOffset, setStartOffset] = useState(1); // days from today
+    const [overrides, setOverrides] = useState({});    // clipIndex -> { date, time }
+    const [openRow, setOpenRow] = useState(null);      // clipIndex whose editor is expanded
+
     // Account selection: every connected account defaults to ON until unticked
     const [accountToggles, setAccountToggles] = useState({});
-    const [startOffset, setStartOffset] = useState(1);
-
-    const schedule = useMemo(() => {
-        if (!clips) return [];
-        return clips.map((clip, i) => {
-            const date = new Date();
-            date.setDate(date.getDate() + startOffset + i);
-            date.setHours(0, 0, 0, 0);
-            return { clip, index: i, date };
-        });
-    }, [clips, startOffset]);
 
     const [scheduling, setScheduling] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 0, results: [] });
     const [done, setDone] = useState(false);
+    const [warning, setWarning] = useState(null);
+
+    const clipCount = clips?.length || 0;
+    const startDate = addDays(todayKey(), startOffset);
+    const now = nowInTimezone(timezone);
+
+    const slots = useMemo(
+        () => computeScheduleSlots({ clipCount, startDate, times, overrides, now }),
+        [clipCount, startDate, times, overrides, now]
+    );
+
+    const pastSlots = slots.filter((s) => s.isPast);
+
+    // Rows the user still has to fix before anything can be scheduled.
+    const badTimes = useMemo(() => {
+        const seen = new Set();
+        const duplicate = new Set();
+        const empty = new Set();
+        times.forEach((t, i) => {
+            if (!isValidTime(t)) {
+                empty.add(i);
+                return;
+            }
+            if (seen.has(t)) duplicate.add(i);
+            else seen.add(t);
+        });
+        return { duplicate, empty };
+    }, [times]);
+
+    const hasBadTimes = badTimes.duplicate.size > 0 || badTimes.empty.size > 0;
+
+    // The last moment Zernio will still accept, in the same "YYYY-MM-DDTHH:mm"
+    // shape as a slot, so the two compare as plain text.
+    const windowEnd = useMemo(() => {
+        const [day, time] = now.split('T');
+        return `${addDays(day, MEDIA_WINDOW_DAYS)}T${time}`;
+    }, [now]);
+
+    const lateSlots = slots.filter((s) => `${s.date}T${s.time}` > windowEnd);
 
     // Reset state when modal reopens
     const prevOpen = React.useRef(false);
@@ -93,6 +280,9 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
             setScheduling(false);
             setDone(false);
             setProgress({ current: 0, total: 0, results: [] });
+            setOverrides({});
+            setOpenRow(null);
+            setWarning(null);
         }
         prevOpen.current = isOpen;
     }, [isOpen]);
@@ -100,26 +290,107 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
     if (!isOpen) return null;
 
     const selectedAccounts = socialAccounts.filter((a) => accountToggles[a.id] ?? true);
+    const perDay = normalizeTimes(times).length;
+    const dayCount = Math.ceil(clipCount / perDay) || 0;
+
+    // Plain-English fix for the 7-day ceiling, phrased in terms of the post-times list.
+    const lateAdvice = (() => {
+        if (lateSlots.length === 0) return null;
+        const latestTime = normalizeTimes(times)[perDay - 1];
+        const needed = suggestPerDay({ clipCount, startDate, latestTime, windowEnd });
+        if (needed === null) {
+            return 'Even posting all of them on one day is too late — start on an earlier date.';
+        }
+        if (needed > perDay) {
+            return `Add more posting times so they all fit: ${needed} a day covers ${clipCount} clip${clipCount === 1 ? '' : 's'}.`;
+        }
+        return 'Move the late ones to an earlier date.';
+    })();
+
+    const setTimeAt = (i, value) => setTimes((t) => t.map((v, idx) => (idx === i ? value : v)));
+
+    const addTime = () => setTimes((t) => [...t, nextTimeSlot(t)]);
+
+    // A schedule with no post times has no meaning, so the last row can't go.
+    const removeTime = (i) => setTimes((t) => (t.length <= 1 ? t : t.filter((_, idx) => idx !== i)));
+
+    const setOverride = (index, patch) => {
+        setOverrides((prev) => {
+            const slot = slots.find((s) => s.index === index);
+            const base = prev[index] || { date: slot?.date, time: slot?.time };
+            return { ...prev, [index]: { ...base, ...patch } };
+        });
+    };
+
+    const clearOverride = (index) => {
+        setOverrides((prev) => {
+            const next = { ...prev };
+            delete next[index];
+            return next;
+        });
+    };
+
+    // Nudge everything that already passed one day forward, so nothing is
+    // silently posted into the past.
+    const pushPastForward = () => {
+        setStartOffset((o) => o + 1);
+        setOverrides((prev) => {
+            const next = { ...prev };
+            slots.forEach((s) => {
+                if (s.isPast && next[s.index]) {
+                    next[s.index] = { ...next[s.index], date: addDays(next[s.index].date, 1) };
+                }
+            });
+            return next;
+        });
+        setWarning(null);
+    };
 
     const handleScheduleAll = async () => {
         if (!zernioKey) return;
         if (selectedAccounts.length === 0) return;
 
+        if (hasBadTimes) {
+            setWarning('Fix the post times first — every time must be filled in and different from the others.');
+            return;
+        }
+
+        // Re-check against the clock at submit time — the modal may have been
+        // sitting open long enough for a slot to slip into the past.
+        const freshNow = nowInTimezone(timezone);
+        const fresh = computeScheduleSlots({ clipCount, startDate, times, overrides, now: freshNow });
+        const stale = fresh.filter((s) => s.isPast);
+        if (stale.length > 0) {
+            setWarning(`${stale.length} clip${stale.length === 1 ? ' is' : 's are'} scheduled in the past. Move them forward before scheduling.`);
+            return;
+        }
+
+        // Zernio rejects anything past the 7-day media window, so never start
+        // uploading a batch that is guaranteed to fail partway through.
+        const [freshDay, freshTime] = freshNow.split('T');
+        const freshWindowEnd = `${addDays(freshDay, MEDIA_WINDOW_DAYS)}T${freshTime}`;
+        const tooLate = fresh.filter((s) => `${s.date}T${s.time}` > freshWindowEnd);
+        if (tooLate.length > 0) {
+            setWarning(`${tooLate.length} clip${tooLate.length === 1 ? ' is' : 's are'} set for more than ${MEDIA_WINDOW_DAYS} days from now, which is further ahead than we can book. Add more posting times, or start on an earlier date.`);
+            return;
+        }
+
+        setWarning(null);
         setScheduling(true);
         setDone(false);
         const _platforms = [...new Set(selectedAccounts.map((a) => a.platform))].sort().join('-');
         const platformCount = _platforms ? _platforms.split('-').length : 0;
-        const total = schedule.length;
+        const total = fresh.length;
         setProgress({ current: 0, total, results: [] });
 
         const results = [];
-        for (let i = 0; i < schedule.length; i++) {
-            const { clip, index, date } = schedule[i];
+        for (let i = 0; i < fresh.length; i++) {
+            const { index, date, time } = fresh[i];
+            const clip = clips[index];
 
-            // Build local datetime string: "2026-04-06T12:00:00"
+            // Local datetime string: "2026-04-06T12:00:00"
             // Zernio interprets it in the IANA timezone sent alongside
-            const pad = (n) => String(n).padStart(2, '0');
-            const scheduledDate = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${time}:00`;
+            const scheduledDate = `${date}T${time}:00`;
 
             const payload = {
                 job_id: jobId,
@@ -159,228 +430,398 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
         setScheduling(false);
     };
 
-    const successCount = progress.results.filter(r => r.success).length;
-    const failCount = progress.results.filter(r => !r.success).length;
+    const successCount = progress.results.filter((r) => r.success).length;
+    const failCount = progress.results.filter((r) => !r.success).length;
+    const inputClass = 'bg-surface2 border border-edge rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:border-viral/40 disabled:opacity-50 [color-scheme:dark]';
+    const labelClass = 'block text-[11px] font-medium text-muted uppercase tracking-wider mb-2';
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-            <div className="bg-[#121214] border border-white/10 p-6 rounded-2xl w-full max-w-lg shadow-2xl relative max-h-[90vh] overflow-y-auto custom-scrollbar">
-                <button
-                    onClick={onClose}
-                    disabled={scheduling}
-                    className="absolute top-4 right-4 text-zinc-500 hover:text-white disabled:opacity-50"
-                >
-                    <X size={20} />
-                </button>
-
+            <div className="w-full max-w-2xl max-h-[calc(100vh-32px)] rounded-xl border border-edge bg-surface shadow-2xl flex flex-col overflow-hidden">
                 {/* Header */}
-                <div className="flex items-center gap-3 mb-6">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center">
-                        <Calendar size={20} className="text-white" />
+                <div className="flex items-center justify-between gap-3 px-5 h-14 border-b border-edge shrink-0">
+                    <div className="flex items-center gap-3 min-w-0">
+                        <div className="size-9 rounded-lg border border-edge bg-surface2 flex items-center justify-center shrink-0">
+                            <Calendar size={16} className="text-viral" />
+                        </div>
+                        <div className="min-w-0">
+                            <h2 className="text-sm font-medium text-fg">Schedule clips</h2>
+                            <p className="text-[11px] text-muted truncate">
+                                {clipCount} clip{clipCount === 1 ? '' : 's'} &middot; {perDay} per day &middot; {dayCount} day{dayCount === 1 ? '' : 's'}
+                            </p>
+                        </div>
                     </div>
-                    <div>
-                        <h3 className="text-lg font-bold text-white">Programar Semana</h3>
-                        <p className="text-xs text-zinc-500">{clips?.length || 0} clips &middot; 1 por día</p>
-                    </div>
+                    <button
+                        onClick={onClose}
+                        disabled={scheduling}
+                        className="size-8 rounded-md text-muted hover:text-fg hover:bg-white/5 flex items-center justify-center disabled:opacity-40 shrink-0"
+                        aria-label="Close"
+                    >
+                        <X size={16} />
+                    </button>
                 </div>
 
-                {!zernioKey && (
-                    <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/20 text-yellow-200 text-xs rounded-lg flex items-start gap-2">
-                        <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                        <div>Configura tu API Key de Zernio en Settings primero.</div>
-                    </div>
-                )}
+                {/* Body */}
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-5 space-y-5">
+                    {!zernioKey && (
+                        <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-200 text-xs rounded-lg flex items-start gap-2">
+                            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                            <div>Add your Zernio API key in Settings first.</div>
+                        </div>
+                    )}
 
-                {/* Time + Timezone */}
-                <div className="mb-5 grid grid-cols-2 gap-3">
-                    <div>
-                        <label className="block text-xs font-bold text-zinc-400 mb-2 flex items-center gap-2">
-                            <Clock size={14} className="text-purple-400" />
-                            Hora
-                        </label>
-                        <input
-                            type="time"
-                            value={time}
-                            onChange={(e) => setTime(e.target.value)}
-                            disabled={scheduling}
-                            className="w-full bg-black/40 border border-white/10 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-purple-500/50 [color-scheme:dark]"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-zinc-400 mb-2 flex items-center gap-2">
-                            <Globe size={14} className="text-indigo-400" />
-                            Zona horaria
-                        </label>
-                        <select
-                            value={timezone}
-                            onChange={(e) => setTimezone(e.target.value)}
-                            disabled={scheduling}
-                            className="w-full bg-black/40 border border-white/10 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-indigo-500/50 appearance-none cursor-pointer"
-                        >
-                            {TIMEZONES.map(tz => (
-                                <option key={tz.value} value={tz.value}>{tz.label}</option>
-                            ))}
-                        </select>
-                    </div>
-                </div>
-
-                {/* Start day offset */}
-                <div className="mb-5 flex items-center justify-between">
-                    <span className="text-xs font-bold text-zinc-400">Empezar desde</span>
-                    <div className="flex items-center gap-2">
-                        <button
-                            onClick={() => setStartOffset(Math.max(1, startOffset - 1))}
-                            disabled={startOffset <= 1 || scheduling}
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white disabled:opacity-30 transition-colors"
-                        >
-                            <ChevronLeft size={16} />
-                        </button>
-                        <span className="text-sm text-white font-medium min-w-[90px] text-center">
-                            {(() => {
-                                const d = new Date();
-                                d.setDate(d.getDate() + startOffset);
-                                return `${getDayLabel(d)} ${formatDate(d)}`;
-                            })()}
-                        </span>
-                        <button
-                            onClick={() => setStartOffset(startOffset + 1)}
-                            disabled={scheduling}
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white disabled:opacity-30 transition-colors"
-                        >
-                            <ChevronRight size={16} />
-                        </button>
-                    </div>
-                </div>
-
-                {/* Calendar grid */}
-                <div className="mb-5 space-y-2">
-                    {schedule.map(({ clip, index, date }) => (
-                        <div key={index} className="flex items-center gap-3 p-3 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition-colors">
-                            <div className="w-14 shrink-0 text-center">
-                                <div className="text-[10px] font-bold text-purple-400 uppercase">{getDayLabel(date)}</div>
-                                <div className="text-lg font-bold text-white leading-tight">{date.getDate()}</div>
-                                <div className="text-[10px] text-zinc-500">{MONTHS[date.getMonth()]}</div>
+                    {/* Post times + timezone. The list of times is the schedule:
+                        one clip goes out at each time, so 5 times = 5 clips a day. */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label className={labelClass}>
+                                <span className="inline-flex items-center gap-1.5">
+                                    <Clock size={12} /> Post times
+                                </span>
+                            </label>
+                            <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                                {times.map((t, i) => {
+                                    const isDuplicate = badTimes.duplicate.has(i);
+                                    const isEmpty = badTimes.empty.has(i);
+                                    return (
+                                        <div key={i}>
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="time"
+                                                    value={t}
+                                                    onChange={(e) => setTimeAt(i, e.target.value)}
+                                                    disabled={scheduling}
+                                                    className={`${inputClass} flex-1 min-w-0 ${isDuplicate || isEmpty ? '!border-red-500/40' : ''}`}
+                                                    aria-label={`Post time ${i + 1}`}
+                                                    aria-invalid={isDuplicate || isEmpty}
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeTime(i)}
+                                                    disabled={scheduling || times.length <= 1}
+                                                    title={times.length <= 1 ? 'Keep at least one post time' : 'Remove this time'}
+                                                    className="size-8 shrink-0 rounded-md border border-edge bg-surface2 text-muted hover:text-fg hover:bg-white/5 disabled:opacity-30 disabled:hover:text-muted flex items-center justify-center"
+                                                    aria-label={`Remove post time ${i + 1}`}
+                                                >
+                                                    <X size={13} />
+                                                </button>
+                                            </div>
+                                            {(isDuplicate || isEmpty) && (
+                                                <p className="text-[10px] text-red-300 mt-1">
+                                                    {isEmpty ? 'Pick a time.' : 'Already in the list — two clips cannot share a time.'}
+                                                </p>
+                                            )}
+                                        </div>
+                                    );
+                                })}
                             </div>
+                            <button
+                                type="button"
+                                onClick={addTime}
+                                disabled={scheduling}
+                                className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-fg border border-edge bg-surface2 hover:bg-white/5 rounded-md px-2.5 py-1.5 transition-colors disabled:opacity-50"
+                            >
+                                <Plus size={12} /> Add time
+                            </button>
+                            <p className="text-[11px] text-muted mt-2">
+                                {perDay} clip{perDay === 1 ? '' : 's'} a day &middot; {dayCount} day{dayCount === 1 ? '' : 's'} to post {clipCount} clip{clipCount === 1 ? '' : 's'}
+                            </p>
+                        </div>
 
+                        <div>
+                            <label className={labelClass}>
+                                <span className="inline-flex items-center gap-1.5">
+                                    <Globe size={12} /> Timezone
+                                </span>
+                            </label>
+                            <select
+                                value={timezone}
+                                onChange={(e) => setTimezone(e.target.value)}
+                                disabled={scheduling}
+                                className={`${inputClass} w-full cursor-pointer`}
+                            >
+                                {TIMEZONES.map((tz) => (
+                                    <option key={tz.value} value={tz.value}>{tz.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
+                    {/* Start date stepper */}
+                    <div className="flex items-center justify-between gap-3">
+                        <span className={`${labelClass} mb-0`}>Start on</span>
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setStartOffset(Math.max(0, startOffset - 1))}
+                                disabled={startOffset <= 0 || scheduling}
+                                className="size-7 rounded-md border border-edge bg-surface2 text-muted hover:text-fg hover:bg-white/5 disabled:opacity-30 flex items-center justify-center"
+                                aria-label="Previous day"
+                            >
+                                <ChevronLeft size={14} />
+                            </button>
+                            <span className="text-sm text-fg min-w-[130px] text-center tabular-nums">
+                                {formatDayKey(startDate)}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setStartOffset(startOffset + 1)}
+                                disabled={scheduling}
+                                className="size-7 rounded-md border border-edge bg-surface2 text-muted hover:text-fg hover:bg-white/5 disabled:opacity-30 flex items-center justify-center"
+                                aria-label="Next day"
+                            >
+                                <ChevronRight size={14} />
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Past-time guard */}
+                    {(pastSlots.length > 0 || warning) && (
+                        <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-start gap-2">
+                            <AlertCircle size={14} className="mt-0.5 shrink-0 text-red-400" />
                             <div className="flex-1 min-w-0">
-                                <div className="text-xs font-bold text-white truncate">
-                                    Clip {index + 1}
-                                </div>
-                                <div className="text-[10px] text-zinc-500 truncate">
-                                    {clip.video_title_for_youtube_short || 'Viral Short'}
-                                </div>
-                                <div className="text-[10px] text-zinc-600 mt-0.5">
-                                    {time}h &middot; {TIMEZONES.find(t => t.value === timezone)?.label || timezone}
-                                </div>
-                            </div>
-
-                            <div className="shrink-0">
-                                {progress.results[index]?.success === true && (
-                                    <CheckCircle size={18} className="text-green-400" />
-                                )}
-                                {progress.results[index]?.success === false && (
-                                    <AlertCircle size={18} className="text-red-400" />
-                                )}
-                                {scheduling && progress.current === index && (
-                                    <Loader2 size={18} className="text-purple-400 animate-spin" />
-                                )}
-                                {!scheduling && progress.results[index] === undefined && (
-                                    <div className="w-4 h-4 rounded-full border-2 border-zinc-700" />
-                                )}
+                                <p className="text-xs text-red-200">
+                                    {warning || `${pastSlots.length} clip${pastSlots.length === 1 ? ' is' : 's are'} set for a time that has already gone by. Nothing will be scheduled until you move ${pastSlots.length === 1 ? 'it' : 'them'}.`}
+                                </p>
+                                <button
+                                    type="button"
+                                    onClick={pushPastForward}
+                                    disabled={scheduling}
+                                    className="mt-2 text-[11px] text-red-200 hover:text-fg border border-red-500/30 hover:bg-white/5 rounded-md px-2.5 py-1 transition-colors disabled:opacity-50"
+                                >
+                                    Move everything a day forward
+                                </button>
                             </div>
                         </div>
-                    ))}
-                </div>
+                    )}
 
-                {/* Accounts */}
-                <div className="mb-5">
-                    <label className="block text-xs font-bold text-zinc-400 mb-2">Cuentas</label>
-                    {socialAccounts.length === 0 ? (
-                        <p className="text-xs text-zinc-500 p-3 bg-white/5 rounded-lg border border-white/5">
-                            No hay cuentas conectadas. Conéctalas en Settings → Social Integration.
-                        </p>
-                    ) : (
-                        <div className="flex flex-wrap gap-2">
-                            {socialAccounts.map((acc) => {
-                                const on = accountToggles[acc.id] ?? true;
+                    {/* 7-day ceiling: Zernio deletes uploaded video after a week, so
+                        anything further out is rejected. Say so before we upload. */}
+                    {lateSlots.length > 0 && (
+                        <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-start gap-2">
+                            <AlertCircle size={14} className="mt-0.5 shrink-0 text-amber-400" />
+                            <p className="text-xs text-amber-200">
+                                {lateSlots.length} clip{lateSlots.length === 1 ? ' is' : 's are'} set for more than {MEDIA_WINDOW_DAYS} days
+                                from now &mdash; further ahead than we can book. Your videos are sent to the scheduling
+                                service today, and it only keeps them for {MEDIA_WINDOW_DAYS} days, so there would be
+                                nothing left to post. {lateAdvice}
+                            </p>
+                        </div>
+                    )}
+
+                    {/* Schedule list — every row opens its own date + time */}
+                    <div>
+                        <label className={labelClass}>Schedule &middot; tap a clip to change its date or time</label>
+                        <div className="space-y-1.5">
+                            {slots.map((slot) => {
+                                const clip = clips[slot.index];
+                                const result = progress.results[slot.index];
+                                const isOpen_ = openRow === slot.index;
+                                const isLate = `${slot.date}T${slot.time}` > windowEnd;
                                 return (
-                                    <button
-                                        key={acc.id}
-                                        onClick={() => setAccountToggles(t => ({ ...t, [acc.id]: !on }))}
-                                        disabled={scheduling}
-                                        className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs font-bold border transition-all ${on ? 'bg-purple-500/10 border-purple-500/30 text-purple-300' : 'bg-white/5 border-white/5 text-zinc-500'}`}
+                                    <div
+                                        key={slot.index}
+                                        className={`rounded-lg border transition-colors ${slot.isPast ? 'border-red-500/30 bg-red-500/5' : isLate ? 'border-amber-500/30 bg-amber-500/5' : isOpen_ ? 'border-viral/40 bg-surface2' : 'border-edge bg-surface2 hover:border-white/20'}`}
                                     >
-                                        {acc.platform === 'tiktok' ? <Video size={14} className="text-cyan-400" /> :
-                                         acc.platform === 'instagram' ? <Instagram size={14} className="text-pink-400" /> :
-                                         acc.platform === 'youtube' ? <Youtube size={14} className="text-red-400" /> :
-                                         <Globe size={14} />}
-                                        {acc.displayName || acc.username}
-                                    </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setOpenRow(isOpen_ ? null : slot.index)}
+                                            disabled={scheduling}
+                                            className="w-full flex items-center gap-3 p-3 text-left disabled:cursor-not-allowed"
+                                        >
+                                            <div className="w-14 shrink-0 text-center">
+                                                <div className="text-[10px] font-medium text-muted uppercase">{DAYS[parseDayKey(slot.date).getDay()]}</div>
+                                                <div className="text-lg font-semibold text-fg leading-tight tabular-nums">{parseDayKey(slot.date).getDate()}</div>
+                                                <div className="text-[10px] text-muted">{MONTHS[parseDayKey(slot.date).getMonth()]}</div>
+                                            </div>
+
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs font-medium text-fg">Clip {slot.index + 1}</span>
+                                                    {slot.edited && (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] text-viral border border-viral/30 bg-viral/10 rounded px-1.5 py-0.5">
+                                                            <Pencil size={9} /> Edited
+                                                        </span>
+                                                    )}
+                                                    {slot.isPast && (
+                                                        <span className="text-[10px] text-red-300 border border-red-500/30 rounded px-1.5 py-0.5">In the past</span>
+                                                    )}
+                                                    {!slot.isPast && isLate && (
+                                                        <span className="text-[10px] text-amber-300 border border-amber-500/30 rounded px-1.5 py-0.5">Too far out</span>
+                                                    )}
+                                                </div>
+                                                <div className="text-[11px] text-muted truncate">
+                                                    {clip?.video_title_for_youtube_short || 'Viral Short'}
+                                                </div>
+                                                <div className="text-[11px] text-muted mt-0.5 tabular-nums">
+                                                    {formatDayKey(slot.date)} &middot; {slot.time}
+                                                </div>
+                                            </div>
+
+                                            <div className="shrink-0">
+                                                {result?.success === true && <CheckCircle size={16} className="text-viral" />}
+                                                {result?.success === false && <AlertCircle size={16} className="text-red-400" />}
+                                                {scheduling && progress.current === slot.index && (
+                                                    <Loader2 size={16} className="text-viral animate-spin" />
+                                                )}
+                                                {!scheduling && result === undefined && (
+                                                    <Pencil size={14} className={isOpen_ ? 'text-viral' : 'text-zinc-600'} />
+                                                )}
+                                            </div>
+                                        </button>
+
+                                        {isOpen_ && !scheduling && (
+                                            <div className="px-3 pb-3 pt-1 border-t border-edge flex flex-wrap items-end gap-3 animate-[fadeIn_0.15s_ease-out]">
+                                                <div>
+                                                    <span className="block text-[10px] text-muted mb-1">Date</span>
+                                                    <input
+                                                        type="date"
+                                                        value={slot.date}
+                                                        min={todayKey()}
+                                                        onChange={(e) => e.target.value && setOverride(slot.index, { date: e.target.value })}
+                                                        className={inputClass}
+                                                        aria-label={`Date for clip ${slot.index + 1}`}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <span className="block text-[10px] text-muted mb-1">Time</span>
+                                                    <input
+                                                        type="time"
+                                                        value={slot.time}
+                                                        onChange={(e) => e.target.value && setOverride(slot.index, { time: e.target.value })}
+                                                        className={inputClass}
+                                                        aria-label={`Time for clip ${slot.index + 1}`}
+                                                    />
+                                                </div>
+                                                <div className="flex items-center gap-2 ml-auto">
+                                                    {slot.edited && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => clearOverride(slot.index)}
+                                                            className="inline-flex items-center gap-1.5 text-[11px] text-muted hover:text-fg border border-edge hover:bg-white/5 rounded-md px-2.5 py-1.5 transition-colors"
+                                                        >
+                                                            <RotateCcw size={11} /> Reset
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setOpenRow(null)}
+                                                        className="inline-flex items-center gap-1.5 text-[11px] text-fg border border-edge bg-surface hover:bg-white/5 rounded-md px-2.5 py-1.5 transition-colors"
+                                                    >
+                                                        <Check size={11} /> Done
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
                                 );
                             })}
+                            {clipCount === 0 && (
+                                <p className="text-xs text-muted p-3 bg-surface2 rounded-lg border border-edge">No clips to schedule yet.</p>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Accounts */}
+                    <div>
+                        <label className={labelClass}>Post to</label>
+                        {socialAccounts.length === 0 ? (
+                            <p className="text-xs text-muted p-3 bg-surface2 rounded-lg border border-edge">
+                                No accounts connected. Connect them in Settings &rarr; Social Integration.
+                            </p>
+                        ) : (
+                            <>
+                                <div className="flex flex-wrap gap-2">
+                                    {socialAccounts.map((acc) => {
+                                        const on = accountToggles[acc.id] ?? true;
+                                        return (
+                                            <button
+                                                key={acc.id}
+                                                type="button"
+                                                onClick={() => setAccountToggles((t) => ({ ...t, [acc.id]: !on }))}
+                                                disabled={scheduling}
+                                                aria-pressed={on}
+                                                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs border transition-colors disabled:opacity-50 ${on ? 'bg-viral/10 border-viral/40 text-fg' : 'bg-surface2 border-edge text-muted hover:text-fg'}`}
+                                            >
+                                                <span className={`size-4 rounded border flex items-center justify-center shrink-0 ${on ? 'bg-viral/20 border-viral/50 text-viral' : 'border-edge text-transparent'}`}>
+                                                    <Check size={10} />
+                                                </span>
+                                                <PlatformIcon platform={acc.platform} />
+                                                {acc.displayName || acc.username}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                <p className="text-[11px] text-muted mt-2">
+                                    {selectedAccounts.length === 0
+                                        ? 'Pick at least one account.'
+                                        : `Every clip goes out to all ${selectedAccounts.length} ticked account${selectedAccounts.length === 1 ? '' : 's'}.`}
+                                </p>
+                            </>
+                        )}
+                    </div>
+
+                    {/* Progress */}
+                    {(scheduling || done) && (
+                        <div>
+                            <div className="flex items-center justify-between text-[11px] text-muted mb-2">
+                                <span>{scheduling ? 'Scheduling...' : 'Finished'}</span>
+                                <span className="tabular-nums">{progress.current}/{progress.total}</span>
+                            </div>
+                            <div className="w-full h-1.5 bg-surface2 border border-edge rounded-full overflow-hidden">
+                                <div
+                                    className={`h-full rounded-full transition-all duration-500 ${done && failCount === 0 ? 'bg-viral' : done && failCount > 0 ? 'bg-amber-500' : 'bg-viral/70'}`}
+                                    style={{ width: `${progress.total ? (progress.current / progress.total) * 100 : 0}%` }}
+                                />
+                            </div>
+                            {done && (
+                                <div className="mt-3 text-xs text-center">
+                                    {failCount === 0 ? (
+                                        <span className="text-viral">All clips scheduled</span>
+                                    ) : (
+                                        <span className="text-amber-400">{successCount} scheduled, {failCount} failed</span>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
 
-                {/* Progress bar */}
-                {(scheduling || done) && (
-                    <div className="mb-5">
-                        <div className="flex items-center justify-between text-xs text-zinc-400 mb-2">
-                            <span>{scheduling ? 'Programando...' : 'Completado'}</span>
-                            <span>{progress.current}/{progress.total}</span>
-                        </div>
-                        <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
-                            <div
-                                className={`h-full rounded-full transition-all duration-500 ${done && failCount === 0 ? 'bg-green-500' : done && failCount > 0 ? 'bg-yellow-500' : 'bg-purple-500'}`}
-                                style={{ width: `${(progress.current / progress.total) * 100}%` }}
-                            />
-                        </div>
-                        {done && (
-                            <div className="mt-3 text-xs text-center">
-                                {failCount === 0 ? (
-                                    <span className="text-green-400">Todos los clips programados correctamente</span>
-                                ) : (
-                                    <span className="text-yellow-400">{successCount} programados, {failCount} fallidos</span>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {/* Actions */}
-                <div className="flex gap-3">
+                {/* Footer */}
+                <div className="shrink-0 border-t border-edge p-4 flex items-center gap-2">
                     <button
+                        type="button"
                         onClick={onClose}
                         disabled={scheduling}
-                        className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-zinc-300 rounded-xl font-medium transition-colors disabled:opacity-50"
+                        className="text-xs text-muted hover:text-fg border border-edge hover:bg-white/5 rounded-lg px-4 py-2.5 transition-colors disabled:opacity-50"
                     >
-                        {done ? 'Cerrar' : 'Cancelar'}
+                        {done ? 'Close' : 'Cancel'}
                     </button>
+                    <div className="flex-1" />
                     {!done ? (
                         <button
+                            type="button"
                             onClick={handleScheduleAll}
-                            disabled={scheduling || !zernioKey || selectedAccounts.length === 0}
-                            className="flex-1 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-400 hover:to-indigo-500 text-white rounded-xl font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            disabled={scheduling || !zernioKey || clipCount === 0 || selectedAccounts.length === 0 || pastSlots.length > 0 || lateSlots.length > 0 || hasBadTimes}
+                            className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-viral/15 border border-viral/40 text-sm text-viral hover:bg-viral/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                             {scheduling ? (
                                 <>
-                                    <Loader2 size={16} className="animate-spin" />
-                                    Programando...
+                                    <Loader2 size={14} className="animate-spin" /> Scheduling...
                                 </>
                             ) : (
                                 <>
-                                    <Calendar size={16} />
-                                    Programar {clips?.length || 0} Clips
+                                    <Calendar size={14} /> Schedule {clipCount} clip{clipCount === 1 ? '' : 's'}
                                 </>
                             )}
                         </button>
                     ) : (
                         <button
-                            onClick={() => { onClose(); onViewCalendar && onViewCalendar(); }}
-                            className="flex-1 py-3 bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-400 hover:to-purple-500 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2"
+                            type="button"
+                            onClick={() => { onClose(); if (onViewCalendar) onViewCalendar(); }}
+                            className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-viral/15 border border-viral/40 text-sm text-viral hover:bg-viral/25 transition-colors"
                         >
-                            <ExternalLink size={16} />
-                            Ver Calendario
+                            <ExternalLink size={14} /> View calendar
                         </button>
                     )}
                 </div>
