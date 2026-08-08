@@ -49,6 +49,11 @@ assert.deepEqual(sanitizeExceptionList([{ type: 'Error', value: 'plain failure' 
   value: 'plain failure',
 }]);
 assert.equal(sanitizeExceptionList(Array.from({ length: 7 }, () => ({ type: 'Error' }))).length, 5);
-assert.equal(sanitizeStacktrace({ frames: Array.from({ length: 40 }, () => ({})) }).frames.length, 30);
+const retainedFrames = sanitizeStacktrace({
+  frames: Array.from({ length: 40 }, (_, index) => ({ function: String(index) })),
+}).frames;
+assert.equal(retainedFrames.length, 30);
+assert.equal(retainedFrames[0].function, '10');
+assert.equal(retainedFrames.at(-1).function, '39');
 
 console.log('analytics sanitizer self-check passed');

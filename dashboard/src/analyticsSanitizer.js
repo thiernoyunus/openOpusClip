@@ -41,7 +41,7 @@ export function sanitizeStacktrace(stacktrace) {
   const sanitized = {};
   if (typeof stacktrace.type === 'string') sanitized.type = safeContextValue(stacktrace.type);
   sanitized.frames = Array.isArray(stacktrace.frames)
-    ? stacktrace.frames.slice(0, 30).map(sanitizeStackFrame).filter(Boolean)
+    ? stacktrace.frames.slice(-30).map(sanitizeStackFrame).filter(Boolean)
     : [];
   return sanitized;
 }
