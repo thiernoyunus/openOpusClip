@@ -206,7 +206,13 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     // effective duration so a trim shortens it — the picked offset is kept
     // rather than reset (a re-trim shouldn't silently discard the choice), so
     // every read of it clamps here instead.
-    const coverMaxMs = Math.max(1000, Math.round((effectiveDuration || clipDuration || 30) * 1000));
+    // Stop one frame short of the end. An offset equal to the duration is EOF,
+    // not a frame, so it can be rejected or silently resolve to something else.
+    // Everything in this app composes at 30fps (see outputDurationFrames calls).
+    const coverMaxMs = Math.max(
+        0,
+        Math.round((effectiveDuration || clipDuration || 30) * 1000) - Math.round(1000 / 30),
+    );
 
     // Initialize/Reset form when modal opens
     useEffect(() => {
