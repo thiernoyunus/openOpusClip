@@ -18,7 +18,7 @@ import { ShortVideo } from '@remotion-src/compositions/ShortVideo';
  * @param {boolean} [props.autoPlay] - Start playback on mount (default true)
  * @param {boolean} [props.loop] - Loop playback (default true)
  * @param {function} [props.onPlay] - Called with current time (s) when playback starts
- * @param {function} [props.onPause] - Called when playback pauses
+ * @param {function} [props.onPause] - Called with current time (s) when playback pauses
  * @param {function} [props.onEnded] - Called when playback reaches the end (loop off)
  */
 export default function RemotionPreview({
@@ -51,7 +51,9 @@ export default function RemotionPreview({
         const player = playerRef.current;
         if (!player) return;
         const handlePlay = () => callbacksRef.current.onPlay && callbacksRef.current.onPlay(player.getCurrentFrame() / fps);
-        const handlePause = () => callbacksRef.current.onPause && callbacksRef.current.onPause();
+        // Pass the time out too — callers that offer a "use this frame" action
+        // have no other way to read it (the player ref stays internal).
+        const handlePause = () => callbacksRef.current.onPause && callbacksRef.current.onPause(player.getCurrentFrame() / fps);
         const handleEnded = () => callbacksRef.current.onEnded && callbacksRef.current.onEnded();
         player.addEventListener('play', handlePlay);
         player.addEventListener('pause', handlePause);

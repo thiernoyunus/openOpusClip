@@ -22,20 +22,6 @@ export default function FeedbackModal({ onClose }) {
     }
   }, [step]);
 
-  const handleCategorySubmit = () => {
-    if (!category) return;
-    if (!analyticsEnabled()) {
-      setSubmitFailed(true);
-      return;
-    }
-    if (category === 'feature') {
-      track('feedback_submitted', { category, detail: '' });
-      setSubmitted(true);
-      return;
-    }
-    setStep('detail');
-  };
-
   const handleDetailSubmit = () => {
     if (!analyticsEnabled()) {
       setSubmitFailed(true);

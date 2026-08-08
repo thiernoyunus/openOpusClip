@@ -4,6 +4,13 @@ import { getApiUrl } from '../config';
 
 const STEPS = ['Input', 'Titles', 'Generate', 'Description', 'Publish'];
 
+// The only three settings YouTube accepts for who can see an upload.
+const YT_VISIBILITIES = [
+  { value: 'public', label: 'Public' },
+  { value: 'unlisted', label: 'Unlisted' },
+  { value: 'private', label: 'Private' },
+];
+
 function StepIndicator({ currentStep }) {
   return (
     <div className="flex items-center gap-2 mb-8">
@@ -127,6 +134,7 @@ export default function ThumbnailStudio({ geminiApiKey, zernioKey, socialAccount
   // Step 4 (Publish) state
   const [selectedThumbnail, setSelectedThumbnail] = useState(null);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [visibility, setVisibility] = useState('public');
   const [publishResult, setPublishResult] = useState(null);
 
   // Background preprocessing state
@@ -383,6 +391,7 @@ export default function ThumbnailStudio({ geminiApiKey, zernioKey, socialAccount
       formData.append('thumbnail_url', selectedThumbnail);
       formData.append('api_key', zernioKey);
       formData.append('account_id', youtubeAccount.id);
+      formData.append('visibility', visibility);
 
       // Submit the publish job — returns immediately with a publish_id
       const res = await fetch(getApiUrl('/api/thumbnail/publish'), {
@@ -1057,6 +1066,27 @@ export default function ThumbnailStudio({ geminiApiKey, zernioKey, socialAccount
                   maxLength={100}
                 />
               </div>
+
+              {/* Who can see it — YouTube's three visibility settings. Without this
+                  the backend defaults to public, which published without asking. */}
+              {(zernioKey && youtubeAccount) && (
+                <div>
+                  <label className="block text-xs font-medium text-zinc-400 mb-2">Who can see it</label>
+                  <div className="flex gap-1 p-0.5 bg-black/40 border border-edge rounded-lg">
+                    {YT_VISIBILITIES.map((v) => (
+                      <button
+                        key={v.value}
+                        type="button"
+                        onClick={() => setVisibility(v.value)}
+                        disabled={isPublishing}
+                        className={`flex-1 py-2 rounded-md text-xs transition-colors disabled:opacity-50 ${visibility === v.value ? 'bg-surface2 text-fg' : 'text-zinc-400 hover:text-white'}`}
+                      >
+                        {v.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Publish Button */}
               {(!zernioKey || !youtubeAccount) ? (

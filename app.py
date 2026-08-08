@@ -2637,9 +2637,40 @@ def _zernio_upload_media(api_key: str, file_path: str, content_type: str) -> str
     )
 
 
+YOUTUBE_VISIBILITIES = ("public", "private", "unlisted")
+
+
+def _youtube_visibility(value: Optional[str]) -> str:
+    """Validate a caller-supplied YouTube visibility. Empty/missing -> "public".
+
+    Trust boundary: this comes straight off the wire, so reject anything Zernio
+    (and YouTube) wouldn't accept instead of forwarding it blindly.
+    """
+    if not value:
+        return "public"
+    if value not in YOUTUBE_VISIBILITIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid YouTube visibility '{value}'. Must be one of: {', '.join(YOUTUBE_VISIBILITIES)}.",
+        )
+    return value
+
+
+def _instagram_thumb_offset(value) -> int:
+    """Milliseconds into the video to use as the Reel cover. Missing/bad -> 0 (first frame)."""
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 class SocialAccountTarget(BaseModel):
     accountId: str
     platform: str
+    # Per-account platform options (per-account, not per-platform: a user can
+    # connect two YouTube channels and want different settings for each).
+    visibility: Optional[str] = None   # youtube: public | private | unlisted
+    thumbOffset: Optional[int] = None  # instagram: ms into the clip for the Reel cover
 
 
 class SocialPostRequest(BaseModel):
@@ -2681,6 +2712,11 @@ async def post_to_socials(req: SocialPostRequest):
             detail="Pinterest posting isn't supported yet (it needs a board). Deselect the Pinterest account and try again.",
         )
 
+    # Validate per-account options before the (potentially large) media upload.
+    for acc in req.accounts:
+        if acc.platform == "youtube":
+            _youtube_visibility(acc.visibility)
+
     try:
         clip = job['result']['clips'][req.clip_index]
         # Prefer an explicit render filename (e.g. captions burn not applied to
@@ -2709,7 +2745,16 @@ async def post_to_socials(req: SocialPostRequest):
         for acc in req.accounts:
             entry = {"platform": acc.platform, "accountId": acc.accountId}
             if acc.platform == "youtube":
-                entry["platformSpecificData"] = {"title": final_title, "visibility": "public"}
+                entry["platformSpecificData"] = {
+                    "title": final_title,
+                    "visibility": _youtube_visibility(acc.visibility),
+                }
+            elif acc.platform == "instagram":
+                # Only send it when the user actually picked a cover frame — a
+                # payload without it stays byte-identical to what we sent before.
+                offset = _instagram_thumb_offset(acc.thumbOffset)
+                if offset:
+                    entry["platformSpecificData"] = {"thumbOffset": offset}
             platforms.append(entry)
 
         post_payload = {
@@ -3156,10 +3201,15 @@ async def thumbnail_publish(
     thumbnail_url: str = Form(...),
     api_key: str = Form(...),
     account_id: str = Form(...),
+    visibility: str = Form("public"),
 ):
     """Kick off a background upload to YouTube via Zernio and return immediately."""
     if session_id not in thumbnail_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    # Validate now, on the request thread, so a bad value is a 400 the caller sees
+    # rather than a silent failure inside the background upload.
+    yt_visibility = _youtube_visibility(visibility)
 
     session = thumbnail_sessions[session_id]
     video_path = session.get("video_path")
@@ -3194,7 +3244,7 @@ async def thumbnail_publish(
                 "platforms": [{
                     "platform": "youtube",
                     "accountId": account_id,
-                    "platformSpecificData": {"title": title, "visibility": "public"},
+                    "platformSpecificData": {"title": title, "visibility": yt_visibility},
                 }],
                 "publishNow": True,
             }
