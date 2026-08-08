@@ -1,17 +1,17 @@
 import posthog from 'posthog-js';
+import {
+  SENSITIVE_PROPERTY,
+  URL_PROPERTY,
+  scrubText,
+  safeContextValue,
+  sanitizeNested,
+  sanitizeExceptionList,
+} from './analyticsSanitizer.js';
 
 const POSTHOG_TOKEN = 'phc_kUQRck5LKwiSJJC2Zv8H8xxFbGksCtmuxdV5Uw7pTpne';
 const POSTHOG_HOST = 'https://us.i.posthog.com';
 const SAFE_APP_URL = 'desktop://app';
 const DEV_OPT_IN = import.meta.env.VITE_POSTHOG_DEV === 'true';
-
-const SENSITIVE_PROPERTY = /(?:api[_-]?key|authorization|password|secret|token|prompt|transcript|caption|media|file(?:name)?|title|job[_-]?id|raw[_-]?logs?|social[_-]?(?:user)?name|request[_-]?(?:headers?|bod(?:y|ies))|response[_-]?(?:headers?|bod(?:y|ies)))/i;
-const URL_PROPERTY = /(?:^|[_$])(?:current_)?url$|referrer|referring_domain|pathname|host$|^(?:href|src|action|poster)$/i;
-const URL_TEXT = /(?:https?|file|blob):\/\/[^\s)\]}>'"]+/gi;
-const LOCAL_PATH = /(?:\/[A-Za-z0-9._ -]+){2,}|[A-Za-z]:\\(?:[^\\\s]+\\)+[^\\\s]*/g;
-const API_KEY_TEXT = /\b(?:phc|sk|zern|soniox)[_-][A-Za-z0-9_-]{12,}\b|\bAIza[A-Za-z0-9_-]{30,}\b|\b(?:api[_ -]?key|token|secret|bearer)\s*[:= ]\s*[A-Za-z0-9_-]{12,}\b/gi;
-const FILENAME_TEXT = /\b[\w .-]+\.(?:mp4|mov|mkv|webm|avi|mp3|wav|m4a|png|jpe?g|gif|webp|srt|vtt|txt|log|json|jsx?|tsx?|py)\b/gi;
-const SAFE_CONTEXT_VALUE = /[^a-zA-Z0-9._-]/g;
 
 // Top-level `$exception_*` keys that describe where a crash happened, not what
 // the user was doing. They stay diagnostic once scrubText redacts any path or
@@ -34,79 +34,6 @@ let initialized = false;
 let desktopRuntime = false;
 const capturedErrors = new WeakSet();
 const recentErrorFingerprints = new Map();
-
-function scrubText(value) {
-  return String(value)
-    .replace(URL_TEXT, '[redacted-url]')
-    .replace(LOCAL_PATH, '[redacted-path]')
-    .replace(FILENAME_TEXT, '[redacted-filename]')
-    .replace(API_KEY_TEXT, '[redacted-secret]')
-    .slice(0, 500);
-}
-
-function safeContextValue(value, fallback = 'unknown') {
-  if (!['string', 'number', 'boolean'].includes(typeof value)) return fallback;
-  const safe = String(value).replace(SAFE_CONTEXT_VALUE, '').slice(0, 40);
-  return safe || fallback;
-}
-
-// Keep the frames posthog-js attaches — they carry the file, function, line and
-// column that make a crash debuggable. Redact only the path-bearing fields with
-// scrubText, so local paths and filenames still leave the machine masked.
-function sanitizeStackFrame(frame) {
-  if (!frame || typeof frame !== 'object') return undefined;
-  const sanitized = { ...frame };
-  for (const pathField of ['filename', 'abs_path', 'module']) {
-    if (typeof sanitized[pathField] === 'string') {
-      sanitized[pathField] = scrubText(sanitized[pathField]);
-    }
-  }
-  // Source context can hold arbitrary user code — drop it entirely.
-  delete sanitized.context_line;
-  delete sanitized.pre_context;
-  delete sanitized.post_context;
-  return sanitized;
-}
-
-function sanitizeStacktrace(stacktrace) {
-  if (!stacktrace || typeof stacktrace !== 'object') return undefined;
-  const frames = Array.isArray(stacktrace.frames)
-    ? stacktrace.frames.slice(0, 30).map(sanitizeStackFrame).filter(Boolean)
-    : [];
-  return { ...stacktrace, frames };
-}
-
-function sanitizeExceptionList(value) {
-  if (!Array.isArray(value)) return undefined;
-  return value.slice(0, 5).map((exception) => {
-    const sanitized = {
-      type: safeContextValue(exception?.type || exception?.name || 'Error'),
-      value: scrubText(exception?.value || exception?.message || 'An error occurred'),
-    };
-    const stacktrace = sanitizeStacktrace(exception?.stacktrace);
-    if (stacktrace) sanitized.stacktrace = stacktrace;
-    // `mechanism` only carries handled/type/synthetic flags — safe and useful.
-    if (exception?.mechanism && typeof exception.mechanism === 'object') {
-      sanitized.mechanism = exception.mechanism;
-    }
-    return sanitized;
-  });
-}
-
-function sanitizeNested(value, seen = new WeakSet()) {
-  if (typeof value === 'string') return scrubText(value);
-  if (!value || typeof value !== 'object') return value;
-  if (seen.has(value)) return undefined;
-  seen.add(value);
-  if (Array.isArray(value)) return value.map((item) => sanitizeNested(item, seen));
-
-  const sanitized = {};
-  for (const [key, nestedValue] of Object.entries(value)) {
-    if (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key)) continue;
-    sanitized[key] = sanitizeNested(nestedValue, seen);
-  }
-  return sanitized;
-}
 
 function beforeSend(event) {
   if (!event?.properties) return event;
