@@ -281,6 +281,21 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
 
     const lateSlots = slots.filter((s) => `${s.date}T${s.time}` > windowEnd);
 
+    // Two clips must not share a minute — the post service rejects a duplicate
+    // (account, minute) pair. Deduping the post-times list isn't enough: a
+    // per-clip override can land on top of another clip's slot, and that only
+    // shows up here, on the final dates.
+    const clashingSlots = useMemo(() => {
+        const byMoment = new Map();
+        slots.forEach((s) => {
+            const moment = `${s.date}T${s.time}`;
+            byMoment.set(moment, (byMoment.get(moment) || 0) + 1);
+        });
+        return new Set(
+            slots.filter((s) => byMoment.get(`${s.date}T${s.time}`) > 1).map((s) => s.index)
+        );
+    }, [slots]);
+
     // Reset state when modal reopens
     const prevOpen = React.useRef(false);
     React.useEffect(() => {
@@ -360,6 +375,11 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
 
         if (hasBadTimes) {
             setWarning('Fix the post times first — every time must be filled in and different from the others.');
+            return;
+        }
+
+        if (clashingSlots.size > 0) {
+            setWarning(`${clashingSlots.size} clips are set for the same moment as another clip. Give each one its own time before scheduling.`);
             return;
         }
 
@@ -661,6 +681,9 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                                     {!slot.isPast && isLate && (
                                                         <span className="text-[10px] text-amber-300 border border-amber-500/30 rounded px-1.5 py-0.5">Too far out</span>
                                                     )}
+                                                    {clashingSlots.has(slot.index) && (
+                                                        <span className="text-[10px] text-red-300 border border-red-500/30 rounded px-1.5 py-0.5">Same time as another clip</span>
+                                                    )}
                                                 </div>
                                                 <div className="text-[11px] text-muted truncate">
                                                     {clip?.video_title_for_youtube_short || 'Viral Short'}
@@ -845,7 +868,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                         <button
                             type="button"
                             onClick={handleScheduleAll}
-                            disabled={scheduling || !zernioKey || clipCount === 0 || selectedAccounts.length === 0 || pastSlots.length > 0 || lateSlots.length > 0 || hasBadTimes}
+                            disabled={scheduling || !zernioKey || clipCount === 0 || selectedAccounts.length === 0 || pastSlots.length > 0 || lateSlots.length > 0 || hasBadTimes || clashingSlots.size > 0}
                             className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-viral/15 border border-viral/40 text-sm text-viral hover:bg-viral/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                             {scheduling ? (

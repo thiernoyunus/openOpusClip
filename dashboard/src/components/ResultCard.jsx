@@ -191,6 +191,13 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
         ? outputDurationFrames(framingFull, 30) / 30
         : clipDuration;
 
+    // A cover frame is only meaningful when the file we preview is the file we
+    // post. An unexported edit is burned at post time, so trims and reorders
+    // would shift every timestamp — the frame picked here would not be the
+    // frame Instagram receives, and the offset could even land past the end.
+    const coverMatchesPost = !isEdited
+        || (localRenderedEditedAt ?? clip.rendered_edited_at) === framingFull?.editedAt;
+
     // Initialize/Reset form when modal opens
     useEffect(() => {
         if (showModal) {
@@ -591,7 +598,10 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     const target = { accountId: a.id, platform: a.platform };
                     if (a.platform === 'youtube') target.visibility = ytVisibility[a.id] || 'public';
                     // Only send a cover offset the user actually picked; 0 = first frame = today's behaviour.
-                    if (a.platform === 'instagram' && igCoverMs[a.id]) target.thumbOffset = Math.round(igCoverMs[a.id]);
+                    // Only send an offset we can stand behind — see coverMatchesPost.
+                    if (a.platform === 'instagram' && coverMatchesPost && igCoverMs[a.id]) {
+                        target.thumbOffset = Math.round(igCoverMs[a.id]);
+                    }
                     return target;
                 }),
                 title: postTitle,
@@ -948,7 +958,9 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                         {socialAccounts.map((acc) => {
                                             const isSelected = accountToggles[acc.id] ?? true;
                                             const coverMs = igCoverMs[acc.id] || 0;
-                                            const coverMaxMs = Math.max(1000, Math.round((clipDuration || 30) * 1000));
+                                            // Bound by the posted file's own length — a trimmed edit is
+                                            // shorter than the original, and an offset past its end is invalid.
+                                            const coverMaxMs = Math.max(1000, Math.round((effectiveDuration || clipDuration || 30) * 1000));
                                             return (
                                             <div key={acc.id} className="bg-white/5 rounded-lg border border-white/5 overflow-hidden">
                                                 <label className="flex items-center gap-3 p-3 cursor-pointer hover:bg-white/10 transition-colors">
@@ -995,8 +1007,20 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                                     </div>
                                                 )}
 
+                                                {/* Unexported edit: the preview below would lie, so don't offer it. */}
+                                                {isSelected && acc.platform === 'instagram' && !coverMatchesPost && (
+                                                    <div className="px-3 pb-3 pt-2.5 border-t border-edge">
+                                                        <div className="text-[11px] font-bold text-muted uppercase tracking-wide mb-1.5">Reel cover</div>
+                                                        <p className="text-[11px] text-muted leading-snug">
+                                                            Your edit hasn&rsquo;t been exported yet, so we can&rsquo;t show you which frame
+                                                            would land where. Instagram will use the first frame. Export the edit to pick
+                                                            a cover.
+                                                        </p>
+                                                    </div>
+                                                )}
+
                                                 {/* Instagram: which frame of the clip becomes the Reel cover */}
-                                                {isSelected && acc.platform === 'instagram' && (
+                                                {isSelected && acc.platform === 'instagram' && coverMatchesPost && (
                                                     <div className="px-3 pb-3 pt-2.5 border-t border-edge">
                                                         <div className="flex items-center justify-between mb-1.5">
                                                             <span className="text-[11px] font-bold text-muted uppercase tracking-wide">Reel cover</span>
