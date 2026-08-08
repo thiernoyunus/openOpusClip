@@ -198,6 +198,12 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     const coverMatchesPost = !isEdited
         || (localRenderedEditedAt ?? clip.rendered_edited_at) === framingFull?.editedAt;
 
+    // Furthest into the posted file a cover frame can sit. Derived from the
+    // effective duration so a trim shortens it — the picked offset is kept
+    // rather than reset (a re-trim shouldn't silently discard the choice), so
+    // every read of it clamps here instead.
+    const coverMaxMs = Math.max(1000, Math.round((effectiveDuration || clipDuration || 30) * 1000));
+
     // Initialize/Reset form when modal opens
     useEffect(() => {
         if (showModal) {
@@ -597,10 +603,11 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                 accounts: selectedAccounts.map((a) => {
                     const target = { accountId: a.id, platform: a.platform };
                     if (a.platform === 'youtube') target.visibility = ytVisibility[a.id] || 'public';
-                    // Only send a cover offset the user actually picked; 0 = first frame = today's behaviour.
-                    // Only send an offset we can stand behind — see coverMatchesPost.
+                    // Only send an offset we can stand behind (see coverMatchesPost), and
+                    // clamp it — a later trim can leave the stored pick past the end.
+                    // Omitted when 0, which is the first frame and the default anyway.
                     if (a.platform === 'instagram' && coverMatchesPost && igCoverMs[a.id]) {
-                        target.thumbOffset = Math.round(igCoverMs[a.id]);
+                        target.thumbOffset = Math.min(Math.round(igCoverMs[a.id]), coverMaxMs);
                     }
                     return target;
                 }),
@@ -957,10 +964,11 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                     <div className="grid grid-cols-1 gap-2">
                                         {socialAccounts.map((acc) => {
                                             const isSelected = accountToggles[acc.id] ?? true;
-                                            const coverMs = igCoverMs[acc.id] || 0;
+                                            // Clamped so the readout, the preview seek and the slider
+                                            // all agree after a trim shortens the clip.
+                                            const coverMs = Math.min(igCoverMs[acc.id] || 0, coverMaxMs);
                                             // Bound by the posted file's own length — a trimmed edit is
                                             // shorter than the original, and an offset past its end is invalid.
-                                            const coverMaxMs = Math.max(1000, Math.round((effectiveDuration || clipDuration || 30) * 1000));
                                             return (
                                             <div key={acc.id} className="bg-white/5 rounded-lg border border-white/5 overflow-hidden">
                                                 <label className="flex items-center gap-3 p-3 cursor-pointer hover:bg-white/10 transition-colors">
@@ -1044,7 +1052,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                                                     min={0}
                                                                     max={coverMaxMs}
                                                                     step={100}
-                                                                    value={Math.min(coverMs, coverMaxMs)}
+                                                                    value={coverMs}
                                                                     onChange={(e) => setCoverMs(acc.id, Number(e.target.value))}
                                                                     className="w-full accent-viral cursor-pointer"
                                                                 />
