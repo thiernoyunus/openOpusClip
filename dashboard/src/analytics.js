@@ -13,6 +13,23 @@ const API_KEY_TEXT = /\b(?:phc|sk|zern|soniox)[_-][A-Za-z0-9_-]{12,}\b|\bAIza[A-
 const FILENAME_TEXT = /\b[\w .-]+\.(?:mp4|mov|mkv|webm|avi|mp3|wav|m4a|png|jpe?g|gif|webp|srt|vtt|txt|log|json|jsx?|tsx?|py)\b/gi;
 const SAFE_CONTEXT_VALUE = /[^a-zA-Z0-9._-]/g;
 
+// Top-level `$exception_*` keys that describe where a crash happened, not what
+// the user was doing. They stay diagnostic once scrubText redacts any path or
+// filename, so let them through instead of dropping the whole prefix.
+const DIAGNOSTIC_EXCEPTION_KEYS = new Set([
+  '$exception_level',
+  '$exception_handled',
+  '$exception_type',
+  '$exception_types',
+  '$exception_message',
+  '$exception_values',
+  '$exception_source',
+  '$exception_sources',
+  '$exception_functions',
+  '$exception_line',
+  '$exception_colno',
+]);
+
 let initialized = false;
 let desktopRuntime = false;
 const capturedErrors = new WeakSet();
@@ -33,12 +50,47 @@ function safeContextValue(value, fallback = 'unknown') {
   return safe || fallback;
 }
 
+// Keep the frames posthog-js attaches — they carry the file, function, line and
+// column that make a crash debuggable. Redact only the path-bearing fields with
+// scrubText, so local paths and filenames still leave the machine masked.
+function sanitizeStackFrame(frame) {
+  if (!frame || typeof frame !== 'object') return undefined;
+  const sanitized = { ...frame };
+  for (const pathField of ['filename', 'abs_path', 'module']) {
+    if (typeof sanitized[pathField] === 'string') {
+      sanitized[pathField] = scrubText(sanitized[pathField]);
+    }
+  }
+  // Source context can hold arbitrary user code — drop it entirely.
+  delete sanitized.context_line;
+  delete sanitized.pre_context;
+  delete sanitized.post_context;
+  return sanitized;
+}
+
+function sanitizeStacktrace(stacktrace) {
+  if (!stacktrace || typeof stacktrace !== 'object') return undefined;
+  const frames = Array.isArray(stacktrace.frames)
+    ? stacktrace.frames.slice(0, 30).map(sanitizeStackFrame).filter(Boolean)
+    : [];
+  return { ...stacktrace, frames };
+}
+
 function sanitizeExceptionList(value) {
   if (!Array.isArray(value)) return undefined;
-  return value.slice(0, 5).map((exception) => ({
-    type: safeContextValue(exception?.type || exception?.name || 'Error'),
-    value: scrubText(exception?.value || exception?.message || 'An error occurred'),
-  }));
+  return value.slice(0, 5).map((exception) => {
+    const sanitized = {
+      type: safeContextValue(exception?.type || exception?.name || 'Error'),
+      value: scrubText(exception?.value || exception?.message || 'An error occurred'),
+    };
+    const stacktrace = sanitizeStacktrace(exception?.stacktrace);
+    if (stacktrace) sanitized.stacktrace = stacktrace;
+    // `mechanism` only carries handled/type/synthetic flags — safe and useful.
+    if (exception?.mechanism && typeof exception.mechanism === 'object') {
+      sanitized.mechanism = exception.mechanism;
+    }
+    return sanitized;
+  });
 }
 
 function sanitizeNested(value, seen = new WeakSet()) {
@@ -66,7 +118,15 @@ function beforeSend(event) {
       if (exceptionList?.length) properties[key] = exceptionList;
       continue;
     }
-    if (key.startsWith('$exception_')) continue;
+    if (key.startsWith('$exception_')) {
+      if (!DIAGNOSTIC_EXCEPTION_KEYS.has(key)) continue;
+      properties[key] = typeof value === 'string'
+        ? scrubText(value)
+        : value && typeof value === 'object'
+          ? sanitizeNested(value)
+          : value;
+      continue;
+    }
     if (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key)) continue;
     properties[key] = key === '$snapshot_data' ? sanitizeNested(value) : typeof value === 'string' ? scrubText(value) : value;
   }
