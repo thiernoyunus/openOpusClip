@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import {
     X, Loader2, Calendar, Clock, CheckCircle, AlertCircle, Video, Instagram, Youtube,
     ChevronLeft, ChevronRight, Globe, ExternalLink, Pencil, RotateCcw, Check, Plus
@@ -245,27 +245,26 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
     const [done, setDone] = useState(false);
     const [warning, setWarning] = useState(null);
 
+    // Everything below is derived fresh each render, on purpose. It is a couple
+    // of loops over a handful of clips and post times — cheaper than the memo
+    // bookkeeping around it, and it keeps every value on one consistent clock
+    // reading instead of a mix of cached and live ones.
     const clipCount = clips?.length || 0;
-    // Everything hangs off the SELECTED timezone's calendar day, not the
-    // browser's. Schedule for Los Angeles from a laptop in Tokyo near midnight
-    // and the two are different dates — mixing them shifts the whole run by a
-    // day and can block a date that is still valid where you're posting.
+
+    // Dates hang off the SELECTED timezone's calendar day, not the browser's.
+    // Schedule for Los Angeles from a laptop in Tokyo near midnight and the two
+    // are different dates — mixing them shifts the whole run by a day and can
+    // block a date that is still valid where you're posting.
     const todayInTz = todayInTimezone(timezone);
-    // Called again rather than reusing todayInTz on purpose: feeding a tracked
-    // local into startDate makes the React Compiler bail on the useMemo below
-    // ("existing memoization could not be preserved"). The call is cheap.
-    const startDate = addDays(todayInTimezone(timezone), startOffset);
+    const startDate = addDays(todayInTz, startOffset);
     const now = nowInTimezone(timezone);
 
-    const slots = useMemo(
-        () => computeScheduleSlots({ clipCount, startDate, times, overrides, now }),
-        [clipCount, startDate, times, overrides, now]
-    );
+    const slots = computeScheduleSlots({ clipCount, startDate, times, overrides, now });
 
     const pastSlots = slots.filter((s) => s.isPast);
 
     // Rows the user still has to fix before anything can be scheduled.
-    const badTimes = useMemo(() => {
+    const badTimes = (() => {
         const seen = new Set();
         const duplicate = new Set();
         const empty = new Set();
@@ -278,16 +277,16 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
             else seen.add(t);
         });
         return { duplicate, empty };
-    }, [times]);
+    })();
 
     const hasBadTimes = badTimes.duplicate.size > 0 || badTimes.empty.size > 0;
 
     // The last moment Zernio will still accept, in the same "YYYY-MM-DDTHH:mm"
     // shape as a slot, so the two compare as plain text.
-    const windowEnd = useMemo(() => {
+    const windowEnd = (() => {
         const [day, time] = now.split('T');
         return `${addDays(day, MEDIA_WINDOW_DAYS)}T${time}`;
-    }, [now]);
+    })();
 
     const lateSlots = slots.filter((s) => `${s.date}T${s.time}` > windowEnd);
 
@@ -295,7 +294,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
     // (account, minute) pair. Deduping the post-times list isn't enough: a
     // per-clip override can land on top of another clip's slot, and that only
     // shows up here, on the final dates.
-    const clashingSlots = useMemo(() => {
+    const clashingSlots = (() => {
         const byMoment = new Map();
         slots.forEach((s) => {
             const moment = `${s.date}T${s.time}`;
@@ -304,7 +303,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
         return new Set(
             slots.filter((s) => byMoment.get(`${s.date}T${s.time}`) > 1).map((s) => s.index)
         );
-    }, [slots]);
+    })();
 
     // Reset state when modal reopens
     const prevOpen = React.useRef(false);
