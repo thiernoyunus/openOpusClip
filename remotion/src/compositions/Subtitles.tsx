@@ -661,6 +661,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
       }}
     >
       <div
+        className="ph-mask"
         style={{
           position: "relative",
           display: "flex",
