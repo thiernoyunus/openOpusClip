@@ -30,6 +30,7 @@ export const TextOverlays: React.FC<{ framing: FramingConfig }> = ({
         return (
           <div
             key={o.id}
+            className="ph-mask"
             style={{
               position: "absolute",
               left: `${o.x * 100}%`,

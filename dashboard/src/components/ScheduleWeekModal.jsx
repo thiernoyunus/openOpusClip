@@ -695,7 +695,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                                     )}
                                                 </div>
                                                 <div className="text-[11px] text-muted truncate">
-                                                    {clip?.video_title_for_youtube_short || 'Viral Short'}
+                                                    <span className="ph-mask">{clip?.video_title_for_youtube_short || 'Viral Short'}</span>
                                                 </div>
                                                 <div className="text-[11px] text-muted mt-0.5 tabular-nums">
                                                     {formatDayKey(slot.date, todayInTz)} &middot; {slot.time}
@@ -791,7 +791,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                                     <Check size={10} />
                                                 </span>
                                                 <PlatformIcon platform={acc.platform} />
-                                                {acc.displayName || acc.username}
+                                                <span className="ph-mask">{acc.displayName || acc.username}</span>
                                             </button>
                                         );
                                     })}
@@ -808,7 +808,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                     <div key={acc.id} className="mt-3 p-3 bg-surface2 border border-edge rounded-lg">
                                         <div className={labelClass}>
                                             <span className="inline-flex items-center gap-1.5">
-                                                <Youtube size={12} /> Who can see it on {acc.displayName || acc.username}
+                                                <Youtube size={12} /> Who can see it on <span className="ph-mask">{acc.displayName || acc.username}</span>
                                             </span>
                                         </div>
                                         <div className="flex gap-1 p-0.5 bg-black/40 border border-edge rounded-lg">

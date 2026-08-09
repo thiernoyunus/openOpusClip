@@ -29,6 +29,8 @@ const DIAGNOSTIC_EXCEPTION_KEYS = new Set([
   '$exception_line',
   '$exception_colno',
 ]);
+const SENSITIVE_INPUT = /(?:api[\s_-]?(?:key|token)|password|secret|credential)/i;
+const API_KEY_VALUE = /\b(?:phc|sk|zern|soniox)[_-][A-Za-z0-9_-]{12,}\b|\bAIza[A-Za-z0-9_-]{30,}\b/i;
 
 let initialized = false;
 let desktopRuntime = false;
@@ -52,6 +54,13 @@ function beforeSend(event) {
         : value && typeof value === 'object'
           ? sanitizeNested(value)
           : value;
+      continue;
+    }
+    // PostHog adds its required `token` field before this hook. Preserve that
+    // exact value for authentication; user-provided token values are still
+    // removed by track() before this hook runs.
+    if (key === 'token') {
+      properties[key] = value;
       continue;
     }
     if (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key)) continue;
@@ -119,7 +128,7 @@ export async function initAnalytics() {
     capture_exceptions: {
       capture_unhandled_errors: true,
       capture_unhandled_rejections: true,
-      capture_console_errors: false,
+      capture_console_errors: true,
     },
     capture_heatmaps: false,
     capture_dead_clicks: false,
@@ -128,8 +137,31 @@ export async function initAnalytics() {
     get_current_url: () => SAFE_APP_URL,
     before_send: beforeSend,
     session_recording: {
-      maskAllInputs: true,
-        maskTextSelector: '*',
+      // Show form values so replay can reveal the exact bug report and state.
+      // Only password/API-key fields are masked; add `ph-mask` to private
+      // non-input text that should stay hidden.
+      maskAllInputs: false,
+      maskInputOptions: {
+        text: true,
+        textarea: true,
+        password: true,
+        url: true,
+      },
+      maskInputFn: (value, element) => {
+        const context = [
+          element?.type,
+          element?.name,
+          element?.id,
+          element?.placeholder,
+          element?.getAttribute?.('aria-label'),
+        ].filter(Boolean).join(' ');
+        const markedSensitive = element?.getAttribute?.('data-posthog-sensitive') === 'true';
+        return markedSensitive || element?.type === 'password' || SENSITIVE_INPUT.test(context) || API_KEY_VALUE.test(value)
+          ? '*'.repeat(value.length)
+          : value;
+      },
+      sampleRate: 1,
+      maskTextSelector: '.ph-mask',
       blockSelector: 'video, audio, canvas, img, [data-posthog-block]',
       recordHeaders: false,
       recordBody: false,
@@ -164,7 +196,7 @@ export function track(eventName, properties = {}) {
         : safeContextValue(value);
     }
   }
-  posthog.capture(eventName, safeProperties);
+  posthog.capture(eventName, safeProperties, { send_instantly: true });
 
 }
 

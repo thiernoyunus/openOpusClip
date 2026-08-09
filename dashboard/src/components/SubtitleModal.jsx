@@ -233,6 +233,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                                 </button>
                                 {showTextEditor && (
                                     <textarea
+                                        data-posthog-sensitive="true"
                                         value={editableText}
                                         onChange={(e) => handleTextEdit(e.target.value)}
                                         rows={5}

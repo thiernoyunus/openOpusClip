@@ -968,7 +968,7 @@ function App() {
           )}
         </div>
         <div className="mt-2">
-          <div className="text-xs text-fg truncate group-hover:text-white transition-colors">{p.title}</div>
+          <div className="ph-mask text-xs text-fg truncate group-hover:text-white transition-colors">{p.title}</div>
           <div className="flex items-center justify-between mt-1">
             <span className="text-[11px] text-muted">
               {proc ? 'Processing' : failed ? 'Failed' : expired ? 'Expired' : `${p.clipCount} clip${p.clipCount === 1 ? '' : 's'}`}
@@ -1139,7 +1139,7 @@ function App() {
                                acc.platform === 'instagram' ? <Instagram size={13} className="text-pink-400" /> :
                                acc.platform === 'youtube' ? <Youtube size={13} className="text-red-400" /> :
                                <Globe size={13} className="text-zinc-400" />}
-                              <span className="text-zinc-200 font-medium">{acc.displayName || acc.username}</span>
+                              <span className="ph-mask text-zinc-200 font-medium">{acc.displayName || acc.username}</span>
                               <span className="text-zinc-600 capitalize">{acc.platform}</span>
                               {acc.isActive && <Check size={12} className="text-green-400 ml-auto" />}
                             </div>

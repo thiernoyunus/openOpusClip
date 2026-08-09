@@ -773,7 +773,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     )}
                 </div>
 
-                <h3 className="mt-2.5 text-sm font-medium text-fg leading-snug line-clamp-2 cursor-pointer hover:text-white" onClick={() => setOpenIndex(index)} title={title}>
+                <h3 className="ph-mask mt-2.5 text-sm font-medium text-fg leading-snug line-clamp-2 cursor-pointer hover:text-white" onClick={() => setOpenIndex(index)} title="Open clip">
                     {title}
                 </h3>
                 <div className="flex flex-wrap items-center gap-1.5 mt-2">
@@ -826,7 +826,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
                         {/* Info */}
                         <div className="flex-1 min-w-0 p-5 overflow-y-auto custom-scrollbar">
-                            <h2 className="text-base font-medium text-fg leading-snug">{title}</h2>
+                            <h2 className="ph-mask text-base font-medium text-fg leading-snug">{title}</h2>
                             <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
                                 {hasScore && <ScoreBadge score={viralityScore} />}
                                 {clip.viral_hook_text && <span className="inline-flex items-center gap-1 text-[11px] text-muted bg-surface2 border border-edge px-2 py-0.5 rounded"><Wand2 size={11} /> Hook</span>}
@@ -853,14 +853,14 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                             );
                                         })}
                                     </div>
-                                    {clip.virality_reason && <p className="text-[11px] text-muted leading-relaxed mt-2.5">{clip.virality_reason}</p>}
+                                    {clip.virality_reason && <p className="ph-mask text-[11px] text-muted leading-relaxed mt-2.5">{clip.virality_reason}</p>}
                                 </div>
                             )}
-                            {description && <p className="text-sm text-muted leading-relaxed mt-4">{description}</p>}
+                            {description && <p className="ph-mask text-sm text-muted leading-relaxed mt-4">{description}</p>}
                             {transcriptText && (
                                 <div className="mt-5">
                                     <div className="flex items-center gap-1.5 text-xs text-muted mb-2"><FileText size={13} /> Transcript</div>
-                                    <p className="text-sm text-zinc-300 leading-relaxed">{transcriptText}</p>
+                                    <p className="ph-mask text-sm text-zinc-300 leading-relaxed">{transcriptText}</p>
                                 </div>
                             )}
                             {editError && (
@@ -918,6 +918,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                 <label className="block text-xs font-bold text-zinc-400 mb-1">Video Title</label>
                                 <input
                                     type="text"
+                                    data-posthog-sensitive="true"
                                     value={postTitle}
                                     onChange={(e) => setPostTitle(e.target.value)}
                                     className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-primary/50 placeholder-zinc-600"
@@ -928,6 +929,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                             <div>
                                 <label className="block text-xs font-bold text-zinc-400 mb-1">Caption / Description</label>
                                 <textarea
+                                    data-posthog-sensitive="true"
                                     value={postDescription}
                                     onChange={(e) => setPostDescription(e.target.value)}
                                     rows={4}
@@ -994,7 +996,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                                          acc.platform === 'instagram' ? <Instagram size={16} className="text-pink-400" /> :
                                                          acc.platform === 'youtube' ? <Youtube size={16} className="text-red-400" /> :
                                                          <Share2 size={16} className="text-zinc-400" />}
-                                                        {acc.displayName || acc.username}
+                                                        <span className="ph-mask">{acc.displayName || acc.username}</span>
                                                         <span className="text-xs text-zinc-500 capitalize">{acc.platform}</span>
                                                     </div>
                                                 </label>
