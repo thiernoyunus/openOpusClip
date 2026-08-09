@@ -27,6 +27,10 @@ on:
 
 jobs:
   build:
+    # Tag builds publish the installer, blockmap, and updater metadata to the
+    # GitHub release. The default token is read-only without this permission.
+    permissions:
+      contents: write
     runs-on: windows-latest
     # The Python dependency install alone (torch, mediapipe) runs long, and the
     # ~2 GB stage is slow to compress into an installer. The default 360-minute
