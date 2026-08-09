@@ -7,12 +7,14 @@ const [exception] = sanitizeExceptionList([{
   stacktrace: {
     type: 'raw',
     frames: [{
+      platform: 'web:javascript',
       filename: '/Users/alice/src/app.js',
       abs_path: 'C:\\Users\\alice\\video.mp4',
       function: 'handleUpload',
       lineno: 42,
       colno: 7,
       in_app: true,
+      chunk_id: 'main-chunk-42',
       context_line: 'private user text',
       vars: { apiKey: 'secret' },
     }],
@@ -31,10 +33,12 @@ assert.equal(exception.stacktrace.type, 'raw');
 assert.deepEqual(exception.stacktrace.frames[0], {
   filename: '[redacted-path]',
   abs_path: '[redacted-path]',
+  platform: 'web:javascript',
   function: 'handleUpload',
   lineno: 42,
   colno: 7,
   in_app: true,
+  chunk_id: 'main-chunk-42',
 });
 assert.deepEqual(exception.mechanism, {
   handled: false,

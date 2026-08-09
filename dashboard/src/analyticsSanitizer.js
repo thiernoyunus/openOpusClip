@@ -5,6 +5,7 @@ const LOCAL_PATH = /(?:\/[A-Za-z0-9._ -]+){2,}|[A-Za-z]:\\(?:[^\\\s]+\\)+[^\\\s]
 const API_KEY_TEXT = /\b(?:phc|sk|zern|soniox)[_-][A-Za-z0-9_-]{12,}\b|\bAIza[A-Za-z0-9_-]{30,}\b|\b(?:api[_ -]?key|token|secret|bearer)\s*[:= ]\s*[A-Za-z0-9_-]{12,}\b/gi;
 const FILENAME_TEXT = /\b[\w .-]+\.(?:mp4|mov|mkv|webm|avi|mp3|wav|m4a|png|jpe?g|gif|webp|srt|vtt|txt|log|json|jsx?|tsx?|py)\b/gi;
 const SAFE_CONTEXT_VALUE = /[^a-zA-Z0-9._-]/g;
+const SAFE_STACK_FRAME_PLATFORMS = new Set(['node:javascript', 'web:javascript', 'hermes']);
 
 export function scrubText(value) {
   return String(value)
@@ -25,6 +26,7 @@ function sanitizeStackFrame(frame) {
   if (!frame || typeof frame !== 'object') return undefined;
 
   const sanitized = {};
+  if (SAFE_STACK_FRAME_PLATFORMS.has(frame.platform)) sanitized.platform = frame.platform;
   for (const key of ['filename', 'abs_path', 'module', 'function']) {
     if (typeof frame[key] === 'string') sanitized[key] = scrubText(frame[key]).slice(0, 200);
   }
@@ -32,6 +34,7 @@ function sanitizeStackFrame(frame) {
     if (typeof frame[key] === 'number' && Number.isFinite(frame[key])) sanitized[key] = frame[key];
   }
   if (typeof frame.in_app === 'boolean') sanitized.in_app = frame.in_app;
+  if (typeof frame.chunk_id === 'string') sanitized.chunk_id = scrubText(frame.chunk_id).slice(0, 200);
   return sanitized;
 }
 
