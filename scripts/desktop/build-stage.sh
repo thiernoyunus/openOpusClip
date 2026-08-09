@@ -53,10 +53,15 @@ done
   || { echo "ERROR: --arch must be arm64 or x64 (got: ${TARGET_ARCH})" >&2; exit 1; }
 
 # Per-arch naming used by the pinned downloads below.
-# NOTE: when a Windows target is added, these three lookups (plus the stage
-# suffix) are the seam to extend — add a --platform flag defaulting to the host
-# OS and key these tables on "${PLATFORM}-${TARGET_ARCH}". The rest of the
-# pipeline is already arch-parameterized and should not need to change.
+#
+# Windows is NOT built here. It lives in scripts/desktop/build-stage.ps1 as a
+# separate script rather than a --platform flag on this one, because almost
+# nothing about the pipeline survived the crossing: different Python layout
+# (python\python.exe, no bin/), different ffmpeg source, no otool/file/Rosetta,
+# no codesigning, and a bundled node.exe that macOS does not need. Sharing one
+# script would have meant an `if` around nearly every line. The two are kept in
+# step by hand — if you change what gets staged here (a new backend module, a
+# new font folder, a different prune list), make the same change there.
 if [[ "${TARGET_ARCH}" == "arm64" ]]; then
   PY_ARCH="aarch64"        # python-build-standalone triple
   FF_ARCH="arm64"          # ffmpeg.martin-riedl.de path segment
