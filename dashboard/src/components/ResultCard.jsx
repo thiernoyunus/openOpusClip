@@ -918,6 +918,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                 <label className="block text-xs font-bold text-zinc-400 mb-1">Video Title</label>
                                 <input
                                     type="text"
+                                    data-posthog-sensitive="true"
                                     value={postTitle}
                                     onChange={(e) => setPostTitle(e.target.value)}
                                     className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-primary/50 placeholder-zinc-600"
@@ -928,6 +929,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                             <div>
                                 <label className="block text-xs font-bold text-zinc-400 mb-1">Caption / Description</label>
                                 <textarea
+                                    data-posthog-sensitive="true"
                                     value={postDescription}
                                     onChange={(e) => setPostDescription(e.target.value)}
                                     rows={4}

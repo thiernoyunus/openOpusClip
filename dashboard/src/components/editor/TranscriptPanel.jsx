@@ -643,6 +643,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                             <React.Fragment key={`w-${row.index}`}>
                                 <input
                                     data-transcript-editor=""
+                                    data-posthog-sensitive="true"
                                     dir="auto"
                                     autoFocus
                                     value={draft}

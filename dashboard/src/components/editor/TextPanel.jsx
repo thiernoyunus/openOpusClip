@@ -58,6 +58,7 @@ function TextPanel({ framing, dispatch, getCurrentSourceFrame }) {
                         <div key={o.id} className="rounded-lg border border-edge bg-surface2/40 p-2.5 space-y-2">
                             <div className="flex items-center gap-1.5">
                                 <input
+                                    data-posthog-sensitive="true"
                                     value={o.text}
                                     onChange={(e) => update(o.id, { text: e.target.value })}
                                     className="flex-1 min-w-0 bg-surface2 border border-edge rounded px-2 py-1 text-xs text-fg focus:outline-none focus:border-white/30"
