@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { Loader2, AlertCircle, Captions, Crosshair, Sparkles, Type, Clapperboard, ChevronRight, ChevronDown, Check } from 'lucide-react';
+import { Loader2, AlertCircle, Captions, Crosshair, Sparkles, Type, Clapperboard, ChevronRight, ChevronDown, Check, Smartphones, Eye } from 'lucide-react';
 import { getApiUrl } from '../../config';
 import useEditorState, { defaultSubtitleConfig, loadDefaultCaptionStyle, tracksInClip, LAYOUT_PANELS } from './useEditorState';
 import { outputDurationFrames, outputToSource, placedClips } from '@remotion-src/lib/edl';
@@ -83,10 +83,11 @@ function AspectIcon({ width, height }) {
     );
 }
 
-function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker, dispatch, playerRef }) {
+function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker, dispatch, playerRef, platform = null, onPlatformChange = () => {} }) {
     const [aspectOpen, setAspectOpen] = useState(false);
     const [layoutOpen, setLayoutOpen] = useState(false);
     const [globalOpen, setGlobalOpen] = useState(false);
+    const [platformOpen, setPlatformOpen] = useState(false);
     const controlsRef = useRef(null);
     const selected = framing.clips.filter((c) => selectedIds.includes(c.id));
     const primary = selected[0] || framing.clips[0];
@@ -120,17 +121,18 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
     };
 
     useEffect(() => {
-        if (!aspectOpen && !layoutOpen) return;
+        if (!aspectOpen && !layoutOpen && !platformOpen) return;
         const onPointerDown = (e) => {
             if (!controlsRef.current?.contains(e.target)) {
                 setAspectOpen(false);
                 setLayoutOpen(false);
                 setGlobalOpen(false);
+                setPlatformOpen(false);
             }
         };
         window.addEventListener('pointerdown', onPointerDown);
         return () => window.removeEventListener('pointerdown', onPointerDown);
-    }, [aspectOpen, layoutOpen]);
+    }, [aspectOpen, layoutOpen, platformOpen]);
 
     const layoutRows = (global = false) => (
         <div className="py-1">
@@ -268,6 +270,50 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
                 <Crosshair size={13} />
                 Tracker: {trackerOn ? 'ON' : 'OFF'}
             </button>
+
+            <div className="relative">
+                <button
+                    type="button"
+                    onClick={() => { setPlatformOpen((v) => !v); setAspectOpen(false); setLayoutOpen(false); setGlobalOpen(false); }}
+                    className={`h-7 px-2 rounded-md flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-viral/50 ${
+                        platform ? 'bg-viral/15 text-viral' : 'hover:bg-white/5'
+                    }`}
+                    aria-haspopup="menu"
+                    aria-expanded={platformOpen}
+                    title="Preview how your clip will look on each social platform"
+                >
+                    <Smartphones size={13} />
+                    Preview: {platform ? SOCIAL_PLATFORMS.find((p) => p.id === platform)?.label : 'Off'}
+                </button>
+                {platformOpen && (
+                    <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 w-52 rounded-lg border border-white/[0.08] bg-[#1a1a1d] shadow-xl py-1 z-50">
+                        <button
+                            type="button"
+                            onClick={() => { onPlatformChange(null); setPlatformOpen(false); }}
+                            className={`w-full h-9 px-3 flex items-center gap-2 text-xs text-left transition-colors ${
+                                !platform ? 'text-white bg-white/[0.06]' : 'text-zinc-300 hover:bg-white/[0.05] hover:text-white'
+                            }`}
+                        >
+                            <Eye size={13} className="opacity-70" />
+                            <span className="flex-1">Off (editor only)</span>
+                            {!platform && <Check size={13} className="text-zinc-200" />}
+                        </button>
+                        {SOCIAL_PLATFORMS.map((p) => (
+                            <button
+                                type="button"
+                                key={p.id}
+                                onClick={() => { onPlatformChange(p.id); setPlatformOpen(false); }}
+                                className={`w-full h-9 px-3 flex items-center gap-2 text-xs text-left transition-colors ${
+                                    platform === p.id ? 'text-white bg-white/[0.06]' : 'text-zinc-300 hover:bg-white/[0.05] hover:text-white'
+                                }`}
+                            >
+                                <span className="flex-1">{p.label}</span>
+                                {platform === p.id && <Check size={13} className="text-zinc-200" />}
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
         </div>
     );
 }
@@ -306,6 +352,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     // opens it, clicking the active tool (or the header chevron) collapses it.
     const [panelOpen, setPanelOpen] = useState(false);
     const [trackerOn, setTrackerOn] = useState(false);
+    const [platform, setPlatform] = useState(null);
     // "Extend a clip": modal open + a background flag while the appended section
     // is being cut/concatenated on the server (editing stays usable meanwhile).
     const [showExtendModal, setShowExtendModal] = useState(false);
@@ -748,6 +795,8 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                         onToggleTracker={() => setTrackerOn((v) => !v)}
                                         dispatch={dispatch}
                                         playerRef={playerRef}
+                                        platform={platform}
+                                        onPlatformChange={setPlatform}
                                     />
                                 </div>
                                 <div className="relative flex-1 min-h-0 w-full px-6 pb-3 pt-1">
@@ -761,6 +810,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                             trackerOn={trackerOn}
                                             captionScope={captionScope}
                                             dispatch={dispatch}
+                                            platform={platform}
                                         />
                                     </div>
                                 </div>
@@ -847,3 +897,4 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         </div>
     );
 }
+import { PLATFORMS as SOCIAL_PLATFORMS } from './SocialMediaPreview';

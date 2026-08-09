@@ -4,6 +4,7 @@ import { ShortVideo } from '@remotion-src/compositions/ShortVideo';
 import TrackerOverlay from './TrackerOverlay';
 import PanelCropOverlay from './PanelCropOverlay';
 import CaptionDragOverlay from './CaptionDragOverlay';
+import SocialMediaPreview from './SocialMediaPreview';
 import { getApiUrl } from '../../config';
 
 export const EDITOR_FPS = 30;
@@ -37,7 +38,7 @@ const withPlayableUrls = (framing) => {
  * is capped.
  */
 const EditorCanvas = forwardRef(function EditorCanvas(
-    { sourceUrl, framing, subtitles = null, durationInFrames, trackerOn = false, captionScope = 'all', dispatch },
+    { sourceUrl, framing, subtitles = null, durationInFrames, trackerOn = false, captionScope = 'all', dispatch, platform = null },
     playerRef
 ) {
     // Output canvas = the clip's aspect ratio (defaults to 9:16 for older clips).
@@ -120,46 +121,48 @@ const EditorCanvas = forwardRef(function EditorCanvas(
 
     return (
         <div ref={wrapRef} className="w-full h-full flex items-center justify-center">
-            <div
-                className="relative max-w-full max-h-full rounded-xl overflow-hidden border border-edge bg-black shadow-2xl"
-                style={{ ...boxStyle, transform: shownZoom !== 1 ? `scale(${shownZoom})` : undefined }}
-            >
-                <Player
-                    // Remount when the canvas size changes so the composition
-                    // doesn't keep the previous aspect's frame buffer.
-                    key={`${outW}x${outH}`}
-                    ref={playerRef}
-                    component={ShortVideo}
-                    inputProps={inputProps}
-                    durationInFrames={durationInFrames}
-                    fps={EDITOR_FPS}
-                    compositionWidth={outW}
-                    compositionHeight={outH}
-                    style={{ width: '100%', height: '100%' }}
-                    clickToPlay={false}
-                    spaceKeyToPlayOrPause={false}
-                />
-                {trackerOn ? (
-                    <TrackerOverlay playerRef={playerRef} framing={framing} dispatch={dispatch} />
-                ) : (
-                    // Per-tile crop selection — mutually exclusive with the Tracker
-                    // (only one full-canvas click layer at a time). No-op unless the
-                    // active clip is a multi-panel 9:16 layout.
-                    <PanelCropOverlay playerRef={playerRef} framing={framing} dispatch={dispatch} sourceUrl={sourceUrl} />
-                )}
-                {/* Drag-to-reposition handle for captions. Only the handle itself
-                    captures pointer events, so it coexists with the tracker layer. */}
-                {subtitles && (
-                    <CaptionDragOverlay
-                        subtitles={subtitles}
-                        dispatch={dispatch}
-                        framing={framing}
-                        playerRef={playerRef}
-                        scope={captionScope}
+            <SocialMediaPreview platform={platform}>
+                <div
+                    className="relative max-w-full max-h-full rounded-xl overflow-hidden border border-edge bg-black shadow-2xl"
+                    style={{ ...boxStyle, transform: shownZoom !== 1 ? `scale(${shownZoom})` : undefined }}
+                >
+                    <Player
+                        // Remount when the canvas size changes so the composition
+                        // doesn't keep the previous aspect's frame buffer.
+                        key={`${outW}x${outH}`}
+                        ref={playerRef}
+                        component={ShortVideo}
+                        inputProps={inputProps}
+                        durationInFrames={durationInFrames}
                         fps={EDITOR_FPS}
+                        compositionWidth={outW}
+                        compositionHeight={outH}
+                        style={{ width: '100%', height: '100%' }}
+                        clickToPlay={false}
+                        spaceKeyToPlayOrPause={false}
                     />
-                )}
-            </div>
+                    {trackerOn ? (
+                        <TrackerOverlay playerRef={playerRef} framing={framing} dispatch={dispatch} />
+                    ) : (
+                        // Per-tile crop selection — mutually exclusive with the Tracker
+                        // (only one full-canvas click layer at a time). No-op unless the
+                        // active clip is a multi-panel 9:16 layout.
+                        <PanelCropOverlay playerRef={playerRef} framing={framing} dispatch={dispatch} sourceUrl={sourceUrl} />
+                    )}
+                    {/* Drag-to-reposition handle for captions. Only the handle itself
+                        captures pointer events, so it coexists with the tracker layer. */}
+                    {subtitles && (
+                        <CaptionDragOverlay
+                            subtitles={subtitles}
+                            dispatch={dispatch}
+                            framing={framing}
+                            playerRef={playerRef}
+                            scope={captionScope}
+                            fps={EDITOR_FPS}
+                        />
+                    )}
+                </div>
+            </SocialMediaPreview>
         </div>
     );
 });
