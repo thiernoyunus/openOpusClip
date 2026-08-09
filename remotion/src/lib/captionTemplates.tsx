@@ -837,7 +837,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     font: "Montserrat",
     uppercase: true,
     grouping: { maxWords: 4, maxChars: 22 },
-    defaultStyle: { template: "hormozi", animation: "none", captionAnimation: "pop-in", wordAnimation: "none", emojiAnimation: "bounce-in", fontFamily: "Montserrat", fontSize: 74, fontColor: "#FFFFFF", highlightColor: "#FFE000", borderColor: "#000000", borderWidth: 7, bgColor: "#000000", bgOpacity: 0 },
+    defaultStyle: { template: "hormozi", animation: "none", captionAnimation: "pop-in", wordAnimation: "none", emojiAnimation: "bounce-in", fontFamily: "Montserrat", fontSize: 74, fontColor: "#FFFFFF", highlightColor: "#FFE000", borderColor: "#000000", borderWidth: 7, bgColor: "#000000", bgOpacity: 0, letterSpacing: 0.05 },
     renderWord: (args) => <HormoziWord {...args} />,
   },
   {

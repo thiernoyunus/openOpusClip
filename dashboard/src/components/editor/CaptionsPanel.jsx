@@ -593,7 +593,7 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
                             label="Letter spacing"
                             value={st.letterSpacing ?? 0}
                             min={-0.05}
-                            max={0.3}
+                            max={0.6}
                             step={0.01}
                             fmt={(v) => `${Number(v).toFixed(2)}em`}
                             onChange={(v) => setStyle({ letterSpacing: v })}
@@ -602,7 +602,7 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
                             label="Word spacing"
                             value={st.wordSpacing ?? 1}
                             min={0.5}
-                            max={2.5}
+                            max={5}
                             step={0.1}
                             fmt={(v) => `${Number(v).toFixed(1)}×`}
                             onChange={(v) => setStyle({ wordSpacing: v })}
