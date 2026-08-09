@@ -145,6 +145,7 @@ export async function initAnalytics() {
         text: true,
         textarea: true,
         password: true,
+        url: true,
       },
       maskInputFn: (value, element) => {
         const context = [
