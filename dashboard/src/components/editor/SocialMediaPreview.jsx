@@ -22,20 +22,29 @@ import {
 } from 'lucide-react';
 
 /**
- * SocialMediaPreview wraps the exported video inside the real platform chrome
- * (TikTok, YouTube Shorts, Instagram Reels) so the editor can see exactly
- * where the platform's UI will overlay on top of their content and position
- * captions / titles inside the safe area.
+ * SocialMediaPreview renders the real platform chrome (TikTok, YouTube Shorts,
+ * Instagram Reels) so the editor can see exactly where the platform's UI will
+ * overlay on top of their content and position captions / titles inside the
+ * safe area.
  *
- * Each overlay is a "ghost" — pure CSS, no assets — so it scales with the
- * preview and never touches the export. The exported video is the same
- * 9:16 the user already composed; the chrome here is preview-only.
+ * Renders as a sibling of the Remotion Player inside the boxStyle-constrained
+ * container in EditorCanvas, so the chrome tracks the same frame as the video
+ * — never resizes it, never resizes the editor.
+ *
+ * All chrome layers carry pointer-events-none so the editor's click overlays
+ * (TrackerOverlay, PanelCropOverlay, CaptionDragOverlay) still receive input
+ * through the covered regions. The two non-decorative buttons (the TikTok
+ * follow + button and the YouTube Subscribe pill) opt back in to pointer
+ * events locally.
  *
  * The platform prop is one of: 'tiktok' | 'youtube-shorts' | 'instagram-reels' | null.
- * `null` === no overlay (editor preview, identical to before this feature).
+ * `null` returns null — the editor preview is identical to before this feature.
  */
 
-const SAFE_PADDING = 'max(env(safe-area-inset-top), 12px)';
+// Every chrome layer carries pointer-events-none. Local buttons re-enable it
+// with pointer-events-auto so they remain clickable for visual fidelity, but
+// the rails, captions, status bars, and bottom navs never intercept input.
+const CHROME = 'pointer-events-none';
 
 // Tiny reusable icon button matching the side action rails on TikTok / Reels / Shorts.
 const RailButton = ({ children, label, count, size = 28 }) => (
@@ -51,14 +60,11 @@ const RailButton = ({ children, label, count, size = 28 }) => (
 // ----------------------------------------------------------------------------
 // TikTok overlay
 // ----------------------------------------------------------------------------
-function TikTokOverlay({ children }) {
+function TikTokOverlay() {
     return (
-        <div className="relative w-full h-full bg-black overflow-hidden rounded-xl">
-            {/* The video fills the frame — TikTok is full-bleed 9:16 */}
-            <div className="absolute inset-0">{children}</div>
-
+        <>
             {/* Right side action rail */}
-            <div className="absolute right-2 bottom-24 flex flex-col items-center gap-4 z-10">
+            <div className={`absolute right-2 bottom-24 flex flex-col items-center gap-4 z-10 ${CHROME}`}>
                 <div className="relative">
                     <div className="w-11 h-11 rounded-full bg-gradient-to-tr from-pink-500 via-red-500 to-yellow-400 p-[2px]">
                         <div className="w-full h-full rounded-full bg-zinc-800 border-2 border-black flex items-center justify-center overflow-hidden">
@@ -68,7 +74,7 @@ function TikTokOverlay({ children }) {
                     <button
                         type="button"
                         tabIndex={-1}
-                        className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-rose-500 text-white flex items-center justify-center text-[14px] font-bold leading-none"
+                        className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-rose-500 text-white flex items-center justify-center text-[14px] font-bold leading-none pointer-events-auto"
                     >
                         +
                     </button>
@@ -94,7 +100,7 @@ function TikTokOverlay({ children }) {
             </div>
 
             {/* Bottom info area — username, caption, music */}
-            <div className="absolute left-3 right-16 bottom-16 z-10 text-white drop-shadow-md">
+            <div className={`absolute left-3 right-16 bottom-16 z-10 text-white drop-shadow-md ${CHROME}`}>
                 <div className="text-[13px] font-bold mb-1">@opusshorts</div>
                 <div className="text-[12px] leading-snug mb-2">
                     Make your short look exactly like it will on TikTok 👇
@@ -108,14 +114,14 @@ function TikTokOverlay({ children }) {
             </div>
 
             {/* Top status bar */}
-            <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-center pt-2 pb-1 text-[11px] font-semibold text-white">
+            <div className={`absolute top-0 left-0 right-0 z-10 flex items-center justify-center pt-2 pb-1 text-[11px] font-semibold text-white ${CHROME}`}>
                 <span className="opacity-70">Following</span>
                 <span className="mx-3 h-3 w-px bg-white/40" />
                 <span className="border-b-2 border-white pb-0.5">For You</span>
             </div>
 
             {/* Bottom nav bar */}
-            <div className="absolute left-0 right-0 bottom-0 z-10 bg-black/70 backdrop-blur-sm border-t border-white/10 flex items-center justify-around pt-2 pb-3 text-white">
+            <div className={`absolute left-0 right-0 bottom-0 z-10 bg-black/70 backdrop-blur-sm border-t border-white/10 flex items-center justify-around pt-2 pb-3 text-white ${CHROME}`}>
                 <div className="flex flex-col items-center gap-0.5">
                     <Home size={20} fill="white" />
                     <span className="text-[10px]">Home</span>
@@ -138,21 +144,18 @@ function TikTokOverlay({ children }) {
                     <span className="text-[10px]">Profile</span>
                 </div>
             </div>
-        </div>
+        </>
     );
 }
 
 // ----------------------------------------------------------------------------
 // YouTube Shorts overlay
 // ----------------------------------------------------------------------------
-function YouTubeShortsOverlay({ children }) {
+function YouTubeShortsOverlay() {
     return (
-        <div className="relative w-full h-full bg-black overflow-hidden rounded-xl">
-            {/* The video is offset to leave room for the right-rail action bar (real Shorts) */}
-            <div className="absolute inset-y-0 left-0 right-[68px]">{children}</div>
-
+        <>
             {/* Top bar — Shorts title + close */}
-            <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-3 pt-2 pb-1 text-white">
+            <div className={`absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-3 pt-2 pb-1 text-white ${CHROME}`}>
                 <div className="flex items-center gap-1.5">
                     <Play size={16} fill="white" className="text-white" />
                     <span className="text-[13px] font-semibold tracking-tight">Shorts</span>
@@ -164,8 +167,8 @@ function YouTubeShortsOverlay({ children }) {
                 </div>
             </div>
 
-            {/* Right side action rail */}
-            <div className="absolute right-2 top-1/2 -translate-y-1/2 z-10 flex flex-col items-center gap-4 text-white">
+            {/* Right side action rail — overlays the full video (no inset) */}
+            <div className={`absolute right-2 top-1/2 -translate-y-1/2 z-10 flex flex-col items-center gap-4 text-white ${CHROME}`}>
                 <RailButton count="48K">
                     <Heart size={26} fill="white" className="text-white" />
                 </RailButton>
@@ -184,7 +187,7 @@ function YouTubeShortsOverlay({ children }) {
             </div>
 
             {/* Bottom channel info + description */}
-            <div className="absolute left-3 right-16 bottom-3 z-10 text-white">
+            <div className={`absolute left-3 right-16 bottom-3 z-10 text-white ${CHROME}`}>
                 <div className="flex items-center gap-2 mb-2">
                     <div className="w-8 h-8 rounded-full bg-zinc-700 border border-white/30 flex items-center justify-center overflow-hidden">
                         <User size={16} className="text-zinc-300" />
@@ -193,7 +196,7 @@ function YouTubeShortsOverlay({ children }) {
                     <button
                         type="button"
                         tabIndex={-1}
-                        className="ml-1 h-7 px-3 rounded-full bg-white text-black text-[11px] font-semibold"
+                        className="ml-1 h-7 px-3 rounded-full bg-white text-black text-[11px] font-semibold pointer-events-auto"
                     >
                         Subscribe
                     </button>
@@ -206,28 +209,25 @@ function YouTubeShortsOverlay({ children }) {
                     <span className="truncate">original sound — opusshorts</span>
                 </div>
             </div>
-        </div>
+        </>
     );
 }
 
 // ----------------------------------------------------------------------------
 // Instagram Reels overlay
 // ----------------------------------------------------------------------------
-function InstagramReelsOverlay({ children }) {
+function InstagramReelsOverlay() {
     return (
-        <div className="relative w-full h-full bg-black overflow-hidden rounded-xl">
-            {/* The video is offset to leave room for the right-rail action bar (real Reels) */}
-            <div className="absolute inset-y-0 left-0 right-[64px]">{children}</div>
-
+        <>
             {/* Top bar — Reels title + camera */}
-            <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-3 pt-2 pb-1 text-white">
+            <div className={`absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-3 pt-2 pb-1 text-white ${CHROME}`}>
                 <ChevronDown size={22} />
                 <span className="text-[15px] font-semibold tracking-tight">Reels</span>
                 <Camera size={20} />
             </div>
 
-            {/* Right side action rail */}
-            <div className="absolute right-2 top-1/2 -translate-y-1/2 z-10 flex flex-col items-center gap-4 text-white">
+            {/* Right side action rail — overlays the full video (no inset) */}
+            <div className={`absolute right-2 top-1/2 -translate-y-1/2 z-10 flex flex-col items-center gap-4 text-white ${CHROME}`}>
                 <RailButton count="12.4K">
                     <Heart size={26} fill="white" className="text-white" />
                 </RailButton>
@@ -254,7 +254,7 @@ function InstagramReelsOverlay({ children }) {
             </div>
 
             {/* Bottom info — username, caption, music */}
-            <div className="absolute left-3 right-16 bottom-12 z-10 text-white">
+            <div className={`absolute left-3 right-16 bottom-12 z-10 text-white ${CHROME}`}>
                 <div className="text-[12px] font-bold mb-1">opusshorts</div>
                 <div className="text-[11px] leading-snug mb-1.5 line-clamp-2">
                     See exactly how your Reel will look on Instagram Reposition captions 👇
@@ -266,7 +266,7 @@ function InstagramReelsOverlay({ children }) {
             </div>
 
             {/* Bottom nav bar */}
-            <div className="absolute left-0 right-0 bottom-0 z-10 bg-black/70 backdrop-blur-sm border-t border-white/10 flex items-center justify-around pt-2 pb-3 text-white">
+            <div className={`absolute left-0 right-0 bottom-0 z-10 bg-black/70 backdrop-blur-sm border-t border-white/10 flex items-center justify-around pt-2 pb-3 text-white ${CHROME}`}>
                 <div className="flex flex-col items-center gap-0.5">
                     <Home size={20} />
                     <span className="text-[10px]">Home</span>
@@ -298,27 +298,21 @@ function InstagramReelsOverlay({ children }) {
                     <span className="text-[10px]">Profile</span>
                 </div>
             </div>
-        </div>
+        </>
     );
 }
 
 // ----------------------------------------------------------------------------
-// Public component
+// Public component — chrome-only, no children. Renders as a sibling of the
+// Player inside the boxStyle-constrained container in EditorCanvas, so the
+// chrome tracks the video frame exactly and the chrome's z-10 layers can
+// never escape it.
 // ----------------------------------------------------------------------------
-const SocialMediaPreview = forwardRef(function SocialMediaPreview(
-    { platform, children },
-    _ref
-) {
-    if (!platform) {
-        // No overlay — just render the video canvas as before
-        return children;
-    }
-
-    if (platform === 'tiktok') return <TikTokOverlay>{children}</TikTokOverlay>;
-    if (platform === 'youtube-shorts') return <YouTubeShortsOverlay>{children}</YouTubeShortsOverlay>;
-    if (platform === 'instagram-reels') return <InstagramReelsOverlay>{children}</InstagramReelsOverlay>;
-
-    return children;
+const SocialMediaPreview = forwardRef(function SocialMediaPreview({ platform }) {
+    if (platform === 'tiktok') return <TikTokOverlay />;
+    if (platform === 'youtube-shorts') return <YouTubeShortsOverlay />;
+    if (platform === 'instagram-reels') return <InstagramReelsOverlay />;
+    return null;
 });
 
 export const PLATFORMS = [
