@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { Loader2, AlertCircle, Captions, Crosshair, Sparkles, Type, Clapperboard, ChevronRight, ChevronDown, Check, Smartphones, Eye } from 'lucide-react';
+import { Loader2, AlertCircle, Captions, Crosshair, Sparkles, Type, Clapperboard, ChevronRight, ChevronDown, Check, MonitorSmartphone, Eye } from 'lucide-react';
 import { getApiUrl } from '../../config';
 import useEditorState, { defaultSubtitleConfig, loadDefaultCaptionStyle, tracksInClip, LAYOUT_PANELS } from './useEditorState';
 import { outputDurationFrames, outputToSource, placedClips } from '@remotion-src/lib/edl';
@@ -282,7 +282,7 @@ function EditorCanvasControls({ framing, selectedIds, trackerOn, onToggleTracker
                     aria-expanded={platformOpen}
                     title="Preview how your clip will look on each social platform"
                 >
-                    <Smartphones size={13} />
+                    <MonitorSmartphone size={13} />
                     Preview: {platform ? SOCIAL_PLATFORMS.find((p) => p.id === platform)?.label : 'Off'}
                 </button>
                 {platformOpen && (
