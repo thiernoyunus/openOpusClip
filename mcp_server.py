@@ -56,23 +56,31 @@ def _json(r):
 
 def process_video(
     url: str,
+    acknowledged: bool,
     num_clips: int = 5,
     api_key: str = "",
     language: str = "",
-    aspect: str = "9:16",
+    aspect_ratio: str = "9:16",
     caption_style: str = "",
     framing: str = "auto",
 ) -> str:
-    """Submit a YouTube URL for processing into short clips."""
+    """Submit a YouTube URL for processing into short clips.
+
+    You MUST set acknowledged=True to confirm you own or have rights to the content.
+    """
+    if not api_key:
+        return "Error: api_key (Gemini API key) is required"
+    if not acknowledged:
+        return "Error: You must set acknowledged=True to confirm you own the content or have rights to process it."
+
     data = {
-        "videoUrl": url,
+        "url": url,
+        "acknowledged": True,
         "numClips": num_clips,
-        "aspectRatio": aspect,
+        "aspect_ratio": aspect_ratio,
         "framingMode": framing,
     }
-    headers = {}
-    if api_key:
-        headers["X-Gemini-Key"] = api_key
+    headers = {"X-Gemini-Key": api_key}
     if language:
         data["language"] = language
     if caption_style:
@@ -85,20 +93,30 @@ def process_video(
 
 def upload_and_process(
     file_path: str,
+    acknowledged: bool,
     num_clips: int = 5,
     api_key: str = "",
     language: str = "",
 ) -> str:
-    """Upload a local video file and process it into short clips."""
+    """Upload a local video file and process it into short clips.
+
+    You MUST set acknowledged=True to confirm you own or have rights to the content.
+    """
+    if not api_key:
+        return "Error: api_key (Gemini API key) is required"
+    if not acknowledged:
+        return "Error: You must set acknowledged=True to confirm you own the content or have rights to process it."
+    if not os.path.isfile(file_path):
+        return f"Error: file not found: {file_path}"
+
     data = {
         "numClips": num_clips,
+        "acknowledged": "true",
     }
-    headers = {}
-    if api_key:
-        headers["X-Gemini-Key"] = api_key
     if language:
         data["language"] = language
 
+    headers = {"X-Gemini-Key": api_key}
     with _client(headers=headers) as c:
         with open(file_path, "rb") as f:
             r = c.post(
