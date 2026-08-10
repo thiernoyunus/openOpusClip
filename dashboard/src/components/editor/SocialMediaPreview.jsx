@@ -1,8 +1,5 @@
 import React, { forwardRef } from 'react';
 import {
-    Home,
-    Search,
-    Compass,
     MessageCircle,
     Heart,
     Share2,
@@ -11,9 +8,7 @@ import {
     User,
     Music2,
     Play,
-    Bell,
     Send,
-    Settings,
     Disc3,
     Edit2,
     Camera,
@@ -26,94 +21,116 @@ import {
  * will overlay on top of their content and position captions / titles inside
  * the safe area.
  *
- * Sizes are calibrated against the actual platforms — not exaggerated.
- * Only the overlays that sit on top of the video are rendered. App-level
- * chrome that lives BELOW or AROUND the player in the host app
- * (TikTok / Instagram bottom navs) is intentionally omitted — the
- * preview is the video player surface, not the full app shell.
+ * Sizes / positions are calibrated against the actual 1080 × 1920 short-form
+ * video canvas using the platforms' published safe-zone specs:
  *
- * Renders as a sibling of the Remotion Player inside the boxStyle-constrained
- * container in EditorCanvas, so the chrome tracks the same frame as the video
- * — never resizes it, never resizes the editor.
+ *   TikTok          right rail at x ≈ 940 (~13%)  | icons 48-56px | avatar 64-72px
+ *   YouTube Shorts  right action column in rightmost 120-200px | top safe y < 240, bottom y > 1540
+ *   Instagram Reels right edge of icons at x ≈ 1010 (~6.5%) | icons 42-52px | music disc y ~1480-1580
  *
- * All chrome layers carry pointer-events-none so the editor's click overlays
+ * All chrome uses percentage units so it scales with the preview frame
+ * (which is a scaled box around the same 9:16 content). Only overlays that
+ * sit ON TOP of the video are rendered — app-level chrome BELOW the video
+ * (TikTok / Instagram bottom navs) is intentionally omitted, because those
+ * live in the host app below the player, not on top of the video.
+ *
+ * Every chrome layer is pointer-events-none so the editor's click overlays
  * (TrackerOverlay, PanelCropOverlay, CaptionDragOverlay) still receive input
  * through the covered regions.
  */
 
 const CHROME = 'pointer-events-none';
 
-// Rail button matching the side action rails on TikTok / Reels / Shorts.
-// `size` controls the icon box; the wrapper reserves a fixed slot so the
-// counts / labels line up across rows.
-const RailButton = ({ children, label, count, size = 22 }) => (
-    <div className="flex flex-col items-center gap-0.5">
-        <div className="text-white drop-shadow-md" style={{ width: size + 2, height: size + 2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{children}</div>
-        {count != null && <span className="text-[10px] font-semibold text-white drop-shadow-md tabular-nums leading-tight">{count}</span>}
-        {label && <span className="text-[10px] font-semibold text-white drop-shadow-md leading-tight">{label}</span>}
+// Side rail button. Icon is sized by the caller via inline width/height
+// styles. Counts / labels below match the platform's own typography (~10-11px).
+const RailButton = ({ children, label, count }) => (
+    <div className="flex flex-col items-center gap-[2px]">
+        <div className="drop-shadow-md text-white">{children}</div>
+        {count != null && (
+            <span className="text-[10px] font-semibold text-white drop-shadow-md tabular-nums leading-none">
+                {count}
+            </span>
+        )}
+        {label && (
+            <span className="text-[10px] font-semibold text-white drop-shadow-md leading-none">
+                {label}
+            </span>
+        )}
     </div>
 );
 
 // ----------------------------------------------------------------------------
-// TikTok overlay
+// TikTok overlay — reference canvas 1080 × 1920
+// Right rail at x ≈ 940 (~13% from right edge), icons ~48-56px (~4.8%),
+// profile circle ~68px (~6.3%), music disc ~64px.
 // ----------------------------------------------------------------------------
 function TikTokOverlay() {
     return (
         <>
-            {/* Right side action rail — bottom-anchored. Real-platform icon size (~22px). */}
-            <div className={`absolute right-1.5 bottom-[88px] flex flex-col items-center gap-3 z-10 ${CHROME}`}>
-                <div className="relative">
-                    <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-pink-500 via-red-500 to-yellow-400 p-[2px]">
-                        <div className="w-full h-full rounded-full bg-zinc-800 border-2 border-black flex items-center justify-center overflow-hidden">
-                            <User size={18} className="text-zinc-400" />
+            {/* Right side action rail — bottom-anchored. */}
+            <div
+                className={`absolute right-[3%] bottom-[18%] flex flex-col items-center gap-[3.5%] z-10 ${CHROME}`}
+                style={{ width: '14%' }}
+            >
+                {/* Profile circle + follow + */}
+                <div className="relative" style={{ width: '6.5%', aspectRatio: '1 / 1' }}>
+                    <div className="w-full h-full rounded-full bg-gradient-to-tr from-pink-500 via-red-500 to-yellow-400 p-[6%]">
+                        <div className="w-full h-full rounded-full bg-zinc-800 border-[6%] border-black flex items-center justify-center overflow-hidden">
+                            <User style={{ width: '55%', height: '55%' }} className="text-zinc-400" />
                         </div>
                     </div>
                     <button
                         type="button"
                         tabIndex={-1}
-                        className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-rose-500 text-white flex items-center justify-center text-[11px] font-bold leading-none pointer-events-auto"
+                        className="absolute -bottom-[15%] left-1/2 -translate-x-1/2 rounded-full bg-rose-500 text-white flex items-center justify-center font-bold leading-none pointer-events-auto"
+                        style={{ width: '60%', aspectRatio: '1 / 1', fontSize: '10px' }}
                     >
                         +
                     </button>
                 </div>
 
                 <RailButton count="124.5K">
-                    <Heart size={22} fill="white" className="text-white" />
+                    <Heart style={{ width: '4.8%', height: '4.8%', minWidth: '34px', minHeight: '34px' }} fill="white" className="text-white" />
                 </RailButton>
                 <RailButton count="2,431">
-                    <MessageCircle size={22} fill="white" className="text-white" />
+                    <MessageCircle style={{ width: '4.8%', height: '4.8%', minWidth: '34px', minHeight: '34px' }} fill="white" className="text-white" />
                 </RailButton>
                 <RailButton count="1,807">
-                    <Bookmark size={22} fill="white" className="text-white" />
+                    <Bookmark style={{ width: '4.8%', height: '4.8%', minWidth: '34px', minHeight: '34px' }} fill="white" className="text-white" />
                 </RailButton>
                 <RailButton>
-                    <Share2 size={22} />
+                    <Share2 style={{ width: '4.8%', height: '4.8%', minWidth: '34px', minHeight: '34px' }} className="text-white" />
                 </RailButton>
 
                 {/* Spinning music disc */}
-                <div className="mt-1 w-8 h-8 rounded-full bg-zinc-900 border border-white/20 flex items-center justify-center animate-[spin_6s_linear_infinite]">
-                    <Disc3 size={18} className="text-zinc-300" />
+                <div
+                    className="rounded-full bg-zinc-900 border border-white/20 flex items-center justify-center animate-[spin_6s_linear_infinite] mt-[6%]"
+                    style={{ width: '5.5%', height: '5.5%', minWidth: '40px', minHeight: '40px' }}
+                >
+                    <Disc3 style={{ width: '70%', height: '70%' }} className="text-zinc-300" />
                 </div>
             </div>
 
-            {/* Bottom info — username, caption, music. Sized like real TikTok. */}
-            <div className={`absolute left-3 right-14 bottom-3 z-10 text-white drop-shadow-md ${CHROME}`}>
-                <div className="text-[11px] font-bold mb-0.5">@opusshorts</div>
-                <div className="text-[10px] leading-snug mb-1.5">
+            {/* Bottom info — username, caption, music. */}
+            <div
+                className={`absolute left-[3%] right-[18%] bottom-[3%] z-10 text-white drop-shadow-md ${CHROME}`}
+            >
+                <div className="font-bold mb-[0.4%] text-[12px] leading-tight">@opusshorts</div>
+                <div className="leading-snug mb-[1%] text-[11px]">
                     Make your short look exactly like it will on TikTok 👇
                     <span className="text-cyan-300 ml-1">#viral</span>
                     <span className="text-cyan-300 ml-1">#openshorts</span>
                 </div>
-                <div className="flex items-center gap-1.5 text-[10px]">
-                    <Music2 size={11} />
+                <div className="flex items-center gap-[1.5%] text-[11px] leading-tight">
+                    <Music2 style={{ width: '11px', height: '11px', minWidth: '11px', minHeight: '11px' }} />
                     <span className="truncate">original sound — opusshorts</span>
                 </div>
             </div>
 
-            {/* Top "Following / For You" tab — slim, no app nav bar above. */}
-            <div className={`absolute top-0 left-0 right-0 z-10 flex items-center justify-center pt-1.5 pb-1 text-[10px] font-semibold text-white ${CHROME}`}>
+            {/* Top "Following / For You" tab — slim header. */}
+            <div className={`absolute top-0 left-0 right-0 z-10 flex items-center justify-center pt-[1%] pb-[0.5%] text-[11px] font-semibold text-white ${CHROME}`}>
                 <span className="opacity-70">Following</span>
-                <span className="mx-3 h-3 w-px bg-white/40" />
+                <span className="mx-[3%] h-3 w-px bg-white/40" />
                 <span className="border-b-2 border-white pb-0.5">For You</span>
             </div>
         </>
@@ -121,63 +138,68 @@ function TikTokOverlay() {
 }
 
 // ----------------------------------------------------------------------------
-// YouTube Shorts overlay
+// YouTube Shorts overlay — reference canvas 1080 × 1920
+// Right action button column in rightmost 120-200px. Top safe area y < 240,
+// bottom safe area y > 1540.
 // ----------------------------------------------------------------------------
 function YouTubeShortsOverlay() {
     return (
         <>
             {/* Top bar — Shorts title + close */}
-            <div className={`absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-3 pt-1.5 pb-1 text-white ${CHROME}`}>
-                <div className="flex items-center gap-1.5">
-                    <Play size={14} fill="white" className="text-white" />
-                    <span className="text-[12px] font-semibold tracking-tight">Shorts</span>
+            <div
+                className={`absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-[3%] pt-[1.5%] pb-[0.5%] text-white ${CHROME}`}
+            >
+                <div className="flex items-center gap-[1.5%]">
+                    <Play style={{ width: '16px', height: '16px', minWidth: '16px', minHeight: '16px' }} fill="white" className="text-white" />
+                    <span className="text-[13px] font-semibold tracking-tight">Shorts</span>
                 </div>
-                <div className="flex items-center gap-3">
-                    <Search size={16} />
-                    <Bell size={16} />
-                    <Settings size={16} />
+                <div className="flex items-center gap-[3%]">
+                    <SearchGlyph />
+                    <BellGlyph />
+                    <SettingsGlyph />
                 </div>
             </div>
 
-            {/* Right side action rail — bottom-anchored, real Shorts size (~20-22px). */}
-            <div className={`absolute right-1.5 bottom-12 flex flex-col items-center gap-3 text-white ${CHROME}`}>
+            {/* Right side action rail — bottom-anchored. Real Shorts ~56-64px icons. */}
+            <div className={`absolute right-[2.5%] bottom-[8%] flex flex-col items-center gap-[3.5%] text-white ${CHROME}`}>
                 <RailButton count="48K">
-                    <Heart size={20} fill="white" className="text-white" />
+                    <Heart style={{ width: '5.5%', height: '5.5%', minWidth: '40px', minHeight: '40px' }} fill="white" className="text-white" />
                 </RailButton>
                 <RailButton label="Dislike">
-                    <div className="text-white text-[18px] leading-none -scale-100">👎</div>
+                    <div className="text-white text-[22px] leading-none -scale-100 drop-shadow-md">👎</div>
                 </RailButton>
                 <RailButton count="1,204">
-                    <MessageCircle size={20} fill="white" className="text-white" />
+                    <MessageCircle style={{ width: '5.5%', height: '5.5%', minWidth: '40px', minHeight: '40px' }} fill="white" className="text-white" />
                 </RailButton>
                 <RailButton>
-                    <Share2 size={20} />
+                    <Share2 style={{ width: '5.5%', height: '5.5%', minWidth: '40px', minHeight: '40px' }} className="text-white" />
                 </RailButton>
                 <RailButton>
-                    <Edit2 size={20} />
+                    <Edit2 style={{ width: '5.5%', height: '5.5%', minWidth: '40px', minHeight: '40px' }} className="text-white" />
                 </RailButton>
             </div>
 
             {/* Bottom channel info + description */}
-            <div className={`absolute left-3 right-14 bottom-3 z-10 text-white ${CHROME}`}>
-                <div className="flex items-center gap-2 mb-1.5">
-                    <div className="w-7 h-7 rounded-full bg-zinc-700 border border-white/30 flex items-center justify-center overflow-hidden">
-                        <User size={14} className="text-zinc-300" />
+            <div className={`absolute left-[3%] right-[18%] bottom-[2.5%] z-10 text-white ${CHROME}`}>
+                <div className="flex items-center gap-[2%] mb-[1.5%]">
+                    <div className="rounded-full bg-zinc-700 border border-white/30 flex items-center justify-center overflow-hidden" style={{ width: '36px', height: '36px' }}>
+                        <User style={{ width: '18px', height: '18px' }} className="text-zinc-300" />
                     </div>
-                    <div className="text-[11px] font-semibold">@opusshorts</div>
+                    <div className="text-[12px] font-semibold">@opusshorts</div>
                     <button
                         type="button"
                         tabIndex={-1}
-                        className="ml-1 h-6 px-3 rounded-full bg-white text-black text-[10px] font-semibold pointer-events-auto"
+                        className="ml-[1.5%] rounded-full bg-white text-black text-[10px] font-semibold pointer-events-auto"
+                        style={{ height: '24px', padding: '0 12px' }}
                     >
                         Subscribe
                     </button>
                 </div>
-                <div className="text-[10px] leading-snug mb-1 line-clamp-2">
+                <div className="text-[11px] leading-snug mb-[0.6%] line-clamp-2">
                     See exactly how your Short will look on YouTube. Position captions inside the safe zone 👇
                 </div>
-                <div className="flex items-center gap-1.5 text-[10px] opacity-90">
-                    <Music2 size={10} />
+                <div className="flex items-center gap-[1.5%] text-[10px] opacity-90 leading-tight">
+                    <Music2 style={{ width: '11px', height: '11px', minWidth: '11px', minHeight: '11px' }} />
                     <span className="truncate">original sound — opusshorts</span>
                 </div>
             </div>
@@ -185,56 +207,77 @@ function YouTubeShortsOverlay() {
     );
 }
 
+// Tiny inline SVG glyphs for the YouTube top bar — fixed ~17px to match
+// the top bar's other icons.
+const SearchGlyph = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white" style={{ width: '17px', height: '17px' }}>
+        <circle cx="11" cy="11" r="8" />
+        <line x1="21" x2="16.65" y1="21" y2="16.65" />
+    </svg>
+);
+const BellGlyph = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white" style={{ width: '17px', height: '17px' }}>
+        <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+        <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+    </svg>
+);
+const SettingsGlyph = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white" style={{ width: '17px', height: '17px' }}>
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+);
+
 // ----------------------------------------------------------------------------
-// Instagram Reels overlay
+// Instagram Reels overlay — reference canvas 1080 × 1920
+// Right edge of icon artwork at x ≈ 1010 (~6.5%). Icons ~42-52px (~4.5%).
+// Music disc at y ~1480-1580. Bottom safe area y > 1540.
 // ----------------------------------------------------------------------------
 function InstagramReelsOverlay() {
     return (
         <>
-            {/* Top bar — Reels title + camera */}
-            <div className={`absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-3 pt-1.5 pb-1 text-white ${CHROME}`}>
-                <ChevronDown size={18} />
-                <span className="text-[13px] font-semibold tracking-tight">Reels</span>
-                <Camera size={18} />
+            {/* Top bar — Reels title + camera. */}
+            <div className={`absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-[3%] pt-[1.5%] pb-[0.5%] text-white ${CHROME}`}>
+                <ChevronDown style={{ width: '20px', height: '20px', minWidth: '20px', minHeight: '20px' }} />
+                <span className="text-[14px] font-semibold tracking-tight">Reels</span>
+                <Camera style={{ width: '18px', height: '18px', minWidth: '18px', minHeight: '18px' }} />
             </div>
 
-            {/* Right side action rail — bottom-anchored, real Reels size (~22-24px). */}
-            <div className={`absolute right-1.5 bottom-12 flex flex-col items-center gap-3 text-white ${CHROME}`}>
+            {/* Right side action rail — real Reels icons ~48px (~4.5%). */}
+            <div className={`absolute right-[2.5%] bottom-[8%] flex flex-col items-center gap-[3.5%] text-white ${CHROME}`}>
                 <RailButton count="12.4K">
-                    <Heart size={22} fill="white" className="text-white" />
+                    <Heart style={{ width: '4.5%', height: '4.5%', minWidth: '32px', minHeight: '32px' }} fill="white" className="text-white" />
                 </RailButton>
                 <RailButton count="892">
-                    <MessageCircle size={22} fill="white" className="text-white" />
+                    <MessageCircle style={{ width: '4.5%', height: '4.5%', minWidth: '32px', minHeight: '32px' }} fill="white" className="text-white" />
                 </RailButton>
                 <RailButton>
-                    <Send size={22} className="-rotate-12" />
+                    <Send style={{ width: '4.5%', height: '4.5%', minWidth: '32px', minHeight: '32px', transform: 'rotate(-12deg)' }} className="text-white" />
                 </RailButton>
                 <RailButton>
-                    <div className="w-6 h-6 rounded-full bg-white/10 border border-white flex items-center justify-center text-[11px] font-bold">
-                        ♪
-                    </div>
+                    <div className="rounded-full bg-white/10 border border-white flex items-center justify-center font-bold" style={{ width: '28px', height: '28px', fontSize: '11px' }}>♪</div>
                 </RailButton>
                 <RailButton>
-                    <Bookmark size={22} fill="white" className="text-white" />
+                    <Bookmark style={{ width: '4.5%', height: '4.5%', minWidth: '32px', minHeight: '32px' }} fill="white" className="text-white" />
                 </RailButton>
                 <RailButton>
-                    <MoreHorizontal size={22} />
+                    <MoreHorizontal style={{ width: '4.5%', height: '4.5%', minWidth: '32px', minHeight: '32px' }} className="text-white" />
                 </RailButton>
-                <div className="mt-1 w-6 h-6 rounded-full bg-zinc-900 border border-white/40 flex items-center justify-center overflow-hidden">
-                    <User size={12} className="text-zinc-300" />
+                {/* Profile disc at very bottom of rail. */}
+                <div className="mt-[6%] rounded-full bg-zinc-900 border border-white/40 flex items-center justify-center overflow-hidden" style={{ width: '28px', height: '28px' }}>
+                    <User style={{ width: '14px', height: '14px' }} className="text-zinc-300" />
                 </div>
             </div>
 
-            {/* Bottom info — username, caption, music. Sits just above where
-                the app's bottom nav lives in the real app, but we omit that
-                nav because it's app chrome, not video chrome. */}
-            <div className={`absolute left-3 right-14 bottom-3 z-10 text-white ${CHROME}`}>
-                <div className="text-[11px] font-bold mb-0.5">opusshorts</div>
-                <div className="text-[10px] leading-snug mb-1 line-clamp-2">
+            {/* Bottom info — username, caption, music. Above the app's bottom
+                nav; we don't render that nav (app shell, not video chrome). */}
+            <div className={`absolute left-[3%] right-[16%] bottom-[2.5%] z-10 text-white ${CHROME}`}>
+                <div className="font-bold mb-[0.4%] text-[12px] leading-tight">opusshorts</div>
+                <div className="text-[11px] leading-snug mb-[0.6%] line-clamp-2">
                     See exactly how your Reel will look on Instagram. Reposition captions 👇
                 </div>
-                <div className="flex items-center gap-1.5 text-[10px] opacity-90">
-                    <Music2 size={10} />
+                <div className="flex items-center gap-[1.5%] text-[10px] opacity-90 leading-tight">
+                    <Music2 style={{ width: '11px', height: '11px', minWidth: '11px', minHeight: '11px' }} />
                     <span className="truncate">original sound — opusshorts</span>
                 </div>
             </div>
@@ -244,9 +287,7 @@ function InstagramReelsOverlay() {
 
 // ----------------------------------------------------------------------------
 // Public component — chrome-only, no children. Renders as a sibling of the
-// Player inside the boxStyle-constrained container in EditorCanvas, so the
-// chrome tracks the video frame exactly and the chrome's z-10 layers can
-// never escape it.
+// Player inside the boxStyle-constrained container in EditorCanvas.
 // ----------------------------------------------------------------------------
 const SocialMediaPreview = forwardRef(function SocialMediaPreview({ platform }) {
     if (platform === 'tiktok') return <TikTokOverlay />;
