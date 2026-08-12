@@ -187,9 +187,17 @@ def extend_clip(
 def generate_effects(
     job_id: str,
     clip_index: int,
-    prompt: str,
+    prompt: str = "",
+    api_key: str = "",
 ) -> str:
-    """Generate AI visual effects for a clip (e.g. 'add a zoom-in with glitch transition')."""
+    """Generate AI visual effects for a clip.
+
+    prompt is passed for future backend use but currently ignored by the backend.
+    api_key: Gemini API key (required if backend has no GEMINI_API_KEY env var).
+    """
+    headers = {}
+    if api_key:
+        headers["X-Gemini-Key"] = api_key
     with _client(timeout=120) as c:
         r = c.post(
             _url("/api/effects/generate"),
@@ -198,6 +206,7 @@ def generate_effects(
                 "clipIndex": clip_index,
                 "prompt": prompt,
             },
+            headers=headers,
         )
         return _json(r)
 
@@ -206,8 +215,12 @@ def generate_captions(
     job_id: str,
     clip_index: int,
     style: str = "default",
+    api_key: str = "",
 ) -> str:
     """Generate styled captions. style: default, karaoke, bold, minimal, neon, glow."""
+    headers = {}
+    if api_key:
+        headers["X-Gemini-Key"] = api_key
     with _client(timeout=120) as c:
         r = c.post(
             _url("/api/captions/enhance"),
@@ -216,6 +229,7 @@ def generate_captions(
                 "clipIndex": clip_index,
                 "style": style,
             },
+            headers=headers,
         )
         return _json(r)
 
