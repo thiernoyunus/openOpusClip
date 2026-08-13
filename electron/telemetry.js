@@ -13,6 +13,8 @@ const POSTHOG_TOKEN = 'phc_kUQRck5LKwiSJJC2Zv8H8xxFbGksCtmuxdV5Uw7pTpne';
 const POSTHOG_HOST = 'https://us.i.posthog.com';
 const INSTALLATION_ID_FILE = 'anonymous-installation-id';
 const DEV_OPT_IN_ENV = 'OPENSHORTS_TELEMETRY_OPT_IN';
+const FEEDBACK_CATEGORIES = new Set(['bug', 'confusing', 'feature', 'other']);
+const API_KEY_TEXT = /\b(?:phc|sk|zern|soniox)[_-][A-Za-z0-9_-]{12,}\b|\bAIza[A-Za-z0-9_-]{30,}\b|\b(?:api[_ -]?key|token|secret|bearer)\s*[:= ]\s*[A-Za-z0-9_.-]{12,}\b/gi;
 
 function telemetryDisabled(packaged) {
   // Packaged builds always opt in. Development builds (npm start from a source
@@ -33,6 +35,7 @@ const ALLOWED_EVENTS = new Set([
   'desktop_main_unhandled_rejection',
   'desktop_main_uncaught_exception',
   'desktop_updater_failed',
+  'feedback_submitted',
 ]);
 
 const ALLOWED_STAGES = new Set([
@@ -117,6 +120,12 @@ function safeExitCode(value) {
   return Number.isInteger(value) ? value : undefined;
 }
 
+function safeFeedbackDetail(value) {
+  if (typeof value !== 'string') return undefined;
+  const safe = value.trim().replace(API_KEY_TEXT, '[redacted-secret]').slice(0, 2000);
+  return safe || undefined;
+}
+
 function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
   const distinctId = loadOrCreateDistinctId(userData);
   const context = Object.freeze({ distinctId, appVersion, platform, arch, packaged });
@@ -150,7 +159,7 @@ function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
   // fatal() helper in main.js) can await this before exiting so a synchronous
   // process.exit() doesn't drop the last telemetry event.
   async function capture(event, details = {}) {
-    if (!client || !ALLOWED_EVENTS.has(event)) return;
+    if (!client || !ALLOWED_EVENTS.has(event)) return false;
     const properties = { ...baseProperties };
     if (ALLOWED_STAGES.has(details.stage)) properties.stage = details.stage;
     if (ALLOWED_ERROR_CATEGORIES.has(details.errorCategory)) {
@@ -159,9 +168,16 @@ function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
     const exitCode = safeExitCode(details.exitCode);
     if (exitCode !== undefined) properties.exit_code = exitCode;
     if (ALLOWED_SIGNALS.has(details.signal)) properties.signal = details.signal;
+    if (event === 'feedback_submitted') {
+      if (!FEEDBACK_CATEGORIES.has(details.category)) return false;
+      properties.category = details.category;
+      const detail = safeFeedbackDetail(details.detail);
+      if (detail) properties.detail = detail;
+      properties.runtime = 'desktop';
+    }
 
     try {
-      await client.capture({
+      client.capture({
         distinctId,
         event,
         properties,
@@ -174,14 +190,21 @@ function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
         // Bound best-effort telemetry so a dead PostHog endpoint cannot hold
         // a fatal startup exit for the SDK's full retry window.
         try {
-          await Promise.race([
-            client.flush(),
-            new Promise((resolve) => setTimeout(resolve, 750)),
+          return await Promise.race([
+            client.flush().then(() => true, () => false),
+            new Promise((resolve) => setTimeout(
+              () => resolve(false),
+              event === 'feedback_submitted' ? 5000 : 750
+            )),
           ]);
-        } catch (_) { /* best-effort */ }
+        } catch (_) {
+          return false;
+        }
       }
+      return true;
     } catch (_) {
       // Sending telemetry is always best-effort.
+      return false;
     }
   }
 
