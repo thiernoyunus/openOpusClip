@@ -71,7 +71,13 @@ async function run() {
     const send = [...document.querySelectorAll('button')]
       .find((button) => button.textContent.includes('Send feedback'));
     send.click();
-    await delay(2500);
+    const feedbackDeadline = Date.now() + 5500;
+    while (
+      !document.body.innerText.includes('Your feedback was sent anonymously')
+      && Date.now() < feedbackDeadline
+    ) {
+      await delay(100);
+    }
     const feedbackConfirmed = document.body.innerText.includes('Your feedback was sent anonymously');
 
     const settings = [...document.querySelectorAll('button')]

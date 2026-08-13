@@ -933,11 +933,22 @@ function App() {
       e.stopPropagation();
       if (!window.confirm(`Delete "${p.title}"? This permanently deletes the project and its files.`)) return;
       let res;
-      try { res = await fetch(getApiUrl(`/api/jobs/${p.id}`), { method: 'DELETE' }); }
-      catch { /* offline / already gone — drop the local card below */ }
-      if (res && res.status === 409) {
+      try {
+        res = await fetch(getApiUrl(`/api/jobs/${p.id}`), { method: 'DELETE' });
+      } catch (error) {
+        captureError(error, { area: 'project_delete' });
+        window.alert('Could not delete this project. Check your connection and try again.');
+        return;
+      }
+      if (res.status === 409) {
         window.alert("This project is still processing — you can delete it once it finishes.");
         return; // keep the card; server refused to delete a running job
+      }
+      if (!res.ok && res.status !== 404) {
+        const error = new Error(`Project deletion failed with status ${res.status}`);
+        captureError(error, { area: 'project_delete' });
+        window.alert('Could not delete this project. Try again.');
+        return;
       }
       setProjects(removeProject(p.id));
       track('project_deleted', { result_category: 'deleted' });
