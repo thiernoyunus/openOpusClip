@@ -3,8 +3,6 @@ import {
     MessageCircle,
     Heart,
     Share2,
-    Bookmark,
-    MoreHorizontal,
     User,
     Music2,
     Play,
@@ -231,16 +229,10 @@ function InstagramReelsOverlay() {
                     <MessageCircle style={{ width: '20px', height: '20px' }} fill="white" className="text-white" />
                 </RailButton>
                 <RailButton>
-                    <Send style={{ width: '20px', height: '20px', transform: 'rotate(-12deg)' }} className="text-white" />
+                    <Send style={{ width: '20px', height: '20px' }} className="text-white" />
                 </RailButton>
                 <RailButton>
-                    <div className="rounded-full bg-white/10 border border-white flex items-center justify-center font-bold" style={{ width: '20px', height: '20px', fontSize: '10px' }}>♪</div>
-                </RailButton>
-                <RailButton>
-                    <Bookmark style={{ width: '20px', height: '20px' }} fill="white" className="text-white" />
-                </RailButton>
-                <RailButton>
-                    <MoreHorizontal style={{ width: '20px', height: '20px' }} className="text-white" />
+                    <Share2 style={{ width: '20px', height: '20px' }} className="text-white" />
                 </RailButton>
             </div>
 
