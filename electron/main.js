@@ -236,9 +236,23 @@ function buildDevPlan() {
   // Honor OPENSHORTS_OUTPUT_DIR so the backend (which reads the same var) and
   // the renderer write to and serve from the same folder — they'd diverge if
   // only one side saw the override.
+  //
+  // Default to the SAME user-data folder the packaged app uses. Both modes
+  // serve the UI from 127.0.0.1:8000, so they share one browser origin and
+  // therefore one saved project list. If dev pointed at ./output instead, every
+  // project made by the installed app would 404 on open and get permanently
+  // branded "Expired" in that shared list — even though its clips are sitting
+  // safely on disk. One folder per app keeps the list and the files in sync.
   const outputDir = process.env.OPENSHORTS_OUTPUT_DIR
     ? path.resolve(process.env.OPENSHORTS_OUTPUT_DIR)
-    : path.join(ROOT, 'output');
+    : path.join(DATA, 'output');
+  const uploadsDir = process.env.OPENSHORTS_UPLOAD_DIR
+    ? path.resolve(process.env.OPENSHORTS_UPLOAD_DIR)
+    : path.join(ROOT, 'uploads');
+
+  for (const dir of [outputDir, uploadsDir]) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
 
   // Virtual environments put python in a different folder per platform.
   const pythonBin = process.platform === 'win32'
@@ -252,6 +266,8 @@ function buildDevPlan() {
       args: ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', '8000'],
       cwd: ROOT,
       env: Object.assign({}, process.env, {
+        OPENSHORTS_OUTPUT_DIR: outputDir,
+        OPENSHORTS_UPLOAD_DIR: uploadsDir,
         RENDER_SERVICE_URL: 'http://127.0.0.1:' + RENDERER_PORT,
       }),
     },
