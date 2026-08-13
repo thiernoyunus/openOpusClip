@@ -905,13 +905,10 @@ function App() {
     </div>
   );
 
-  const ShortcutItem = ({ icon: Icon, color, label, onClick, active = false, badge }) => (
+  const ShortcutItem = ({ icon: Icon, color, label, onClick, active = false }) => (
     <button onClick={onClick} className={`group flex flex-col items-center gap-2.5 transition-colors ${active ? 'text-fg' : 'text-muted hover:text-fg'}`}>
       <span className={`relative w-14 h-14 rounded-full bg-surface border flex items-center justify-center ${color} transition-colors ${active ? 'border-white/40' : 'border-edge group-hover:border-white/20'}`}>
         <Icon size={22} />
-        {badge && (
-          <span className="absolute -top-1 -right-1 px-1.5 py-px rounded-full bg-viral/20 border border-viral/40 text-viral text-[9px] font-semibold leading-none">{badge}</span>
-        )}
       </span>
       <span className="text-xs">{label}</span>
     </button>
@@ -1012,15 +1009,7 @@ function App() {
         {/* Top Header */}
         <header className="h-14 border-b border-edge bg-background flex items-center justify-between px-6 shrink-0 z-10">
           <div className="flex items-center gap-4">
-            {status !== 'idle' && (
-              <button
-                onClick={handleReset}
-                className="flex items-center gap-2 text-sm text-zinc-400 hover:text-white transition-colors"
-              >
-                <PlusCircle size={16} />
-                <span className="hidden sm:inline">New Project</span>
-              </button>
-            )}
+            {/* "New project" lives in the results toolbar below — one entry point only. */}
           </div>
 
           <div className="flex items-center gap-4">
@@ -1440,8 +1429,8 @@ function App() {
                 <div className="relative flex items-center justify-center gap-10 mt-12">
                   <ShortcutItem icon={Scissors} color="text-viral" label="Clip Generator" onClick={() => setQuickTool(null)} />
                   <ShortcutItem icon={Youtube} color="text-red-300" label="YouTube Studio" onClick={() => setActiveTab('thumbnails')} />
-                  <ShortcutItem icon={Captions} color="text-sky-300" label="AI Captions" active={quickTool === 'captions'} badge="New" onClick={() => setQuickTool((t) => t === 'captions' ? null : 'captions')} />
-                  <ShortcutItem icon={Film} color="text-violet-300" label="Video Editor" active={quickTool === 'editor'} badge="New" onClick={() => setQuickTool((t) => t === 'editor' ? null : 'editor')} />
+                  <ShortcutItem icon={Captions} color="text-sky-300" label="AI Captions" active={quickTool === 'captions'} onClick={() => setQuickTool((t) => t === 'captions' ? null : 'captions')} />
+                  <ShortcutItem icon={Film} color="text-violet-300" label="Video Editor" active={quickTool === 'editor'} onClick={() => setQuickTool((t) => t === 'editor' ? null : 'editor')} />
                 </div>
               </div>
 
