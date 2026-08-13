@@ -496,6 +496,7 @@ function App() {
             if (failures < MAX_POLL_FAILURES) {
               nextIds.push(id);
             } else {
+              captureError(e, { area: 'process_poll' });
               setProjects(updateProject(id, { status: 'expired' }));
               delete pollFailureCounts.current[id];
               if (id === jobId) {
@@ -542,6 +543,7 @@ function App() {
       setSocialAccounts(data.accounts || []);
     } catch (e) {
       console.warn("Zernio account fetch failed. Posting will stay disabled until the key is fixed.", e);
+      captureError(e, { area: 'social_accounts' });
       setSocialAccounts([]);
     }
   };
@@ -556,6 +558,7 @@ function App() {
       if (!res.ok || !data.authUrl) throw new Error(data.detail || 'No auth URL returned');
       window.open(data.authUrl, '_blank', 'noopener');
     } catch (e) {
+      captureError(e, { area: 'social_connect' });
       alert(`Could not start ${platform} connection: ${e.message}`);
     }
   };
@@ -793,6 +796,7 @@ function App() {
           }
         } catch (e) {
           console.warn('Could not refresh active project logs before opening modal', e);
+          captureError(e, { area: 'project_refresh' });
         }
         setShowProcessingModal(true);
       }
@@ -847,6 +851,7 @@ function App() {
         setViewingResults(true);
       }
     } catch (e) {
+      captureError(e, { area: 'project_open' });
       if (e instanceof JobExpiredError) {
         setProjects(updateProject(p.id, { status: 'expired' }));
         setProcessingJobIds((ids) => ids.filter((id) => id !== p.id));
@@ -928,13 +933,25 @@ function App() {
       e.stopPropagation();
       if (!window.confirm(`Delete "${p.title}"? This permanently deletes the project and its files.`)) return;
       let res;
-      try { res = await fetch(getApiUrl(`/api/jobs/${p.id}`), { method: 'DELETE' }); }
-      catch { /* offline / already gone — drop the local card below */ }
-      if (res && res.status === 409) {
+      try {
+        res = await fetch(getApiUrl(`/api/jobs/${p.id}`), { method: 'DELETE' });
+      } catch (error) {
+        captureError(error, { area: 'project_delete' });
+        window.alert('Could not delete this project. Check your connection and try again.');
+        return;
+      }
+      if (res.status === 409) {
         window.alert("This project is still processing — you can delete it once it finishes.");
         return; // keep the card; server refused to delete a running job
       }
+      if (!res.ok && res.status !== 404) {
+        const error = new Error(`Project deletion failed with status ${res.status}`);
+        captureError(error, { area: 'project_delete' });
+        window.alert('Could not delete this project. Try again.');
+        return;
+      }
       setProjects(removeProject(p.id));
+      track('project_deleted', { result_category: 'deleted' });
     };
     return (
       <div className="text-left group relative">
@@ -1100,6 +1117,7 @@ function App() {
                   <div className="flex gap-2">
                     <input
                       type="password"
+                      data-posthog-sensitive="true"
                       value={zernioKey}
                       onChange={(e) => setZernioKey(e.target.value)}
                       className="input-field"
@@ -1174,6 +1192,7 @@ function App() {
                   <div className="flex gap-2">
                     <input
                       type="password"
+                      data-posthog-sensitive="true"
                       value={elevenLabsKey}
                       onChange={(e) => setElevenLabsKey(e.target.value)}
                       className="input-field"
@@ -1227,6 +1246,7 @@ function App() {
                   <div className="flex gap-2">
                     <input
                       type="password"
+                      data-posthog-sensitive="true"
                       value={sonioxKey}
                       onChange={(e) => setSonioxKey(e.target.value)}
                       className="input-field"
@@ -1610,6 +1630,7 @@ function App() {
                   </ol>
                   <input
                     type="text"
+                    data-posthog-sensitive="true"
                     placeholder="Paste your Gemini API key here..."
                     className="w-full bg-black/50 border border-white/20 rounded-lg px-4 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-blue-500"
                     onKeyDown={(e) => {
@@ -1639,6 +1660,7 @@ function App() {
                   </ol>
                   <input
                     type="text"
+                    data-posthog-sensitive="true"
                     placeholder="Paste your Zernio API key here..."
                     className="w-full bg-black/50 border border-white/20 rounded-lg px-4 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-violet-500"
                     onKeyDown={(e) => {

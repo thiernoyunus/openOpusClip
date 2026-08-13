@@ -485,7 +485,7 @@ function MediaPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
                             <KeyRound size={12} className="mt-0.5 shrink-0" />
                             Optional free Pexels key for stock video. Get one at pexels.com/api.
                         </div>
-                        <input type="password" placeholder="Pexels API key" onChange={(e) => saveKey(e.target.value.trim())}
+                        <input type="password" data-posthog-sensitive="true" placeholder="Pexels API key" onChange={(e) => saveKey(e.target.value.trim())}
                             className="w-full bg-surface2 border border-edge rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-white/30" />
                     </>
                 ) : (

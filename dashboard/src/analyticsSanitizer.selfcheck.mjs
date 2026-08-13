@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { sanitizeExceptionList, sanitizeStacktrace } from './analyticsSanitizer.js';
+import { sanitizeExceptionList, sanitizeStacktrace, scrubText } from './analyticsSanitizer.js';
 
 const [exception] = sanitizeExceptionList([{
   type: 'Error',
@@ -59,5 +59,9 @@ const retainedFrames = sanitizeStacktrace({
 assert.equal(retainedFrames.length, 30);
 assert.equal(retainedFrames[0].function, '10');
 assert.equal(retainedFrames.at(-1).function, '39');
+assert.equal(
+  scrubText('The export button froze. API key: AIza12345678901234567890123456789012345'),
+  'The export button froze. [redacted-secret]'
+);
 
 console.log('analytics sanitizer self-check passed');

@@ -4,7 +4,7 @@ import {
     ChevronLeft, ChevronRight, Globe, ExternalLink, Pencil, RotateCcw, Check, Plus
 } from 'lucide-react';
 import { getApiUrl } from '../config';
-import { track } from '../analytics';
+import { captureError, track } from '../analytics';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -462,6 +462,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
             } catch (e) {
                 results.push({ index: i, success: false, error: e.message });
                 track('social_post_failed', { mode: 'schedule', source: 'week_scheduler', platform_count: platformCount, platforms: _platforms, error_category: 'client' });
+                captureError(e, { area: 'social_schedule' });
             }
 
             setProgress({ current: i + 1, total, results: [...results] });

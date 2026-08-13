@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Type, Calendar, Clock, Languages, Play, ArrowUp, ArrowDown, FileText, Crop, Flame } from 'lucide-react';
 import { getApiUrl } from '../config';
-import { track } from '../analytics';
+import { captureError, track } from '../analytics';
 import SubtitleModal from './SubtitleModal';
 import HookModal from './HookModal';
 import TranslateModal from './TranslateModal';
@@ -510,6 +510,9 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
         setIsRendering(true);
         setRenderProgress(0);
+        track('clip_render_started', {
+            operation_category: isEdited ? 'edit_burn' : 'captions_burn',
+        });
         try {
             let props;
             if (isEdited) {
@@ -556,6 +559,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                 setLocalRenderedEditedAt(framingFull.editedAt);
                 const result = { key: cacheKey, downloadUrl: newUrl, filename: null, applied: true };
                 renderCacheRef.current = result;
+                track('clip_render_completed', { result_category: 'edited_clip' });
                 return result;
             }
 
@@ -569,7 +573,12 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                 applied: false,
             };
             renderCacheRef.current = result;
+            track('clip_render_completed', { result_category: 'captioned_clip' });
             return result;
+        } catch (error) {
+            track('clip_render_failed', { failure_category: 'render' });
+            captureError(error, { area: 'clip_render' });
+            throw error;
         } finally {
             setIsRendering(false);
             setRenderProgress(null);
@@ -663,6 +672,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
         } catch (e) {
             setPostResult({ success: false, msg: `Failed: ${e.message}` });
             track('social_post_failed', { mode: isScheduling ? 'schedule' : 'post', source: 'clip_card', platform_count: platformCount, platforms: _platforms, error_category: 'client' });
+            captureError(e, { area: 'social_post' });
         } finally {
             setPosting(false);
         }
@@ -670,6 +680,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
     const handleDownload = async () => {
         setEditError(null);
+        track('clip_download_started', { source_category: 'clip_card' });
         try {
             const prepared = await ensureRenderedFile();
             const response = await fetch(prepared.downloadUrl);
@@ -684,8 +695,11 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             a.click();
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
+            track('clip_download_completed', { result_category: 'downloaded' });
         } catch (err) {
             console.error('Download error:', err);
+            track('clip_download_failed', { failure_category: 'download' });
+            captureError(err, { area: 'clip_download' });
             setEditError(err.message || 'Download failed');
             setTimeout(() => setEditError(null), 5000);
             // Do not fall back to the raw file — user expects what they saw

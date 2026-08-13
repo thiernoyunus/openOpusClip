@@ -1,4 +1,7 @@
-import posthog from 'posthog-js';
+// Bundle the recorder with the desktop dashboard. Loading recorder.js later
+// from a CDN is fragile inside packaged Electron apps and previously left the
+// project with normal events but zero replay snapshots.
+import posthog from 'posthog-js/dist/module.full.no-external.js';
 import {
   SENSITIVE_PROPERTY,
   URL_PROPERTY,
@@ -64,7 +67,14 @@ function beforeSend(event) {
       continue;
     }
     if (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key)) continue;
-    properties[key] = key === '$snapshot_data' ? sanitizeNested(value) : typeof value === 'string' ? scrubText(value) : value;
+    // Replay snapshots are already masked by the recorder below. They are an
+    // encoded protocol payload, not ordinary text: scrubbing/truncating them
+    // corrupts the recording and makes it unplayable.
+    if (key === '$snapshot_data') {
+      properties[key] = value;
+      continue;
+    }
+    properties[key] = typeof value === 'string' ? scrubText(value) : value;
   }
 
   properties.$current_url = SAFE_APP_URL;
@@ -116,6 +126,7 @@ export async function initAnalytics() {
   posthog.init(POSTHOG_TOKEN, {
     api_host: POSTHOG_HOST,
     ui_host: 'https://us.posthog.com',
+    debug: DEV_OPT_IN,
     person_profiles: 'identified_only',
     // Disable PostHog's built-in surveys — feedback uses a custom native modal
     surveys: false,
@@ -179,12 +190,23 @@ export async function initAnalytics() {
     runtime: 'desktop',
   } : { runtime: 'web' });
 
+  // The beta needs a recording from every test session. This also overrides a
+  // stale 20% sampling decision already stored for the current browser session.
+  posthog.startSessionRecording({ sampling: true });
+
+  setTimeout(() => {
+    track('analytics_health_checked', {
+      recording_status: posthog.sessionRecording?.status || 'unknown',
+      recording_started: Boolean(posthog.sessionRecording?.started),
+    });
+  }, 3000);
+
   initialized = true;
   return true;
 }
 
 export function track(eventName, properties = {}) {
-  if (!initialized) return;
+  if (!initialized) return false;
   const safeProperties = {};
   for (const [key, value] of Object.entries(properties)) {
     if (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key)) continue;
@@ -196,8 +218,28 @@ export function track(eventName, properties = {}) {
         : safeContextValue(value);
     }
   }
-  posthog.capture(eventName, safeProperties, { send_instantly: true });
+  return Boolean(posthog.capture(eventName, safeProperties, { send_instantly: true }));
+}
 
+export async function submitFeedback(properties = {}) {
+  if (!initialized) return false;
+  const category = safeContextValue(properties.category);
+  const detail = scrubText(properties.detail || '');
+
+  // The desktop main process already delivers startup and failure events
+  // reliably. Use that same route for feedback and wait for its result so the
+  // modal never claims success for a request that was dropped.
+  if (desktopRuntime && window.openOpusTelemetry?.captureFeedback) {
+    try {
+      return await window.openOpusTelemetry.captureFeedback({ category, detail });
+    } catch {
+      return false;
+    }
+  }
+
+  // Web builds have no Electron bridge. A capture result means the browser
+  // SDK accepted the event into its immediate delivery queue.
+  return track('feedback_submitted', { category, detail });
 }
 
 export function captureError(error, { area = 'renderer' } = {}) {
