@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, FileVideo, Sparkles, Scissors, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Trash2, Film, Captions } from 'lucide-react';
+import { Upload, FileVideo, Sparkles, Scissors, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield, LayoutGrid, Image, RotateCcw, AlertTriangle, KeyRound, ExternalLink, Copy, CheckCircle2, Trash2, Film, Captions, Calendar, Globe } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
 import { GhostClipCard, SkeletonClipCard } from './components/GenerateMoreCards';
-import ThumbnailStudio from './components/ThumbnailStudio';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
-import SocialCalendar from './components/SocialCalendar';
 import TrailerPage from './TrailerPage';
 import ProcessingModal from './components/ProcessingModal';
 import EditorView from './components/editor/EditorView';
@@ -131,7 +129,7 @@ function App() {
   const [sortBy, setSortBy] = useState('score'); // 'score' | 'order'
   const [logs, setLogs] = useState([]);
   const [processingMedia, setProcessingMedia] = useState(null);
-  // dashboard, settings, ai-agent, thumbnails, calendar, trailer.
+  // dashboard, settings, trailer.
   // #trailer is a legacy deep link from when the trailer tool was its own page.
   const [activeTab, setActiveTab] = useState(() => (window.location.hash === '#trailer' ? 'trailer' : 'dashboard'));
 
@@ -888,24 +886,10 @@ function App() {
       <nav className="flex-1 flex flex-col gap-1.5 w-full">
         <RailItem icon={Scissors} label="Clip Generator" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
         <RailItem icon={Film} label="Podcast Trailer" active={activeTab === 'trailer'} onClick={() => setActiveTab('trailer')} />
-        <RailItem icon={Bot} label="AI Agent" active={activeTab === 'ai-agent'} onClick={() => setActiveTab('ai-agent')} />
-        <RailItem icon={Youtube} label="YouTube Studio" active={activeTab === 'thumbnails'} onClick={() => setActiveTab('thumbnails')} />
-        <RailItem icon={Calendar} label="Calendar" active={activeTab === 'calendar'} onClick={() => setActiveTab('calendar')} />
       </nav>
 
       <div className="flex flex-col gap-1.5 w-full">
         <RailItem icon={Settings} label="Settings" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
-        <RailItem icon={Globe} label="Landing page" active={false} onClick={() => { localStorage.removeItem('openshorts_skip_landing'); window.location.hash = ''; window.location.reload(); }} />
-        <a
-          href="https://github.com/mutonby/openshorts"
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="GitHub"
-          className="relative group w-10 h-10 mx-auto rounded-lg flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors"
-        >
-          <svg height="20" viewBox="0 0 16 16" version="1.1" width="20" aria-hidden="true" fill="currentColor"><path fillRule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
-          <span className="pointer-events-none absolute left-full ml-3 px-2 py-1 rounded-md bg-surface2 border border-edge text-fg text-xs whitespace-nowrap opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-150 z-50 shadow-lg">GitHub</span>
-        </a>
       </div>
     </div>
   );
@@ -1030,16 +1014,6 @@ function App() {
           </div>
 
           <div className="flex items-center gap-4">
-            {socialAccounts.length > 0 && (
-              <button
-                onClick={() => setActiveTab('calendar')}
-                className="flex items-center gap-2 bg-surface border border-white/10 rounded-lg px-3 py-2 text-xs text-zinc-300 hover:bg-white/5 transition-colors"
-                title="View connected accounts & calendar"
-              >
-                <Users size={14} className="text-primary" />
-                {socialAccounts.length} account{socialAccounts.length === 1 ? '' : 's'} connected
-              </button>
-            )}
 
             {!apiKey && (
               <button
@@ -1287,141 +1261,11 @@ function App() {
             </div>
           )}
 
-          {/* View: AI Agent */}
-          {activeTab === 'ai-agent' && (
-            <div className="h-full overflow-y-auto custom-scrollbar p-6 md:p-10 animate-[fadeIn_0.3s_ease-out]">
-              <div className="max-w-4xl mx-auto space-y-8">
-
-                {/* Header */}
-                <div className="space-y-3">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-[11px] uppercase tracking-wider text-emerald-400 font-semibold">
-                    <Bot size={12} /> Autonomous Skill
-                  </div>
-                  <h1 className="text-3xl md:text-4xl font-black bg-gradient-to-b from-white to-white/60 bg-clip-text text-transparent">
-                    Your Personal Clipping Team
-                  </h1>
-                  <p className="text-zinc-400 text-base md:text-lg leading-relaxed max-w-2xl">
-                    Drop your videos in a folder and a team of AI clippers picks the viral moments, edits them, and queues them for your approval — like having a 24/7 short-form editing crew on autopilot.
-                  </p>
-                </div>
-
-                {/* Mobile-format warning */}
-                <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 flex items-start gap-3">
-                  <Smartphone size={20} className="text-amber-400 shrink-0 mt-0.5" />
-                  <div className="text-sm text-amber-100">
-                    <p className="font-semibold text-amber-300 mb-1">Upload videos already in vertical (9:16) mobile format.</p>
-                    <p className="text-amber-100/80 leading-relaxed">
-                      The agent does not reframe horizontal footage. Make sure every source video is shot or pre-cropped to mobile/portrait format before dropping it into the input folder.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Workflow */}
-                <div className="grid md:grid-cols-3 gap-4">
-                  <div className="glass-panel p-5 space-y-2">
-                    <div className="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
-                      <Upload size={18} />
-                    </div>
-                    <h3 className="font-semibold text-white">1. Drop your videos</h3>
-                    <p className="text-xs text-zinc-400 leading-relaxed">
-                      Put your long-form vertical footage in the watched folder. The skill picks one video per run.
-                    </p>
-                  </div>
-
-                  <div className="glass-panel p-5 space-y-2">
-                    <div className="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
-                      <Users size={18} />
-                    </div>
-                    <h3 className="font-semibold text-white">2. AI clippers work</h3>
-                    <p className="text-xs text-zinc-400 leading-relaxed">
-                      Whisper transcribes, Gemini 3 Flash spots viral beats, FFmpeg cuts each clip and adds a hook overlay.
-                    </p>
-                  </div>
-
-                  <div className="glass-panel p-5 space-y-2">
-                    <div className="w-10 h-10 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
-                      <CheckCircle2 size={18} />
-                    </div>
-                    <h3 className="font-semibold text-white">3. You validate, it ships</h3>
-                    <p className="text-xs text-zinc-400 leading-relaxed">
-                      Approve the candidates you like and the skill auto-publishes them to TikTok, Reels and YouTube Shorts via Zernio.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Repo CTA */}
-                <div className="glass-panel p-6 md:p-8 space-y-5">
-                  <div className="flex items-start justify-between gap-4 flex-wrap">
-                    <div>
-                      <h2 className="text-xl font-bold text-white mb-1">skill-autoshorts</h2>
-                      <p className="text-sm text-zinc-400">
-                        The Claude Code skill that powers this workflow. Install it once and trigger it whenever you want a fresh batch of clips.
-                      </p>
-                    </div>
-                    <a
-                      href="https://github.com/mutonby/skill-autoshorts"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn-primary py-2 px-4 text-sm flex items-center gap-2 shrink-0"
-                    >
-                      View on GitHub <ExternalLink size={14} />
-                    </a>
-                  </div>
-
-                  <div className="bg-[#0c0c0e] border border-white/10 rounded-lg p-4 font-mono text-xs text-zinc-300 flex items-center justify-between gap-3">
-                    <span className="truncate">git clone https://github.com/mutonby/skill-autoshorts</span>
-                    <button
-                      onClick={() => navigator.clipboard.writeText('git clone https://github.com/mutonby/skill-autoshorts')}
-                      className="text-zinc-500 hover:text-white transition-colors shrink-0"
-                      title="Copy"
-                    >
-                      <Copy size={14} />
-                    </button>
-                  </div>
-
-                  <div className="grid sm:grid-cols-2 gap-3 text-sm">
-                    <div className="flex items-start gap-2 text-zinc-300">
-                      <Check size={16} className="text-emerald-400 shrink-0 mt-0.5" />
-                      <span>Daily batch — picks one long video per run</span>
-                    </div>
-                    <div className="flex items-start gap-2 text-zinc-300">
-                      <Check size={16} className="text-emerald-400 shrink-0 mt-0.5" />
-                      <span>Whisper transcription with word-level timing</span>
-                    </div>
-                    <div className="flex items-start gap-2 text-zinc-300">
-                      <Check size={16} className="text-emerald-400 shrink-0 mt-0.5" />
-                      <span>Gemini 3 Flash multimodal moment detection</span>
-                    </div>
-                    <div className="flex items-start gap-2 text-zinc-300">
-                      <Check size={16} className="text-emerald-400 shrink-0 mt-0.5" />
-                      <span>Auto-publish to TikTok, Reels & YouTube Shorts</span>
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-            </div>
-          )}
-
-          {/* View: Thumbnails */}
-          {activeTab === 'thumbnails' && (
-            <ThumbnailStudio geminiApiKey={apiKey} zernioKey={zernioKey} socialAccounts={socialAccounts} />
-          )}
-
           {/* View: Podcast Trailer */}
           {activeTab === 'trailer' && (
             <div className="h-full overflow-y-auto custom-scrollbar p-6 md:p-10 animate-[fadeIn_0.3s_ease-out]">
               <TrailerPage onGoToSettings={() => setActiveTab('settings')} />
             </div>
-          )}
-
-          {/* View: Social Calendar & Analytics */}
-          {activeTab === 'calendar' && (
-            <SocialCalendar
-              zernioKey={zernioKey}
-              accounts={socialAccounts}
-              onGoToSettings={() => setActiveTab('settings')}
-            />
           )}
 
           {/* View: Dashboard homepage (idle / processing / error) — Opus-style */}
@@ -1448,7 +1292,6 @@ function App() {
                 {/* Quick-tool shortcut row */}
                 <div className="relative flex items-center justify-center gap-10 mt-12">
                   <ShortcutItem icon={Scissors} color="text-viral" label="Clip Generator" onClick={() => setQuickTool(null)} />
-                  <ShortcutItem icon={Youtube} color="text-red-300" label="YouTube Studio" onClick={() => setActiveTab('thumbnails')} />
                   <ShortcutItem icon={Captions} color="text-sky-300" label="AI Captions" active={quickTool === 'captions'} onClick={() => setQuickTool((t) => t === 'captions' ? null : 'captions')} />
                   <ShortcutItem icon={Film} color="text-violet-300" label="Video Editor" active={quickTool === 'editor'} onClick={() => setQuickTool((t) => t === 'editor' ? null : 'editor')} />
                 </div>
@@ -1698,7 +1541,6 @@ function App() {
         jobId={jobId}
         zernioKey={zernioKey}
         socialAccounts={socialAccounts}
-        onViewCalendar={() => setActiveTab('calendar')}
       />
 
       {showProcessingModal && (
