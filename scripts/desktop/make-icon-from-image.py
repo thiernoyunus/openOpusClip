@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Turn a finished square logo image into the macOS app icon.
+"""Turn a finished square logo image into the desktop app icons.
 
 Unlike make-icon.py (which composes the logo onto a generated tile), this takes
 an image that is ALREADY a complete icon design (background + centered mark) and
 just gives it the rounded-square macOS shape: resize to 1024, mask the corners
 with a Big Sur-style squircle so the corners are transparent, then build the
-.icns via the native sips/iconutil pipeline.
+.icns via the native sips/iconutil pipeline and the .ico via Pillow.
+
+Writes all three files electron-builder reads: icon.png, icon.icns (macOS) and
+icon.ico (Windows). They're generated together on purpose — when only the macOS
+ones were produced, a logo change left the Windows icon silently stale.
 
 Usage: make-icon-from-image.py <source.png> [corner_radius]
   corner_radius defaults to 230 (≈ Apple's 22.4% of 1024).
@@ -79,6 +83,16 @@ def main():
         icns_path = os.path.join(BUILD, "icon.icns")
         subprocess.run(["iconutil", "-c", "icns", iconset, "-o", icns_path], check=True)
         print(f"wrote {icns_path}")
+
+    # Windows .ico. Pillow writes every size into the one file; Windows then
+    # picks whichever it needs (16px in the title bar, 256px in the installer).
+    # 256 is the largest an .ico can hold, and electron-builder rejects the file
+    # without it. Deliberately the SAME squircle-masked art as macOS: Windows
+    # icons are conventionally square, but one recognisable icon across both
+    # platforms is worth more than matching each platform's shape convention.
+    ico_path = os.path.join(BUILD, "icon.ico")
+    icon.save(ico_path, format="ICO", sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)])
+    print(f"wrote {ico_path}")
 
 
 if __name__ == "__main__":

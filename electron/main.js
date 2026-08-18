@@ -32,10 +32,12 @@ const BACKEND_URL = 'http://127.0.0.1:8000';
 const RENDERER_PORT = 3100;
 
 // In the built app, the staged runtime (Python, ffmpeg, renderer, browser,
-// etc.) lands at Contents/Resources/stage — see the electron-builder
-// extraResources mapping in package.json. RES points there; DATA is the
-// user's writable app-data folder (~/Library/Application Support/openOpusClip
-// on macOS). Both are only meaningful in packaged mode.
+// etc.) lands under the resources folder as `stage` — Contents/Resources/stage
+// in the .app, resources\stage next to the .exe on Windows. See the
+// electron-builder extraResources mapping in electron-builder.js. RES points
+// there; DATA is the user's writable app-data folder (~/Library/Application
+// Support/openOpusClip on macOS, %APPDATA%\openOpusClip on Windows). Both are
+// only meaningful in packaged mode.
 const PACKAGED = app.isPackaged;
 // Without this, userData would be named after package.json's "name"
 // (openopusclip-desktop); set it before the first getPath call so user data
@@ -43,6 +45,14 @@ const PACKAGED = app.isPackaged;
 app.setName('openOpusClip');
 const RES = path.join(process.resourcesPath, 'stage');
 const DATA = app.getPath('userData');
+
+const IS_WIN = process.platform === 'win32';
+// The portable CPython lays itself out differently per platform: the POSIX
+// builds put the interpreter in python/bin/python3, the Windows build puts it
+// at python/python.exe with no bin/ at all.
+const STAGED_PYTHON = IS_WIN
+  ? path.join(RES, 'python', 'python.exe')
+  : path.join(RES, 'python', 'bin', 'python3');
 const telemetry = createTelemetry({
   userData: DATA,
   appVersion: app.getVersion(),
@@ -52,6 +62,10 @@ const telemetry = createTelemetry({
 });
 
 ipcMain.handle('open-opus-telemetry:get-context', () => telemetry.getContext());
+ipcMain.handle('open-opus-telemetry:capture-feedback', (_event, feedback) => {
+  if (!feedback || typeof feedback !== 'object') return false;
+  return telemetry.capture('feedback_submitted', feedback);
+});
 
 function launchErrorCategory(err) {
   if (err && err.code === 'ENOENT') return 'missing_executable';
@@ -137,7 +151,7 @@ function runPreflightChecks() {
       , pending);
       return false;
     }
-    const py = path.join(RES, 'python', 'bin', 'python3');
+    const py = STAGED_PYTHON;
     if (!fs.existsSync(py)) {
       const pending = telemetry.capture('desktop_stack_startup_failed', {
         stage: 'preflight',
@@ -164,7 +178,9 @@ function runPreflightChecks() {
       'openOpusClip: missing Python environment',
       'The Python virtual environment (.venv) was not found.\n\n' +
         'To fix this, open a terminal in the project folder and run:\n\n' +
-        '  python3.11 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt'
+        (IS_WIN
+          ? '  py -3.11 -m venv .venv && .venv\\Scripts\\activate && pip install -r requirements.txt'
+          : '  python3.11 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt')
     , pending);
     return false;
   }
@@ -224,9 +240,23 @@ function buildDevPlan() {
   // Honor OPENSHORTS_OUTPUT_DIR so the backend (which reads the same var) and
   // the renderer write to and serve from the same folder — they'd diverge if
   // only one side saw the override.
+  //
+  // Default to the SAME user-data folder the packaged app uses. Both modes
+  // serve the UI from 127.0.0.1:8000, so they share one browser origin and
+  // therefore one saved project list. If dev pointed at ./output instead, every
+  // project made by the installed app would 404 on open and get permanently
+  // branded "Expired" in that shared list — even though its clips are sitting
+  // safely on disk. One folder per app keeps the list and the files in sync.
   const outputDir = process.env.OPENSHORTS_OUTPUT_DIR
     ? path.resolve(process.env.OPENSHORTS_OUTPUT_DIR)
-    : path.join(ROOT, 'output');
+    : path.join(DATA, 'output');
+  const uploadsDir = process.env.OPENSHORTS_UPLOAD_DIR
+    ? path.resolve(process.env.OPENSHORTS_UPLOAD_DIR)
+    : path.join(ROOT, 'uploads');
+
+  for (const dir of [outputDir, uploadsDir]) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
 
   // Virtual environments put python in a different folder per platform.
   const pythonBin = process.platform === 'win32'
@@ -240,6 +270,8 @@ function buildDevPlan() {
       args: ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', '8000'],
       cwd: ROOT,
       env: Object.assign({}, process.env, {
+        OPENSHORTS_OUTPUT_DIR: outputDir,
+        OPENSHORTS_UPLOAD_DIR: uploadsDir,
         RENDER_SERVICE_URL: 'http://127.0.0.1:' + RENDERER_PORT,
       }),
     },
@@ -272,21 +304,29 @@ function buildPackagedPlan() {
   }
 
   // yt-dlp shells out to `node` (>= 22) to solve YouTube's JS challenges.
-  // We don't bundle a separate Node — Electron *is* Node when launched with
-  // ELECTRON_RUN_AS_NODE=1. Drop a tiny `node` shim on PATH that re-invokes
-  // this app in that mode. Rewritten every launch because process.execPath
-  // moves when the app updates or is relocated.
-  const nodeShim = path.join(binDir, 'node');
-  // Single-quote and escape the path so an install location containing
-  // shell-active characters (spaces are fine either way, but '$' or '`'
-  // inside double quotes would otherwise be expanded/interpreted) is passed
-  // through literally.
-  const shellSafeExecPath = "'" + process.execPath.replace(/'/g, "'\\''") + "'";
-  fs.writeFileSync(
-    nodeShim,
-    '#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexec ' + shellSafeExecPath + ' "$@"\n'
-  );
-  fs.chmodSync(nodeShim, 0o755);
+  //
+  // On macOS we don't bundle a separate Node — Electron *is* Node when launched
+  // with ELECTRON_RUN_AS_NODE=1, so a tiny `node` shell script on PATH that
+  // re-invokes this app in that mode is enough. Rewritten every launch because
+  // process.execPath moves when the app updates or is relocated.
+  //
+  // Windows can't use that trick. yt-dlp finds the runtime with a PATHEXT scan
+  // and then launches it through CreateProcess, which refuses to run a .cmd/.bat
+  // wrapper — so the Windows stage ships a real node.exe in RES/bin instead
+  // (see scripts/desktop/build-stage.ps1) and there is nothing to write here.
+  if (!IS_WIN) {
+    const nodeShim = path.join(binDir, 'node');
+    // Single-quote and escape the path so an install location containing
+    // shell-active characters (spaces are fine either way, but '$' or '`'
+    // inside double quotes would otherwise be expanded/interpreted) is passed
+    // through literally.
+    const shellSafeExecPath = "'" + process.execPath.replace(/'/g, "'\\''") + "'";
+    fs.writeFileSync(
+      nodeShim,
+      '#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexec ' + shellSafeExecPath + ' "$@"\n'
+    );
+    fs.chmodSync(nodeShim, 0o755);
+  }
 
   const bundledBin = path.join(RES, 'bin'); // static ffmpeg + ffprobe
   // Drop empty segments so an unset process.env.PATH can't leave a trailing
@@ -295,16 +335,20 @@ function buildPackagedPlan() {
     .filter(Boolean)
     .join(path.delimiter);
 
-  // The staged browser lives in a per-architecture folder
-  // (chrome-headless-shell-mac-arm64 / -mac-x64), so derive it from the running
-  // process instead of hardcoding one. Falls back to a scan so an unexpected
-  // folder name surfaces as a renderer error rather than a silently wrong path.
+  // The staged browser lives in a per-platform/per-architecture folder
+  // (chrome-headless-shell-mac-arm64 / -mac-x64 / -win64), so derive it from the
+  // running process instead of hardcoding one. Falls back to a scan so an
+  // unexpected folder name surfaces as a renderer error rather than a silently
+  // wrong path.
   const chromeShellRoot = path.join(RES, 'chrome-headless-shell');
-  const chromeShellDir = 'chrome-headless-shell-mac-' + process.arch; // arm64 | x64
-  let chromeExecutable = path.join(chromeShellRoot, chromeShellDir, 'chrome-headless-shell');
+  const chromeExeName = IS_WIN ? 'chrome-headless-shell.exe' : 'chrome-headless-shell';
+  const chromeShellDir = IS_WIN
+    ? 'chrome-headless-shell-win64'
+    : 'chrome-headless-shell-mac-' + process.arch; // arm64 | x64
+  let chromeExecutable = path.join(chromeShellRoot, chromeShellDir, chromeExeName);
   if (!fs.existsSync(chromeExecutable)) {
     const found = (fs.existsSync(chromeShellRoot) ? fs.readdirSync(chromeShellRoot) : [])
-      .map((entry) => path.join(chromeShellRoot, entry, 'chrome-headless-shell'))
+      .map((entry) => path.join(chromeShellRoot, entry, chromeExeName))
       .find((candidate) => fs.existsSync(candidate));
     if (found) chromeExecutable = found;
   }
@@ -312,7 +356,7 @@ function buildPackagedPlan() {
   return {
     outputDir,
     backend: {
-      command: path.join(RES, 'python', 'bin', 'python3'),
+      command: STAGED_PYTHON,
       args: ['-m', 'uvicorn', 'app:app', '--host', '127.0.0.1', '--port', '8000'],
       cwd: path.join(RES, 'backend'),
       env: Object.assign({}, process.env, {
@@ -351,9 +395,16 @@ function spawnStack() {
 
   // On darwin/linux, run children in their own process group (detached)
   // so we can kill the whole group later instead of just the immediate
-  // child (uvicorn/npm often spawn their own children). On Windows, npm
-  // is a shell script (npm.cmd), so spawning it needs shell: true.
-  const groupOpts = process.platform === 'win32' ? { shell: true } : { detached: true };
+  // child (uvicorn/npm often spawn their own children). Windows has no
+  // process groups we can address that way; killProcessGroup uses
+  // `taskkill /t` there instead, which walks the tree from the direct child.
+  //
+  // Deliberately NOT `shell: true` here. Routing through cmd.exe would mean
+  // hand-quoting every argument — and the very first one is an install path
+  // ("C:\Program Files\openOpusClip\...", or any user folder with a space in
+  // it), which cmd would split on the space and fail to launch. windowsHide
+  // keeps a console window from flashing up behind the app on each launch.
+  const groupOpts = IS_WIN ? { windowsHide: true } : { detached: true };
 
   console.log('Starting backend on ' + BACKEND_URL);
   const backend = spawn(plan.backend.command, plan.backend.args, {
@@ -414,9 +465,12 @@ function spawnStack() {
   spawned.backend = backend;
 
   console.log('Starting renderer on http://127.0.0.1:' + RENDERER_PORT);
+  // Dev mode only: the renderer there is `npm run dev`, and npm on Windows is
+  // npm.cmd — a batch file, which needs a shell to run. Packaged mode runs
+  // Electron-as-Node directly and takes the plain options above.
   const rendererGroupOpts =
-    process.platform === 'win32' && plan.renderer.shellOnWindows
-      ? { shell: true }
+    IS_WIN && plan.renderer.shellOnWindows
+      ? { shell: true, windowsHide: true }
       : groupOpts;
   const renderer = spawn(plan.renderer.command, plan.renderer.args, {
     cwd: plan.renderer.cwd,
@@ -718,6 +772,21 @@ let updaterStage = 'updater_check';
 // release) instead of collapsing into one opaque "updater_error". Only the
 // bucket and a sanitized code are ever sent — never the raw message, which can
 // embed the user's home-directory path.
+// Many providers (GitHub, S3, Azure) attach rate-limit headers to the
+// underlying error.response. electron-updater 6.8.9 doesn't expose response
+// headers directly, so this is a best-effort pass over the common locations.
+function errorHeadersInclude(err, header) {
+  if (!err || typeof err !== 'object') return false;
+  const key = header.toLowerCase();
+  const candidates = [err.headers, err.response && err.response.headers, err.context && err.context.headers];
+  for (const c of candidates) {
+    if (!c) continue;
+    if (typeof c.get === 'function' && c.get(header) != null) return true;
+    if (typeof c === 'object' && Object.keys(c).some((k) => k.toLowerCase() === key && c[k] != null)) return true;
+  }
+  return false;
+}
+
 function categorizeUpdaterError(err) {
   const status = err && (err.statusCode != null ? err.statusCode : err.status);
   const code = String((err && (err.code || err.name)) || '');
@@ -726,13 +795,21 @@ function categorizeUpdaterError(err) {
   if (/ENOTFOUND|EAI_AGAIN|ECONN|ETIMEDOUT|ENETUNREACH|getaddrinfo|network/i.test(haystack)) {
     return 'updater_network';
   }
-  if (status === 403 || status === 429 || /\brate limit|too many requests\b/i.test(msg)) {
+  // 429 is the unambiguous "rate limited" status. 403 is GitHub's catch-all
+  // (auth, private-repo, redirect-with-Authorization-stripped, rate-limit) —
+  // only bucket it as rate-limited when there's actual evidence in the message
+  // OR when GitHub's rate-limit headers survived onto the error.
+  const hasRateLimitMsg = /\brate limit|too many requests\b|abuse detection/i.test(msg);
+  const hasRateLimitHeader = errorHeadersInclude(err, 'x-ratelimit-remaining');
+  if (status === 429 || (status === 403 && (hasRateLimitMsg || hasRateLimitHeader))) {
     return 'updater_rate_limited';
   }
   if (/signature|sha512|checksum|integrity/i.test(msg)) {
     return 'updater_signature';
   }
-  if (/latest.*\.yml|not found|No published|cannot find|unable to find/i.test(msg)) {
+  // Require a release-asset keyword so generic "file not found" messages
+  // from the user's filesystem don't get mis-classified as updater failures.
+  if (/latest[\w.-]*\.yml|published release|No published release|cannot find (release|asset|asset url)/i.test(msg)) {
     return 'updater_not_found';
   }
   if (Number.isInteger(status) || /HTTPError|status code|\b40\d\b|\b50\d\b/i.test(haystack)) {
@@ -915,7 +992,11 @@ autoUpdater.on('update-downloaded', async (info) => {
     // all. Wait for them to actually go before handing over.
     await waitForProcessGroupsToExit([spawned.backend, spawned.renderer], 10000);
     updaterStage = 'updater_install';
-    await telemetry.shutdown(750);
+    // Do NOT call telemetry.shutdown() here: quitAndInstall() can
+    // synchronously dispatch 'error' on install failure (elevation, missing
+    // installer, etc.) and the 'error' handler still needs a live telemetry
+    // client to report it. Telemetry shutdown is handled by the normal
+    // app-quit path before app.quit().
     autoUpdater.quitAndInstall();
   };
 
@@ -943,11 +1024,14 @@ app.whenReady().then(async () => {
 
   telemetry.capture('desktop_app_started', { stage: 'application' });
 
-  // --- macOS application menu with "Check for Updates…" ----------------
-  // On macOS the first menu is always the app name ("openOpusClip") and
-  // conventionally holds About, Preferences, and Quit. We add a
-  // "Check for Updates…" item after About, which mirrors what people
-  // expect from every other Mac app.
+  // --- application menu with "Check for Updates…" -----------------------
+  // Where this item belongs is a per-platform convention, and putting it in
+  // the wrong place is immediately noticeable:
+  //   macOS   — the first menu is the app name and holds About/Quit, with
+  //             "Check for Updates…" right after About. Every Mac app does this.
+  //   Windows — there is no app menu; updates live at the bottom of Help, and
+  //             the app-name menu's Hide/Hide Others/Unhide roles don't exist
+  //             at all. A Mac-shaped menu bar there just looks broken.
   //
   // Disabled while no update is available; the autoUpdater events flip it
   // on when a newer release is found.
@@ -969,25 +1053,33 @@ app.whenReady().then(async () => {
     // check against and it would just throw.
     updateMenuItem.visible = false;
   }
-  const menuTemplate = [
-    {
-      label: app.name,
-      submenu: [
-        { role: 'about' },
-        { type: 'separator' },
-        updateMenuItem,
-        { type: 'separator' },
-        { role: 'hide' },
-        { role: 'hideOthers' },
-        { role: 'unhide' },
-        { type: 'separator' },
-        { role: 'quit' },
-      ],
-    },
-    { role: 'editMenu' },
-    { role: 'viewMenu' },
-    { role: 'windowMenu' },
-  ];
+  const menuTemplate = IS_WIN
+    ? [
+        { label: 'File', submenu: [{ role: 'quit' }] },
+        { role: 'editMenu' },
+        { role: 'viewMenu' },
+        { role: 'windowMenu' },
+        { label: 'Help', submenu: [updateMenuItem, { type: 'separator' }, { role: 'about' }] },
+      ]
+    : [
+        {
+          label: app.name,
+          submenu: [
+            { role: 'about' },
+            { type: 'separator' },
+            updateMenuItem,
+            { type: 'separator' },
+            { role: 'hide' },
+            { role: 'hideOthers' },
+            { role: 'unhide' },
+            { type: 'separator' },
+            { role: 'quit' },
+          ],
+        },
+        { role: 'editMenu' },
+        { role: 'viewMenu' },
+        { role: 'windowMenu' },
+      ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
 
   if (app.isPackaged) {

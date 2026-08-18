@@ -1,14 +1,17 @@
 {
   "name": "openopusclip-desktop",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "private": true,
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "test:telemetry": "node telemetry.selfcheck.js",
+    "test:telemetry:live": "electron posthog-live-smoke.js",
     "package": "electron-builder --mac dir --arm64",
     "package:arm64": "electron-builder --mac dmg zip --arm64",
     "package:x64": "electron-builder --mac dmg zip --x64",
-    "package:both": "electron-builder --mac dmg zip --arm64 --x64"
+    "package:both": "electron-builder --mac dmg zip --arm64 --x64",
+    "package:win": "electron-builder --win nsis --x64"
   },
   "devDependencies": {
     "electron": "^43.0.0",

@@ -1,7 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Youtube, Upload, FileVideo, X, Film, KeyRound } from 'lucide-react';
+import { Youtube, Upload, FileVideo, X, Film, KeyRound, Trash2, AlertTriangle } from 'lucide-react';
 import ProcessingModal from './components/ProcessingModal';
-import { phaseFromLogs, addProject, updateProject, removeProject, getProjects, isTrailerProject } from './lib/projectHistory';
+import {
+  phaseFromLogs,
+  addProject,
+  updateProject,
+  removeProject,
+  getProjects,
+  isTrailerProject,
+  coverFromString,
+  thumbFromPayload,
+  captureVideoFrame,
+} from './lib/projectHistory';
 import { getApiUrl } from './config';
 
 // Transcription engines mirror MediaInput: 'whisper' (built-in, free) or
@@ -53,6 +63,18 @@ const decrypt = (text) => {
 };
 
 const MAX_POLL_FAILURES = 5;
+
+// Same "3m 12s" shaping the Clip Generator's project cards use.
+const formatJobDuration = (seconds) => {
+  if (seconds == null || Number.isNaN(Number(seconds))) return null;
+  const total = Math.max(0, Math.round(Number(seconds)));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m ${s}s`;
+  return `${s}s`;
+};
 
 // Rendered as a tab inside App (like SocialCalendar), not a standalone page —
 // onGoToSettings lets it hand off to the Settings tab in the same shell,
@@ -246,16 +268,27 @@ export default function TrailerPage({ onGoToSettings }) {
       // Register in the shared project history (localStorage) so the trailer
       // shows up on the dashboard and App's poller picks it up. Mirrors
       // App.jsx startProcessJob; 'Trailer ·' marks it apart from clip jobs.
+      const payload = { type: mode, payload: mode === 'url' ? url : file };
       addProject({
         id: resData.job_id,
         title: `Trailer · ${mode === 'url' ? url : file?.name || 'Podcast'}`,
         type: mode,
         model: whisperModel,
         src: mode === 'url' ? url : null,
+        thumb: thumbFromPayload(payload),
         startedAt: Date.now(),
         kind: 'trailer',
       });
       setProjects(getProjects().filter(isTrailerProject));
+      // Uploaded files have no cover URL — grab one frame out of the video so
+      // the card isn't blank. Same follow-up the Clip Generator does.
+      if (mode === 'file' && file) {
+        captureVideoFrame(file).then((th) => {
+          if (!th) return;
+          updateProject(resData.job_id, { thumb: th });
+          setProjects(getProjects().filter(isTrailerProject));
+        });
+      }
       setLogs([`Queued ${mode === 'url' ? url : file?.name || 'video'}…`]);
     } catch (e) {
       setStatus('error');
@@ -373,13 +406,13 @@ export default function TrailerPage({ onGoToSettings }) {
                   <div className="space-y-3 text-white">
                     <div className="flex items-center justify-center gap-3 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-left">
                       <FileVideo size={16} className="text-primary shrink-0" />
-                      <span className="font-medium text-sm truncate flex-1">{file.name}</span>
+                      <span className="ph-mask font-medium text-sm truncate flex-1">{file.name}</span>
                       <span className="text-xs text-zinc-500 shrink-0">{(file.size / 1024 / 1024).toFixed(1)} MB</span>
                       <button
                         type="button"
                         onClick={() => setFile(null)}
                         className="p-1 hover:bg-white/10 rounded-full shrink-0"
-                        aria-label={`Remove ${file.name}`}
+                        aria-label="Remove selected video"
                       >
                         <X size={16} />
                       </button>
@@ -535,58 +568,102 @@ export default function TrailerPage({ onGoToSettings }) {
           </form>
         </div>
 
-        {projects.length > 0 && (
-          <div className="mt-8">
-            <div className="text-sm text-zinc-400 mb-3">Recent trailers ({projects.length})</div>
-            <div className="space-y-2">
-              {projects.map((p) => {
-                const done = p.status === 'completed' || p.status === 'complete';
-                const failed = p.status === 'error' || p.status === 'expired';
-                return (
-                  <div
-                    key={p.id}
-                    className={`group flex items-center gap-3 bg-surface border border-edge rounded-lg px-3 py-2.5 ${done ? 'cursor-pointer hover:border-zinc-600' : ''}`}
+      </div>
+
+      {/* Recent trailers — same card grid the Clip Generator uses for its
+          projects, so both tabs read the same way. Wider than the form on
+          purpose: the cards need the room. */}
+      <div className="max-w-5xl mx-auto mt-10">
+        <div className="flex items-center gap-4 mb-3">
+          <span className="text-sm text-fg">
+            Recent trailers {projects.length > 0 && <span className="text-muted">({projects.length})</span>}
+          </span>
+        </div>
+        {projects.length === 0 ? (
+          <div className="border border-edge rounded-lg py-12 text-center">
+            <p className="text-sm text-muted">Your generated trailers will appear here.</p>
+            <p className="text-xs text-muted/60 mt-1">Drop a podcast link or upload an episode to get started.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            {projects.map((p) => {
+              const done = p.status === 'completed' || p.status === 'complete';
+              const failed = p.status === 'error' || p.status === 'expired';
+              const proc = !done && !failed;
+              const title = (p.title || 'Trailer').replace(/^Trailer · /, '');
+              const cover = p.thumb || coverFromString(p.src || p.title);
+              const durationLabel = formatJobDuration(
+                p.duration_seconds ?? p.durationSeconds ?? (proc && p.createdAt ? (Date.now() - p.createdAt) / 1000 : null)
+              );
+              const phaseLabel = p.id === jobId ? phaseFromLogs(logs) : 'Processing';
+              return (
+                <div key={p.id} className="text-left group relative">
+                  <button
+                    type="button"
                     onClick={done ? () => openTrailer(p.id) : undefined}
+                    className={`text-left w-full block ${done ? '' : 'cursor-default'}`}
                   >
-                    <Film size={15} className="shrink-0 text-primary" />
-                    <span className="flex-1 truncate text-sm text-zinc-200">
-                      {(p.title || 'Trailer').replace(/^Trailer · /, '')}
-                    </span>
-                    <span
-                      className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full ${
-                        done
-                          ? 'bg-emerald-500/15 text-emerald-300'
-                          : failed
-                          ? 'bg-red-500/15 text-red-300'
-                          : 'bg-amber-500/15 text-amber-300'
-                      }`}
-                    >
-                      {done ? 'Ready' : failed ? 'Failed' : 'Processing…'}
-                    </span>
-                    <button
-                      type="button"
-                      aria-label="Remove trailer"
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        if (!window.confirm('Delete this trailer? This permanently deletes the project and its files.')) return;
-                        let res;
-                        try { res = await fetch(getApiUrl(`/api/jobs/${p.id}`), { method: 'DELETE' }); }
-                        catch { /* offline / already gone — drop the local card below */ }
-                        if (res && res.status === 409) {
-                          window.alert('This trailer is still processing — you can delete it once it finishes.');
-                          return;
-                        }
-                        removeProject(p.id);
-                        setProjects(getProjects().filter(isTrailerProject));
-                      }}
-                      className="shrink-0 p-1 rounded text-zinc-600 hover:text-zinc-300 opacity-0 group-hover:opacity-100"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+                    <div className="relative aspect-video rounded-lg overflow-hidden bg-black border border-edge flex items-center justify-center">
+                      {cover ? (
+                        <img
+                          src={cover}
+                          alt=""
+                          className="absolute inset-0 w-full h-full object-cover"
+                          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                        />
+                      ) : (
+                        <Film size={20} className="text-zinc-700" />
+                      )}
+                      {proc && (
+                        <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
+                          <span className="flex items-center gap-2 bg-black/60 border border-viral/50 text-viral text-xs px-2.5 py-1.5 rounded-lg">
+                            <span className="w-3 h-3 rounded-full border-2 border-viral/30 border-t-viral animate-spin" />
+                            {phaseLabel}…
+                          </span>
+                        </div>
+                      )}
+                      {failed && (
+                        <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
+                          <span className="flex items-center gap-1.5 text-red-400 text-xs">
+                            <AlertTriangle size={13} /> Failed
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-2">
+                      <div className="ph-mask text-xs text-fg truncate group-hover:text-white transition-colors">{title}</div>
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="text-[11px] text-muted">
+                          {done ? 'Ready' : failed ? 'Failed' : 'Processing'}
+                          {durationLabel ? ` · ${proc ? 'running ' : ''}${durationLabel}` : ''}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    title="Delete trailer"
+                    aria-label="Delete trailer"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      if (!window.confirm('Delete this trailer? This permanently deletes the project and its files.')) return;
+                      let res;
+                      try { res = await fetch(getApiUrl(`/api/jobs/${p.id}`), { method: 'DELETE' }); }
+                      catch { /* offline / already gone — drop the local card below */ }
+                      if (res && res.status === 409) {
+                        window.alert('This trailer is still processing — you can delete it once it finishes.');
+                        return;
+                      }
+                      removeProject(p.id);
+                      setProjects(getProjects().filter(isTrailerProject));
+                    }}
+                    className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 border border-edge text-muted opacity-0 group-hover:opacity-100 hover:text-red-400 hover:border-red-400/50 transition-all"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

@@ -1,60 +1,44 @@
-import posthog from 'posthog-js';
+// Bundle the recorder with the desktop dashboard. Loading recorder.js later
+// from a CDN is fragile inside packaged Electron apps and previously left the
+// project with normal events but zero replay snapshots.
+import posthog from 'posthog-js/dist/module.full.no-external.js';
+import {
+  SENSITIVE_PROPERTY,
+  URL_PROPERTY,
+  scrubText,
+  safeContextValue,
+  sanitizeNested,
+  sanitizeExceptionList,
+} from './analyticsSanitizer.js';
 
 const POSTHOG_TOKEN = 'phc_kUQRck5LKwiSJJC2Zv8H8xxFbGksCtmuxdV5Uw7pTpne';
 const POSTHOG_HOST = 'https://us.i.posthog.com';
 const SAFE_APP_URL = 'desktop://app';
 const DEV_OPT_IN = import.meta.env.VITE_POSTHOG_DEV === 'true';
 
-const SENSITIVE_PROPERTY = /(?:api[_-]?key|authorization|password|secret|token|prompt|transcript|caption|media|file(?:name)?|title|job[_-]?id|raw[_-]?logs?|social[_-]?(?:user)?name|request[_-]?(?:headers?|bod(?:y|ies))|response[_-]?(?:headers?|bod(?:y|ies)))/i;
-const URL_PROPERTY = /(?:^|[_$])(?:current_)?url$|referrer|referring_domain|pathname|host$|^(?:href|src|action|poster)$/i;
-const URL_TEXT = /(?:https?|file|blob):\/\/[^\s)\]}>'"]+/gi;
-const LOCAL_PATH = /(?:\/[A-Za-z0-9._ -]+){2,}|[A-Za-z]:\\(?:[^\\\s]+\\)+[^\\\s]*/g;
-const API_KEY_TEXT = /\b(?:phc|sk|zern|soniox)[_-][A-Za-z0-9_-]{12,}\b|\bAIza[A-Za-z0-9_-]{30,}\b|\b(?:api[_ -]?key|token|secret|bearer)\s*[:= ]\s*[A-Za-z0-9_-]{12,}\b/gi;
-const FILENAME_TEXT = /\b[\w .-]+\.(?:mp4|mov|mkv|webm|avi|mp3|wav|m4a|png|jpe?g|gif|webp|srt|vtt|txt|log|json|jsx?|tsx?|py)\b/gi;
-const SAFE_CONTEXT_VALUE = /[^a-zA-Z0-9._-]/g;
+// Top-level `$exception_*` keys that describe where a crash happened, not what
+// the user was doing. They stay diagnostic once scrubText redacts any path or
+// filename, so let them through instead of dropping the whole prefix.
+const DIAGNOSTIC_EXCEPTION_KEYS = new Set([
+  '$exception_level',
+  '$exception_handled',
+  '$exception_type',
+  '$exception_types',
+  '$exception_message',
+  '$exception_values',
+  '$exception_source',
+  '$exception_sources',
+  '$exception_functions',
+  '$exception_line',
+  '$exception_colno',
+]);
+const SENSITIVE_INPUT = /(?:api[\s_-]?(?:key|token)|password|secret|credential)/i;
+const API_KEY_VALUE = /\b(?:phc|sk|zern|soniox)[_-][A-Za-z0-9_-]{12,}\b|\bAIza[A-Za-z0-9_-]{30,}\b/i;
 
 let initialized = false;
 let desktopRuntime = false;
 const capturedErrors = new WeakSet();
 const recentErrorFingerprints = new Map();
-
-function scrubText(value) {
-  return String(value)
-    .replace(URL_TEXT, '[redacted-url]')
-    .replace(LOCAL_PATH, '[redacted-path]')
-    .replace(FILENAME_TEXT, '[redacted-filename]')
-    .replace(API_KEY_TEXT, '[redacted-secret]')
-    .slice(0, 500);
-}
-
-function safeContextValue(value, fallback = 'unknown') {
-  if (!['string', 'number', 'boolean'].includes(typeof value)) return fallback;
-  const safe = String(value).replace(SAFE_CONTEXT_VALUE, '').slice(0, 40);
-  return safe || fallback;
-}
-
-function sanitizeExceptionList(value) {
-  if (!Array.isArray(value)) return undefined;
-  return value.slice(0, 5).map((exception) => ({
-    type: safeContextValue(exception?.type || exception?.name || 'Error'),
-    value: scrubText(exception?.value || exception?.message || 'An error occurred'),
-  }));
-}
-
-function sanitizeNested(value, seen = new WeakSet()) {
-  if (typeof value === 'string') return scrubText(value);
-  if (!value || typeof value !== 'object') return value;
-  if (seen.has(value)) return undefined;
-  seen.add(value);
-  if (Array.isArray(value)) return value.map((item) => sanitizeNested(item, seen));
-
-  const sanitized = {};
-  for (const [key, nestedValue] of Object.entries(value)) {
-    if (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key)) continue;
-    sanitized[key] = sanitizeNested(nestedValue, seen);
-  }
-  return sanitized;
-}
 
 function beforeSend(event) {
   if (!event?.properties) return event;
@@ -66,9 +50,31 @@ function beforeSend(event) {
       if (exceptionList?.length) properties[key] = exceptionList;
       continue;
     }
-    if (key.startsWith('$exception_')) continue;
+    if (key.startsWith('$exception_')) {
+      if (!DIAGNOSTIC_EXCEPTION_KEYS.has(key)) continue;
+      properties[key] = typeof value === 'string'
+        ? scrubText(value)
+        : value && typeof value === 'object'
+          ? sanitizeNested(value)
+          : value;
+      continue;
+    }
+    // PostHog adds its required `token` field before this hook. Preserve that
+    // exact value for authentication; user-provided token values are still
+    // removed by track() before this hook runs.
+    if (key === 'token') {
+      properties[key] = value;
+      continue;
+    }
     if (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key)) continue;
-    properties[key] = key === '$snapshot_data' ? sanitizeNested(value) : typeof value === 'string' ? scrubText(value) : value;
+    // Replay snapshots are already masked by the recorder below. They are an
+    // encoded protocol payload, not ordinary text: scrubbing/truncating them
+    // corrupts the recording and makes it unplayable.
+    if (key === '$snapshot_data') {
+      properties[key] = value;
+      continue;
+    }
+    properties[key] = typeof value === 'string' ? scrubText(value) : value;
   }
 
   properties.$current_url = SAFE_APP_URL;
@@ -120,6 +126,7 @@ export async function initAnalytics() {
   posthog.init(POSTHOG_TOKEN, {
     api_host: POSTHOG_HOST,
     ui_host: 'https://us.posthog.com',
+    debug: DEV_OPT_IN,
     person_profiles: 'identified_only',
     // Disable PostHog's built-in surveys — feedback uses a custom native modal
     surveys: false,
@@ -132,7 +139,7 @@ export async function initAnalytics() {
     capture_exceptions: {
       capture_unhandled_errors: true,
       capture_unhandled_rejections: true,
-      capture_console_errors: false,
+      capture_console_errors: true,
     },
     capture_heatmaps: false,
     capture_dead_clicks: false,
@@ -141,8 +148,31 @@ export async function initAnalytics() {
     get_current_url: () => SAFE_APP_URL,
     before_send: beforeSend,
     session_recording: {
-      maskAllInputs: true,
-        maskTextSelector: '*',
+      // Show form values so replay can reveal the exact bug report and state.
+      // Only password/API-key fields are masked; add `ph-mask` to private
+      // non-input text that should stay hidden.
+      maskAllInputs: false,
+      maskInputOptions: {
+        text: true,
+        textarea: true,
+        password: true,
+        url: true,
+      },
+      maskInputFn: (value, element) => {
+        const context = [
+          element?.type,
+          element?.name,
+          element?.id,
+          element?.placeholder,
+          element?.getAttribute?.('aria-label'),
+        ].filter(Boolean).join(' ');
+        const markedSensitive = element?.getAttribute?.('data-posthog-sensitive') === 'true';
+        return markedSensitive || element?.type === 'password' || SENSITIVE_INPUT.test(context) || API_KEY_VALUE.test(value)
+          ? '*'.repeat(value.length)
+          : value;
+      },
+      sampleRate: 1,
+      maskTextSelector: '.ph-mask',
       blockSelector: 'video, audio, canvas, img, [data-posthog-block]',
       recordHeaders: false,
       recordBody: false,
@@ -160,12 +190,23 @@ export async function initAnalytics() {
     runtime: 'desktop',
   } : { runtime: 'web' });
 
+  // The beta needs a recording from every test session. This also overrides a
+  // stale 20% sampling decision already stored for the current browser session.
+  posthog.startSessionRecording({ sampling: true });
+
+  setTimeout(() => {
+    track('analytics_health_checked', {
+      recording_status: posthog.sessionRecording?.status || 'unknown',
+      recording_started: Boolean(posthog.sessionRecording?.started),
+    });
+  }, 3000);
+
   initialized = true;
   return true;
 }
 
 export function track(eventName, properties = {}) {
-  if (!initialized) return;
+  if (!initialized) return false;
   const safeProperties = {};
   for (const [key, value] of Object.entries(properties)) {
     if (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key)) continue;
@@ -177,8 +218,28 @@ export function track(eventName, properties = {}) {
         : safeContextValue(value);
     }
   }
-  posthog.capture(eventName, safeProperties);
+  return Boolean(posthog.capture(eventName, safeProperties, { send_instantly: true }));
+}
 
+export async function submitFeedback(properties = {}) {
+  if (!initialized) return false;
+  const category = safeContextValue(properties.category);
+  const detail = scrubText(properties.detail || '');
+
+  // The desktop main process already delivers startup and failure events
+  // reliably. Use that same route for feedback and wait for its result so the
+  // modal never claims success for a request that was dropped.
+  if (desktopRuntime && window.openOpusTelemetry?.captureFeedback) {
+    try {
+      return await window.openOpusTelemetry.captureFeedback({ category, detail });
+    } catch {
+      return false;
+    }
+  }
+
+  // Web builds have no Electron bridge. A capture result means the browser
+  // SDK accepted the event into its immediate delivery queue.
+  return track('feedback_submitted', { category, detail });
 }
 
 export function captureError(error, { area = 'renderer' } = {}) {

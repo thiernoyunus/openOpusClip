@@ -31,6 +31,7 @@ export default function KeyInput({ onKeySet, savedKey }) {
                     <input
                         type={isVisible ? "text" : "password"}
                         value={key}
+                        data-posthog-sensitive="true"
                         onChange={(e) => {
                             setKey(e.target.value);
                             setIsSaved(false);

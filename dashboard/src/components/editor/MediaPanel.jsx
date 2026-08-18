@@ -335,7 +335,7 @@ function MediaPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
                 </button>
                 <div className="flex items-center gap-2 mb-3">
                     <AssetIcon kind={kind} size={14} className="text-viral" />
-                    <span className="flex-1 truncate text-xs text-fg">{selectedAsset.name}</span>
+                    <span className="ph-mask flex-1 truncate text-xs text-fg">{selectedAsset.name}</span>
                     <button type="button" onClick={remove} className="text-muted hover:text-red-400 p-1" aria-label="Remove asset">
                         <Trash2 size={13} />
                     </button>
@@ -459,7 +459,7 @@ function MediaPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
                             <div className="aspect-video rounded-lg bg-black/40 flex items-center justify-center mb-1.5">
                                 <AssetIcon kind={a.kind} size={18} className="text-zinc-400" />
                             </div>
-                            <p className="text-[11px] text-fg truncate">{a.name}</p>
+                            <p className="ph-mask text-[11px] text-fg truncate">{a.name}</p>
                             <p className="text-[9px] text-muted">{a.sub}</p>
                         </button>
                     ))}
@@ -485,7 +485,7 @@ function MediaPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
                             <KeyRound size={12} className="mt-0.5 shrink-0" />
                             Optional free Pexels key for stock video. Get one at pexels.com/api.
                         </div>
-                        <input type="password" placeholder="Pexels API key" onChange={(e) => saveKey(e.target.value.trim())}
+                        <input type="password" data-posthog-sensitive="true" placeholder="Pexels API key" onChange={(e) => saveKey(e.target.value.trim())}
                             className="w-full bg-surface2 border border-edge rounded-lg px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-white/30" />
                     </>
                 ) : (

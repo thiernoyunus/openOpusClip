@@ -243,10 +243,10 @@ export default function SocialCalendar({ zernioKey, accounts = [], onGoToSetting
                                 key={p._id}
                                 onClick={() => { setSelectedPost(p); setRescheduleDate(''); }}
                                 className={`w-full text-left px-1.5 py-1 rounded border text-[10px] leading-tight truncate flex items-center gap-1 hover:brightness-125 transition-all ${STATUS_STYLES[p.status] || STATUS_STYLES.draft}`}
-                                title={p.title || p.content}
+                                title="Open scheduled post"
                               >
                                 <PlatformIcon platform={platform} size={10} />
-                                <span className="truncate">{when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} {p.title || p.content || 'Post'}</span>
+                                <span className="truncate">{when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} <span className="ph-mask">{p.title || p.content || 'Post'}</span></span>
                               </button>
                             );
                           })}
@@ -285,7 +285,7 @@ export default function SocialCalendar({ zernioKey, accounts = [], onGoToSetting
                   onClick={() => setStatsAccountId(acc.id)}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border transition-colors ${statsAccountId === acc.id ? 'bg-surface2 border-white/20 text-fg' : 'border-edge text-muted hover:text-fg'}`}
                 >
-                  <PlatformIcon platform={acc.platform} size={12} /> {acc.displayName || acc.username}
+                  <PlatformIcon platform={acc.platform} size={12} /> <span className="ph-mask">{acc.displayName || acc.username}</span>
                 </button>
               ))}
             </div>
@@ -338,7 +338,7 @@ export default function SocialCalendar({ zernioKey, accounts = [], onGoToSetting
                       <tbody>
                         {statPosts.map((p, i) => (
                           <tr key={p.postId || i} className="border-t border-edge text-fg">
-                            <td className="px-3 py-2 max-w-[240px] truncate">{p.content || p.title || '—'}</td>
+                            <td className="ph-mask px-3 py-2 max-w-[240px] truncate">{p.content || p.title || '—'}</td>
                             <td className="px-3 py-2"><span className="flex items-center gap-1.5 capitalize"><PlatformIcon platform={p.platform} size={11} /> {p.platform || '—'}</span></td>
                             <td className="px-3 py-2 text-right tabular-nums">{fmtNum(p.analytics?.views)}</td>
                             <td className="px-3 py-2 text-right tabular-nums">{fmtNum(p.analytics?.likes)}</td>
@@ -365,8 +365,8 @@ export default function SocialCalendar({ zernioKey, accounts = [], onGoToSetting
             <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wide mb-3 ${STATUS_STYLES[selectedPost.status] || STATUS_STYLES.draft}`}>
               {selectedPost.status}
             </div>
-            <h3 className="text-base font-bold text-white mb-1">{selectedPost.title || 'Post'}</h3>
-            {selectedPost.content && <p className="text-xs text-zinc-400 mb-3 line-clamp-4">{selectedPost.content}</p>}
+            <h3 className="ph-mask text-base font-bold text-white mb-1">{selectedPost.title || 'Post'}</h3>
+            {selectedPost.content && <p className="ph-mask text-xs text-zinc-400 mb-3 line-clamp-4">{selectedPost.content}</p>}
 
             <div className="flex items-center gap-2 text-xs text-zinc-400 mb-4">
               <Clock size={13} />

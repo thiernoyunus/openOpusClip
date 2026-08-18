@@ -1,11 +1,11 @@
 // electron-builder configuration.
 //
 // This is a .js config (not the "build" key in package.json) for one reason:
-// the bundled runtime differs per architecture. `desktop-stage/` holds the
-// arm64 runtime and `desktop-stage-x64/` the Intel one, and each .app must get
-// exactly one of them. A static config cannot express that, and shipping the
-// wrong stage produces an app that launches and then fails at the first
-// ffmpeg/Python call.
+// the bundled runtime differs per platform and architecture. `desktop-stage/`
+// holds the macOS arm64 runtime, `desktop-stage-x64/` the macOS Intel one, and
+// `desktop-stage-win-x64/` the Windows one. Each installer must get exactly one
+// of them. A static config cannot express that, and shipping the wrong stage
+// produces an app that launches and then fails at the first ffmpeg/Python call.
 //
 // The filename matters: electron-builder only auto-discovers
 // `electron-builder.{yml,yaml,json,json5,toml,js,cjs,ts}`. Naming this
@@ -16,16 +16,30 @@
 // Build with:
 //   npx electron-builder --mac dmg --arm64
 //   npx electron-builder --mac dmg --x64
+//   npx electron-builder --win nsis --x64      (on Windows — see below)
 //
-// Signing: identity is left to electron-builder's automatic discovery, which
-// picks the "Developer ID Application" cert from the login keychain. Set
-// CSC_IDENTITY_AUTO_DISCOVERY=false to produce an unsigned build.
+// Signing: on macOS the identity is left to electron-builder's automatic
+// discovery, which picks the "Developer ID Application" cert from the login
+// keychain. Set CSC_IDENTITY_AUTO_DISCOVERY=false to produce an unsigned build.
+// Windows builds are unsigned for now — there is no code-signing certificate,
+// so SmartScreen shows a "Windows protected your PC" warning on first run.
+// That is expected; buying an EV/OV cert and setting CSC_LINK + CSC_KEY_PASSWORD
+// is the only thing that removes it.
+//
+// The Windows installer must be BUILT ON WINDOWS. Not for electron-builder's
+// sake (it can cross-build an NSIS installer fine) but because the staged
+// runtime cannot be: it contains a Windows CPython with compiled wheels
+// (torch, mediapipe, opencv) and a Windows ffmpeg, none of which can be
+// assembled or smoke-tested from macOS. See .github/workflows/desktop-windows.yml.
 
 const path = require('node:path');
 
-// electron-builder calls this for each target arch, so `arch` is authoritative;
-// the env var is only a fallback for direct/manual invocations.
-const stageForArch = (arch) => (arch === 'x64' ? '../desktop-stage-x64' : '../desktop-stage');
+// electron-builder calls this for each target platform+arch, so both are
+// authoritative; the env var is only a fallback for direct/manual invocations.
+const stageFor = (platform, arch) => {
+  if (platform === 'win32') return '../desktop-stage-win-x64';
+  return arch === 'x64' ? '../desktop-stage-x64' : '../desktop-stage';
+};
 
 module.exports = {
   appId: 'com.openopusclip.desktop',
@@ -33,8 +47,13 @@ module.exports = {
   asar: true,
   files: ['main.js', 'preload.js', 'telemetry.js', 'package.json'],
 
-  // Resolved per-arch in the artifact hooks below.
-  extraResources: [{ from: stageForArch(process.env.OPENSHORTS_TARGET_ARCH), to: 'stage' }],
+  // Resolved per-platform/arch in the beforePack hook below.
+  extraResources: [
+    {
+      from: stageFor(process.env.OPENSHORTS_TARGET_PLATFORM, process.env.OPENSHORTS_TARGET_ARCH),
+      to: 'stage',
+    },
+  ],
 
   mac: {
     category: 'public.app-category.video',
@@ -95,6 +114,34 @@ module.exports = {
     ],
   },
 
+  win: {
+    icon: 'build/icon.ico',
+    // NSIS only. It is the one Windows target electron-updater can install
+    // from, so a zip/portable-only release could never auto-update — the same
+    // trap the mac zip note above describes.
+    target: [{ target: 'nsis', arch: ['x64'] }],
+    artifactName: '${productName}-${version}-${arch}.${ext}',
+  },
+
+  nsis: {
+    // A wizard, not a one-click installer. The payload is ~2 GB, so silently
+    // installing to AppData with no destination choice and no progress is a
+    // bad first impression — people want to see where 2 GB is going.
+    oneClick: false,
+    allowToChangeInstallationDirectory: true,
+    // Per-user by default: a machine-wide install needs an admin prompt, and
+    // the app writes nothing outside the user's own profile.
+    perMachine: false,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+    shortcutName: 'openOpusClip',
+    // differentialPackage is left at its default (on). It writes the .blockmap
+    // next to the installer, which lets electron-updater download only the
+    // parts that changed. At this size that is the difference between a ~10 MB
+    // update and re-downloading well over a gigabyte, so it must not be turned
+    // off — and the .blockmap must be published alongside the .exe.
+  },
+
   dmg: {
     title: 'openOpusClip ${version}',
     icon: 'build/icon.icns',
@@ -107,19 +154,28 @@ module.exports = {
 
   publish: { provider: 'github', owner: 'thiernoyunus', repo: 'openOpusClip' },
 
-  // Swap in the correct stage before each arch is packed. electron-builder reads
-  // extraResources per-target, so mutating it here is what makes a single
+  // Swap in the correct stage before each target is packed. electron-builder
+  // reads extraResources per-target, so mutating it here is what makes a single
   // `--arm64 --x64` invocation bundle the right runtime in each .app.
   beforePack: async (context) => {
     // Use builder-util's own enum->name mapping rather than comparing the
     // numeric Arch value by hand (ia32=0, x64=1, armv7l=2, arm64=3).
     const { Arch } = require('builder-util');
     const arch = Arch[context.arch];
-    const from = stageForArch(arch);
-    if (!['arm64', 'x64'].includes(arch)) {
-      throw new Error(`unsupported target arch for staged runtime: ${arch}`);
+    const platform = context.electronPlatformName; // 'darwin' | 'win32' | 'linux'
+    if (platform === 'win32' && arch !== 'x64') {
+      throw new Error(`unsupported Windows target arch for staged runtime: ${arch}`);
     }
+    if (platform === 'darwin' && !['arm64', 'x64'].includes(arch)) {
+      throw new Error(`unsupported macOS target arch for staged runtime: ${arch}`);
+    }
+    if (!['darwin', 'win32'].includes(platform)) {
+      throw new Error(`unsupported target platform for staged runtime: ${platform}`);
+    }
+    const from = stageFor(platform, arch);
     context.packager.config.extraResources = [{ from, to: 'stage' }];
-    console.log(`  • bundling runtime  arch=${arch} stage=${path.basename(from)}`);
+    console.log(
+      `  • bundling runtime  platform=${platform} arch=${arch} stage=${path.basename(from)}`
+    );
   },
 };

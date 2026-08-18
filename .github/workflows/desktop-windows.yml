@@ -1,0 +1,129 @@
+# Builds the Windows desktop installer.
+#
+# This lives in CI rather than on a dev machine because the staged runtime
+# cannot be cross-built: it contains a Windows CPython with compiled wheels
+# (torch, mediapipe, opencv) and Windows ffmpeg binaries, none of which can be
+# assembled or smoke-tested from macOS. The macOS installers are still built
+# locally (see electron/README.md); only Windows needs a runner.
+#
+# Two ways to run it:
+#   * Actions -> "Desktop (Windows)" -> Run workflow. Produces a downloadable
+#     artifact and publishes nothing. This is the one to use for testing.
+#   * Push a tag like v1.0.7. Uploads the installer to the matching GitHub
+#     release as a draft, which is what the in-app updater reads.
+
+name: Desktop (Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Upload to the GitHub release as a draft (instead of just an artifact)'
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    # Tag builds publish the installer, blockmap, and updater metadata to the
+    # GitHub release. The default token is read-only without this permission.
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    # The Python dependency install alone (torch, mediapipe) runs long, and the
+    # ~2 GB stage is slow to compress into an installer. The default 360-minute
+    # cap would let a hung run burn the whole budget.
+    timeout-minutes: 150
+
+    steps:
+      - name: Allow long paths
+        # node_modules and site-packages both nest past Windows' 260-character
+        # MAX_PATH. Without this, checkout and npm fail on unrelated-looking
+        # "cannot find path" errors deep in a dependency tree.
+        run: git config --global core.longpaths true
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            dashboard/package-lock.json
+            render-service/package-lock.json
+            remotion/package-lock.json
+            electron/package-lock.json
+
+      - name: Cache pinned downloads
+        # Python, ffmpeg and Node are pinned by version AND checksum, so the
+        # key can be the versions themselves - a changed pin misses the cache
+        # and re-downloads, which is exactly what should happen.
+        uses: actions/cache@v4
+        with:
+          path: .desktop-build-cache
+          key: desktop-stage-downloads-${{ hashFiles('scripts/desktop/build-stage.ps1') }}
+
+      - name: Check helper self-tests
+        run: pwsh -File scripts/desktop/test-build-stage-helpers.ps1
+
+      - name: Report free disk space
+        # The stage is ~2 GB, the unpacked app another ~2 GB, and the installer
+        # ~1.5 GB on top. Windows runners start with roughly 14 GB free on C:,
+        # so if a build ever dies with an opaque I/O error this is the number
+        # to look at first.
+        run: Get-PSDrive C | Select-Object Used, Free
+
+      - name: Build the staged runtime
+        run: pwsh -File scripts/desktop/build-stage.ps1
+
+      - name: Install desktop shell dependencies
+        working-directory: electron
+        run: npm ci
+
+      - name: Package the installer
+        working-directory: electron
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $publish = if ('${{ inputs.publish }}' -eq 'true' -or '${{ github.ref_type }}' -eq 'tag') { 'always' } else { 'never' }
+          Write-Host "publish mode: $publish"
+
+          # Invoked through its .cmd rather than `npx`. Under pwsh, `npx
+          # electron-builder` returned exit 0 having printed nothing and built
+          # nothing — a silent no-op that looked like a passing step. Calling
+          # the installed binary directly removes npx's resolution from the
+          # picture entirely.
+          $builder = Join-Path 'node_modules' '.bin\electron-builder.cmd'
+          if (-not (Test-Path $builder)) { throw "electron-builder not installed at $builder" }
+          & $builder --win nsis --x64 --publish $publish 2>&1 | ForEach-Object { "$_" }
+          if ($LASTEXITCODE -ne 0) { throw "electron-builder exited $LASTEXITCODE" }
+
+          # A build that produces no installer must fail here, not four steps
+          # later in the upload. The .blockmap and latest.yml are what the
+          # in-app updater needs; without them a release can install but never
+          # update itself.
+          Write-Host "`ndist/ contents:"
+          Get-ChildItem dist | Format-Table Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}} | Out-String | Write-Host
+          foreach ($required in @('*.exe', 'latest.yml')) {
+            if (-not (Get-ChildItem -Path dist -Filter $required -ErrorAction SilentlyContinue)) {
+              throw "packaging produced no $required in electron/dist"
+            }
+          }
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: openOpusClip-windows-x64
+          # latest.yml rides along because it is what the in-app updater reads;
+          # an installer published without it can never update itself, the same
+          # way a macOS release without the zip can't. The .blockmap is what
+          # lets an update download only the changed parts instead of the whole
+          # gigabyte-plus installer, so it has to ship too.
+          path: |
+            electron/dist/*.exe
+            electron/dist/*.blockmap
+            electron/dist/latest.yml
+          if-no-files-found: error
+          retention-days: 14

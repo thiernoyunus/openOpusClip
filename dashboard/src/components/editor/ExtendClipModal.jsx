@@ -230,7 +230,7 @@ export default function ExtendClipModal({ jobId, initialSec, usedRanges = [], on
                                         >
                                             <span className="text-[10px] tabular-nums text-zinc-600 mr-2">[{fmt(seg.start)}]</span>
                                             {/* Opus-style orientation: white = already in the short, gray = not yet used; selecting brightens it */}
-                                            <span className={`text-xs ${inSel || used ? 'text-zinc-100' : 'text-zinc-500'}`}>
+                                            <span className={`ph-mask text-xs ${inSel || used ? 'text-zinc-100' : 'text-zinc-500'}`}>
                                                 {seg.words.map((w) => w.text).join(' ')}
                                             </span>
                                         </button>

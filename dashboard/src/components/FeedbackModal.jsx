@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { track, analyticsEnabled } from '../analytics.js';
+import { submitFeedback, analyticsEnabled } from '../analytics.js';
 
 const CATEGORIES = [
   { value: 'bug', label: 'Something broke' },
@@ -14,6 +14,7 @@ export default function FeedbackModal({ onClose }) {
   const [detail, setDetail] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [submitFailed, setSubmitFailed] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const textRef = useRef(null);
 
   useEffect(() => {
@@ -22,27 +23,17 @@ export default function FeedbackModal({ onClose }) {
     }
   }, [step]);
 
-  const handleCategorySubmit = () => {
-    if (!category) return;
+  const handleDetailSubmit = async () => {
+    setSubmitFailed(false);
     if (!analyticsEnabled()) {
       setSubmitFailed(true);
       return;
     }
-    if (category === 'feature') {
-      track('feedback_submitted', { category, detail: '' });
-      setSubmitted(true);
-      return;
-    }
-    setStep('detail');
-  };
-
-  const handleDetailSubmit = () => {
-    if (!analyticsEnabled()) {
-      setSubmitFailed(true);
-      return;
-    }
-    track('feedback_submitted', { category, detail: detail.trim() });
-    setSubmitted(true);
+    setSubmitting(true);
+    const delivered = await submitFeedback({ category, detail: detail.trim() });
+    setSubmitting(false);
+    if (delivered) setSubmitted(true);
+    else setSubmitFailed(true);
   };
 
   const handleBackdropClick = (e) => {
@@ -52,21 +43,6 @@ export default function FeedbackModal({ onClose }) {
   const handleKeyDown = (e) => {
     if (e.key === 'Escape') onClose();
   };
-
-  if (submitFailed) {
-    return (
-      <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-        <div className="mx-4 w-full max-w-sm rounded-xl border border-white/10 bg-zinc-900 p-6 text-center shadow-2xl">
-          <h3 className="text-base font-semibold text-white">Feedback unavailable</h3>
-          <p className="mt-2 text-sm text-zinc-400">Analytics is disabled in this build. Feedback can’t be sent right now.</p>
-          <button onClick={onClose} className="mt-5 w-full rounded-lg bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-700">
-            Close
-          </button>
-        </div>
-      </div>
-    );
-  }
-
 
   if (submitted) {
     return (
@@ -137,6 +113,11 @@ export default function FeedbackModal({ onClose }) {
               placeholder="What happened instead?"
               className="mt-3 w-full resize-none rounded-lg border border-white/10 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 placeholder-zinc-500 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
             />
+            {submitFailed && (
+              <p className="mt-2 text-xs text-red-400" role="alert">
+                Feedback did not reach PostHog. Check your connection and try again.
+              </p>
+            )}
             <div className="mt-4 flex gap-2">
               <button
                 onClick={() => setStep('category')}
@@ -146,9 +127,10 @@ export default function FeedbackModal({ onClose }) {
               </button>
               <button
                 onClick={handleDetailSubmit}
-                className="flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90 transition-colors"
+                disabled={submitting}
+                className="flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90 transition-colors disabled:cursor-wait disabled:opacity-60"
               >
-                Send feedback
+                {submitting ? 'Sending…' : 'Send feedback'}
               </button>
             </div>
           </>

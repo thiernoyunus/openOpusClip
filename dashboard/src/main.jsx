@@ -1,4 +1,4 @@
-import { StrictMode, useState, useEffect } from 'react'
+import { Component, StrictMode, useState, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { PostHogProvider } from '@posthog/react'
 import './index.css'
@@ -8,7 +8,7 @@ import Legal from './Legal.jsx'
 import EditorView from './components/editor/EditorView.jsx'
 import ResultCard from './components/ResultCard.jsx'
 import FeedbackModal from './components/FeedbackModal.jsx'
-import { analyticsClient, analyticsRuntime, initAnalytics, track } from './analytics.js'
+import { analyticsClient, analyticsRuntime, captureError, initAnalytics, track } from './analytics.js'
 
 const buildDevTranscript = (items) => {
   let t = 0;
@@ -211,6 +211,39 @@ function FeedbackButton() {
   );
 }
 
+class AppErrorBoundary extends Component {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error) {
+    captureError(error, { area: 'react_boundary' });
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-6 text-center text-white">
+          <div>
+            <h1 className="text-lg font-semibold">Something went wrong</h1>
+            <p className="mt-2 text-sm text-zinc-400">Refresh the app and try again.</p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="mt-5 rounded-lg bg-primary px-4 py-2 text-sm font-medium"
+            >
+              Refresh app
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 async function renderApp() {
   await initAnalytics();
   track('app_opened', { runtime: analyticsRuntime() });
@@ -218,7 +251,9 @@ async function renderApp() {
   createRoot(document.getElementById('root')).render(
     <StrictMode>
       <PostHogProvider client={analyticsClient}>
-        <Root />
+        <AppErrorBoundary>
+          <Root />
+        </AppErrorBoundary>
         <FeedbackButton />
       </PostHogProvider>
     </StrictMode>,

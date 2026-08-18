@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Type, Calendar, Clock, Languages, Play, ArrowUp, ArrowDown, FileText, Crop, Flame } from 'lucide-react';
 import { getApiUrl } from '../config';
-import { track } from '../analytics';
+import { captureError, track } from '../analytics';
 import SubtitleModal from './SubtitleModal';
 import HookModal from './HookModal';
 import TranslateModal from './TranslateModal';
@@ -43,6 +43,13 @@ const ScoreBadge = ({ score, lg, box }) => {
 
 const BREAKDOWN_LABELS = { hook: 'Hook', flow: 'Flow', value: 'Value', trend: 'Trend' };
 
+// The only three settings YouTube accepts for who can see an upload.
+const YT_VISIBILITIES = [
+    { value: 'public', label: 'Public' },
+    { value: 'unlisted', label: 'Unlisted' },
+    { value: 'private', label: 'Private' },
+];
+
 export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], geminiApiKey, elevenLabsKey, onPlay, onPause, openIndex, setOpenIndex, totalClips: _totalClips, onEdit, framingVersion = 0 }) {
     const isOpen = openIndex === index;
     const [showModal, setShowModal] = useState(false);
@@ -50,6 +57,10 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     const [playing, setPlaying] = useState(false);
     const [captions, setCaptions] = useState([]);
     const videoRef = React.useRef(null);
+    // Where the visible player was last left, in seconds. The plain <video> and
+    // the Remotion preview swap places (see useFramingPreview), so videoRef is
+    // null half the time — this is the one reading that works for both.
+    const lastPreviewTimeRef = React.useRef(0);
     const originalVideoUrl = getApiUrl(clip.video_url); // Base URL for Remotion when not EDL-edited
     const [currentVideoUrl, setCurrentVideoUrl] = useState(originalVideoUrl);
 
@@ -61,6 +72,21 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     // Account selection: default every connected account to ON until the user unticks it
     const [accountToggles, setAccountToggles] = useState({});
     const selectedAccounts = socialAccounts.filter((a) => accountToggles[a.id] ?? true);
+    // Per-account channel options. Keyed by account id, not by platform — someone
+    // can connect two YouTube channels and want different settings on each.
+    const [ytVisibility, setYtVisibility] = useState({}); // { [accountId]: 'public' | 'unlisted' | 'private' }
+    const [igCoverMs, setIgCoverMs] = useState({});       // { [accountId]: ms into the clip }
+    const coverPreviewRefs = useRef({});                  // { [accountId]: <video> showing the chosen frame }
+
+    // Move the little preview to the picked moment so the user sees the frame they chose.
+    const setCoverMs = useCallback((accountId, ms) => {
+        setIgCoverMs((prev) => ({ ...prev, [accountId]: ms }));
+        const el = coverPreviewRefs.current[accountId];
+        if (el) {
+            try { el.currentTime = ms / 1000; } catch { /* not seekable yet */ }
+        }
+    }, []);
+
     const [postTitle, setPostTitle] = useState("");
     const [postDescription, setPostDescription] = useState("");
     const [isScheduling, setIsScheduling] = useState(false);
@@ -168,6 +194,25 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     const effectiveDuration = isEdited
         ? outputDurationFrames(framingFull, 30) / 30
         : clipDuration;
+
+    // A cover frame is only meaningful when the file we preview is the file we
+    // post. An unexported edit is burned at post time, so trims and reorders
+    // would shift every timestamp — the frame picked here would not be the
+    // frame Instagram receives, and the offset could even land past the end.
+    const coverMatchesPost = !isEdited
+        || (localRenderedEditedAt ?? clip.rendered_edited_at) === framingFull?.editedAt;
+
+    // Furthest into the posted file a cover frame can sit. Derived from the
+    // effective duration so a trim shortens it — the picked offset is kept
+    // rather than reset (a re-trim shouldn't silently discard the choice), so
+    // every read of it clamps here instead.
+    // Stop one frame short of the end. An offset equal to the duration is EOF,
+    // not a frame, so it can be rejected or silently resolve to something else.
+    // Everything in this app composes at 30fps (see outputDurationFrames calls).
+    const coverMaxMs = Math.max(
+        0,
+        Math.round((effectiveDuration || clipDuration || 30) * 1000) - Math.round(1000 / 30),
+    );
 
     // Initialize/Reset form when modal opens
     useEffect(() => {
@@ -465,6 +510,9 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
         setIsRendering(true);
         setRenderProgress(0);
+        track('clip_render_started', {
+            operation_category: isEdited ? 'edit_burn' : 'captions_burn',
+        });
         try {
             let props;
             if (isEdited) {
@@ -511,6 +559,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                 setLocalRenderedEditedAt(framingFull.editedAt);
                 const result = { key: cacheKey, downloadUrl: newUrl, filename: null, applied: true };
                 renderCacheRef.current = result;
+                track('clip_render_completed', { result_category: 'edited_clip' });
                 return result;
             }
 
@@ -524,7 +573,12 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                 applied: false,
             };
             renderCacheRef.current = result;
+            track('clip_render_completed', { result_category: 'captioned_clip' });
             return result;
+        } catch (error) {
+            track('clip_render_failed', { failure_category: 'render' });
+            captureError(error, { area: 'clip_render' });
+            throw error;
         } finally {
             setIsRendering(false);
             setRenderProgress(null);
@@ -565,7 +619,17 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                 job_id: jobId,
                 clip_index: index,
                 api_key: zernioKey,
-                accounts: selectedAccounts.map((a) => ({ accountId: a.id, platform: a.platform })),
+                accounts: selectedAccounts.map((a) => {
+                    const target = { accountId: a.id, platform: a.platform };
+                    if (a.platform === 'youtube') target.visibility = ytVisibility[a.id] || 'public';
+                    // Only send an offset we can stand behind (see coverMatchesPost), and
+                    // clamp it — a later trim can leave the stored pick past the end.
+                    // Omitted when 0, which is the first frame and the default anyway.
+                    if (a.platform === 'instagram' && coverMatchesPost && igCoverMs[a.id]) {
+                        target.thumbOffset = Math.min(Math.round(igCoverMs[a.id]), coverMaxMs);
+                    }
+                    return target;
+                }),
                 title: postTitle,
                 description: postDescription
             };
@@ -608,6 +672,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
         } catch (e) {
             setPostResult({ success: false, msg: `Failed: ${e.message}` });
             track('social_post_failed', { mode: isScheduling ? 'schedule' : 'post', source: 'clip_card', platform_count: platformCount, platforms: _platforms, error_category: 'client' });
+            captureError(e, { area: 'social_post' });
         } finally {
             setPosting(false);
         }
@@ -615,6 +680,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
     const handleDownload = async () => {
         setEditError(null);
+        track('clip_download_started', { source_category: 'clip_card' });
         try {
             const prepared = await ensureRenderedFile();
             const response = await fetch(prepared.downloadUrl);
@@ -629,8 +695,11 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             a.click();
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
+            track('clip_download_completed', { result_category: 'downloaded' });
         } catch (err) {
             console.error('Download error:', err);
+            track('clip_download_failed', { failure_category: 'download' });
+            captureError(err, { area: 'clip_download' });
             setEditError(err.message || 'Download failed');
             setTimeout(() => setEditError(null), 5000);
             // Do not fall back to the raw file — user expects what they saw
@@ -676,8 +745,8 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                             durationInSeconds={effectiveDuration}
                             subtitles={isEdited ? (framingFull.subtitles ?? null) : previewSubtitles}
                             loop={false}
-                            onPlay={(t) => onPlay && onPlay(clip.start + t)}
-                            onPause={() => onPause && onPause()}
+                            onPlay={(t) => { lastPreviewTimeRef.current = t; onPlay && onPlay(clip.start + t); }}
+                            onPause={(t) => { if (typeof t === 'number') lastPreviewTimeRef.current = t; onPause && onPause(); }}
                             onEnded={() => setPlaying(false)}
                         />
                     ) : (
@@ -690,6 +759,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                         className="w-full h-full object-cover"
                         onPlay={() => { const t = videoRef.current ? videoRef.current.currentTime : 0; onPlay && onPlay(clip.start + t); }}
                         onPause={() => onPause && onPause()}
+                        onTimeUpdate={(e) => { lastPreviewTimeRef.current = e.currentTarget.currentTime; }}
                         onEnded={() => { setPlaying(false); if (videoRef.current) videoRef.current.currentTime = 0; }}
                     />
                     )}
@@ -717,7 +787,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     )}
                 </div>
 
-                <h3 className="mt-2.5 text-sm font-medium text-fg leading-snug line-clamp-2 cursor-pointer hover:text-white" onClick={() => setOpenIndex(index)} title={title}>
+                <h3 className="ph-mask mt-2.5 text-sm font-medium text-fg leading-snug line-clamp-2 cursor-pointer hover:text-white" onClick={() => setOpenIndex(index)} title="Open clip">
                     {title}
                 </h3>
                 <div className="flex flex-wrap items-center gap-1.5 mt-2">
@@ -770,7 +840,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
                         {/* Info */}
                         <div className="flex-1 min-w-0 p-5 overflow-y-auto custom-scrollbar">
-                            <h2 className="text-base font-medium text-fg leading-snug">{title}</h2>
+                            <h2 className="ph-mask text-base font-medium text-fg leading-snug">{title}</h2>
                             <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
                                 {hasScore && <ScoreBadge score={viralityScore} />}
                                 {clip.viral_hook_text && <span className="inline-flex items-center gap-1 text-[11px] text-muted bg-surface2 border border-edge px-2 py-0.5 rounded"><Wand2 size={11} /> Hook</span>}
@@ -797,14 +867,14 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                             );
                                         })}
                                     </div>
-                                    {clip.virality_reason && <p className="text-[11px] text-muted leading-relaxed mt-2.5">{clip.virality_reason}</p>}
+                                    {clip.virality_reason && <p className="ph-mask text-[11px] text-muted leading-relaxed mt-2.5">{clip.virality_reason}</p>}
                                 </div>
                             )}
-                            {description && <p className="text-sm text-muted leading-relaxed mt-4">{description}</p>}
+                            {description && <p className="ph-mask text-sm text-muted leading-relaxed mt-4">{description}</p>}
                             {transcriptText && (
                                 <div className="mt-5">
                                     <div className="flex items-center gap-1.5 text-xs text-muted mb-2"><FileText size={13} /> Transcript</div>
-                                    <p className="text-sm text-zinc-300 leading-relaxed">{transcriptText}</p>
+                                    <p className="ph-mask text-sm text-zinc-300 leading-relaxed">{transcriptText}</p>
                                 </div>
                             )}
                             {editError && (
@@ -862,6 +932,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                 <label className="block text-xs font-bold text-zinc-400 mb-1">Video Title</label>
                                 <input
                                     type="text"
+                                    data-posthog-sensitive="true"
                                     value={postTitle}
                                     onChange={(e) => setPostTitle(e.target.value)}
                                     className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-primary/50 placeholder-zinc-600"
@@ -872,6 +943,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                             <div>
                                 <label className="block text-xs font-bold text-zinc-400 mb-1">Caption / Description</label>
                                 <textarea
+                                    data-posthog-sensitive="true"
                                     value={postDescription}
                                     onChange={(e) => setPostDescription(e.target.value)}
                                     rows={4}
@@ -917,24 +989,117 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                     </p>
                                 ) : (
                                     <div className="grid grid-cols-1 gap-2">
-                                        {socialAccounts.map((acc) => (
-                                            <label key={acc.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-colors border border-white/5">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={accountToggles[acc.id] ?? true}
-                                                    onChange={(e) => setAccountToggles({ ...accountToggles, [acc.id]: e.target.checked })}
-                                                    className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary"
-                                                />
-                                                <div className="flex items-center gap-2 text-sm text-white">
-                                                    {acc.platform === 'tiktok' ? <Video size={16} className="text-cyan-400" /> :
-                                                     acc.platform === 'instagram' ? <Instagram size={16} className="text-pink-400" /> :
-                                                     acc.platform === 'youtube' ? <Youtube size={16} className="text-red-400" /> :
-                                                     <Share2 size={16} className="text-zinc-400" />}
-                                                    {acc.displayName || acc.username}
-                                                    <span className="text-xs text-zinc-500 capitalize">{acc.platform}</span>
-                                                </div>
-                                            </label>
-                                        ))}
+                                        {socialAccounts.map((acc) => {
+                                            const isSelected = accountToggles[acc.id] ?? true;
+                                            // Clamped so the readout, the preview seek and the slider
+                                            // all agree after a trim shortens the clip.
+                                            const coverMs = Math.min(igCoverMs[acc.id] || 0, coverMaxMs);
+                                            // Bound by the posted file's own length — a trimmed edit is
+                                            // shorter than the original, and an offset past its end is invalid.
+                                            return (
+                                            <div key={acc.id} className="bg-white/5 rounded-lg border border-white/5 overflow-hidden">
+                                                <label className="flex items-center gap-3 p-3 cursor-pointer hover:bg-white/10 transition-colors">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isSelected}
+                                                        onChange={(e) => setAccountToggles({ ...accountToggles, [acc.id]: e.target.checked })}
+                                                        className="w-4 h-4 rounded border-zinc-600 bg-black/50 text-primary focus:ring-primary"
+                                                    />
+                                                    <div className="flex items-center gap-2 text-sm text-white">
+                                                        {acc.platform === 'tiktok' ? <Video size={16} className="text-cyan-400" /> :
+                                                         acc.platform === 'instagram' ? <Instagram size={16} className="text-pink-400" /> :
+                                                         acc.platform === 'youtube' ? <Youtube size={16} className="text-red-400" /> :
+                                                         <Share2 size={16} className="text-zinc-400" />}
+                                                        <span className="ph-mask">{acc.displayName || acc.username}</span>
+                                                        <span className="text-xs text-zinc-500 capitalize">{acc.platform}</span>
+                                                    </div>
+                                                </label>
+
+                                                {/* YouTube: who can see the upload */}
+                                                {isSelected && acc.platform === 'youtube' && (
+                                                    <div className="px-3 pb-3 pt-2.5 border-t border-edge">
+                                                        <div className="text-[11px] font-bold text-muted uppercase tracking-wide mb-1.5">Who can see it</div>
+                                                        <div className="flex gap-1 p-0.5 bg-black/40 border border-edge rounded-lg">
+                                                            {YT_VISIBILITIES.map((v) => {
+                                                                const active = (ytVisibility[acc.id] || 'public') === v.value;
+                                                                return (
+                                                                    <button
+                                                                        key={v.value}
+                                                                        type="button"
+                                                                        onClick={() => setYtVisibility({ ...ytVisibility, [acc.id]: v.value })}
+                                                                        className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${active ? 'bg-surface2 text-fg' : 'text-muted hover:text-fg'}`}
+                                                                    >
+                                                                        {v.label}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                        {isScheduling && (
+                                                            <p className="mt-2 text-[11px] text-muted leading-snug">
+                                                                Scheduled uploads go up right away as private, then switch to your choice at the scheduled time.
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                {/* Unexported edit: the preview below would lie, so don't offer it. */}
+                                                {isSelected && acc.platform === 'instagram' && !coverMatchesPost && (
+                                                    <div className="px-3 pb-3 pt-2.5 border-t border-edge">
+                                                        <div className="text-[11px] font-bold text-muted uppercase tracking-wide mb-1.5">Reel cover</div>
+                                                        <p className="text-[11px] text-muted leading-snug">
+                                                            Your edit hasn&rsquo;t been exported yet, so we can&rsquo;t show you which frame
+                                                            would land where. Instagram will use the first frame. Export the edit to pick
+                                                            a cover.
+                                                        </p>
+                                                    </div>
+                                                )}
+
+                                                {/* Instagram: which frame of the clip becomes the Reel cover */}
+                                                {isSelected && acc.platform === 'instagram' && coverMatchesPost && (
+                                                    <div className="px-3 pb-3 pt-2.5 border-t border-edge">
+                                                        <div className="flex items-center justify-between mb-1.5">
+                                                            <span className="text-[11px] font-bold text-muted uppercase tracking-wide">Reel cover</span>
+                                                            <span className="text-[11px] text-muted tabular-nums">{(coverMs / 1000).toFixed(1)}s in</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-3">
+                                                            {/* Preview seeks a hair past 0 so the browser decodes and paints a
+                                                                frame instead of leaving the thumbnail blank. */}
+                                                            <video
+                                                                ref={(el) => { coverPreviewRefs.current[acc.id] = el; }}
+                                                                src={currentVideoUrl}
+                                                                muted
+                                                                playsInline
+                                                                preload="metadata"
+                                                                onLoadedMetadata={(e) => { e.currentTarget.currentTime = Math.max(coverMs / 1000, 0.04); }}
+                                                                className="w-12 shrink-0 aspect-[9/16] rounded-md bg-black object-cover border border-edge"
+                                                            />
+                                                            <div className="flex-1 min-w-0">
+                                                                <input
+                                                                    type="range"
+                                                                    min={0}
+                                                                    max={coverMaxMs}
+                                                                    step={100}
+                                                                    value={coverMs}
+                                                                    onChange={(e) => setCoverMs(acc.id, Number(e.target.value))}
+                                                                    className="w-full accent-viral cursor-pointer"
+                                                                />
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setCoverMs(acc.id, Math.min(
+                                                                        Math.round((videoRef.current?.currentTime ?? lastPreviewTimeRef.current) * 1000),
+                                                                        coverMaxMs,
+                                                                    ))}
+                                                                    className="mt-1.5 text-[11px] text-muted hover:text-fg underline underline-offset-2"
+                                                                >
+                                                                    Use the frame the clip is paused on
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            );
+                                        })}
                                     </div>
                                 )}
                             </div>

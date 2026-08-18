@@ -105,8 +105,8 @@ export default function ManualCropModal({
             <div className="bg-surface border border-edge rounded-2xl p-5 w-full max-w-3xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-start justify-between mb-4">
                     <div>
-                        <h3 className="text-sm font-medium text-fg">{title}</h3>
-                        {subtitle && <p className="text-xs text-muted mt-0.5 max-w-md leading-snug">{subtitle}</p>}
+                        <h3 className="ph-mask text-sm font-medium text-fg">{title}</h3>
+                        {subtitle && <p className="ph-mask text-xs text-muted mt-0.5 max-w-md leading-snug">{subtitle}</p>}
                     </div>
                     <button onClick={onClose} className="w-8 h-8 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 shrink-0" aria-label="Close">
                         <X size={16} />

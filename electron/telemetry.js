@@ -13,6 +13,8 @@ const POSTHOG_TOKEN = 'phc_kUQRck5LKwiSJJC2Zv8H8xxFbGksCtmuxdV5Uw7pTpne';
 const POSTHOG_HOST = 'https://us.i.posthog.com';
 const INSTALLATION_ID_FILE = 'anonymous-installation-id';
 const DEV_OPT_IN_ENV = 'OPENSHORTS_TELEMETRY_OPT_IN';
+const FEEDBACK_CATEGORIES = new Set(['bug', 'confusing', 'feature', 'other']);
+const API_KEY_TEXT = /\b(?:phc|sk|zern|soniox)[_-][A-Za-z0-9_-]{12,}\b|\bAIza[A-Za-z0-9_-]{30,}\b|\b(?:api[_ -]?key|token|secret|bearer)\s*[:= ]\s*[A-Za-z0-9_.-]{12,}\b/gi;
 
 function telemetryDisabled(packaged) {
   // Packaged builds always opt in. Development builds (npm start from a source
@@ -33,6 +35,7 @@ const ALLOWED_EVENTS = new Set([
   'desktop_main_unhandled_rejection',
   'desktop_main_uncaught_exception',
   'desktop_updater_failed',
+  'feedback_submitted',
 ]);
 
 const ALLOWED_STAGES = new Set([
@@ -50,6 +53,11 @@ const ALLOWED_STAGES = new Set([
   'updater_download',
   'updater_install',
   'updater_event',
+  'updater_network',
+  'updater_rate_limited',
+  'updater_http',
+  'updater_not_found',
+  'updater_signature',
 ]);
 
 const ALLOWED_ERROR_CATEGORIES = new Set([
@@ -73,11 +81,6 @@ const ALLOWED_ERROR_CATEGORIES = new Set([
   'error',
   'non_error_rejection',
   'updater_error',
-  'updater_network',
-  'updater_rate_limited',
-  'updater_http',
-  'updater_not_found',
-  'updater_signature',
   'stack_setup_failed',
   'unknown',
 ]);
@@ -122,17 +125,29 @@ function safeExitCode(value) {
   return Number.isInteger(value) ? value : undefined;
 }
 
-// A short, PII-free identifier for an error: its HTTP status, or its
-// Node/electron-updater code (e.g. ENOTFOUND, ERR_UPDATER_LATEST_VERSION_NOT_FOUND).
-// Never the message — updater error messages routinely embed the user's
-// home-directory path, so anything free-form is rejected by the strict shape
-// check below.
+function safeFeedbackDetail(value) {
+  if (typeof value !== 'string') return undefined;
+  const safe = value.trim().replace(API_KEY_TEXT, '[redacted-secret]').slice(0, 2000);
+  return safe || undefined;
+}
+
+// A short, PII-free identifier for an error: its HTTP status (in the valid
+// 100-599 range), or its Node/electron-updater code (e.g. ENOTFOUND,
+// ERR_UPDATER_LATEST_VERSION_NOT_FOUND). Never the message — updater error
+// messages routinely embed the user's home-directory path, so anything free-form
+// is rejected by the strict shape check below.
 function safeErrorCode(error) {
   if (!error || typeof error !== 'object') return undefined;
   const status = error.statusCode != null ? error.statusCode : error.status;
-  if (Number.isInteger(status)) return String(status);
+  if (Number.isInteger(status) && status >= 100 && status <= 599) {
+    return String(status);
+  }
   const raw = String(error.code || error.name || '').trim();
-  return /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(raw) ? raw : undefined;
+  // 1-64 chars, leading letter, then letters/digits/underscores. Length
+  // check is a separate guard so the upper bound is unambiguous in the source
+  // (the {0,63} quantifier alone leaves room for 64-char codes that we don't want).
+  if (raw.length < 1 || raw.length > 64) return undefined;
+  return /^[A-Za-z][A-Za-z0-9_]*$/.test(raw) ? raw : undefined;
 }
 
 function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
@@ -168,7 +183,7 @@ function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
   // fatal() helper in main.js) can await this before exiting so a synchronous
   // process.exit() doesn't drop the last telemetry event.
   async function capture(event, details = {}) {
-    if (!client || !ALLOWED_EVENTS.has(event)) return;
+    if (!client || !ALLOWED_EVENTS.has(event)) return false;
     const properties = { ...baseProperties };
     if (ALLOWED_STAGES.has(details.stage)) properties.stage = details.stage;
     if (ALLOWED_ERROR_CATEGORIES.has(details.errorCategory)) {
@@ -179,9 +194,16 @@ function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
     if (ALLOWED_SIGNALS.has(details.signal)) properties.signal = details.signal;
     const errorCode = safeErrorCode(details.error);
     if (errorCode !== undefined) properties.error_code = errorCode;
+    if (event === 'feedback_submitted') {
+      if (!FEEDBACK_CATEGORIES.has(details.category)) return false;
+      properties.category = details.category;
+      const detail = safeFeedbackDetail(details.detail);
+      if (detail) properties.detail = detail;
+      properties.runtime = 'desktop';
+    }
 
     try {
-      await client.capture({
+      client.capture({
         distinctId,
         event,
         properties,
@@ -194,14 +216,21 @@ function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
         // Bound best-effort telemetry so a dead PostHog endpoint cannot hold
         // a fatal startup exit for the SDK's full retry window.
         try {
-          await Promise.race([
-            client.flush(),
-            new Promise((resolve) => setTimeout(resolve, 750)),
+          return await Promise.race([
+            client.flush().then(() => true, () => false),
+            new Promise((resolve) => setTimeout(
+              () => resolve(false),
+              event === 'feedback_submitted' ? 5000 : 750
+            )),
           ]);
-        } catch (_) { /* best-effort */ }
+        } catch (_) {
+          return false;
+        }
       }
+      return true;
     } catch (_) {
       // Sending telemetry is always best-effort.
+      return false;
     }
   }
 

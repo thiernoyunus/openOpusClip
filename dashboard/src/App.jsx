@@ -496,6 +496,7 @@ function App() {
             if (failures < MAX_POLL_FAILURES) {
               nextIds.push(id);
             } else {
+              captureError(e, { area: 'process_poll' });
               setProjects(updateProject(id, { status: 'expired' }));
               delete pollFailureCounts.current[id];
               if (id === jobId) {
@@ -542,6 +543,7 @@ function App() {
       setSocialAccounts(data.accounts || []);
     } catch (e) {
       console.warn("Zernio account fetch failed. Posting will stay disabled until the key is fixed.", e);
+      captureError(e, { area: 'social_accounts' });
       setSocialAccounts([]);
     }
   };
@@ -556,6 +558,7 @@ function App() {
       if (!res.ok || !data.authUrl) throw new Error(data.detail || 'No auth URL returned');
       window.open(data.authUrl, '_blank', 'noopener');
     } catch (e) {
+      captureError(e, { area: 'social_connect' });
       alert(`Could not start ${platform} connection: ${e.message}`);
     }
   };
@@ -793,6 +796,7 @@ function App() {
           }
         } catch (e) {
           console.warn('Could not refresh active project logs before opening modal', e);
+          captureError(e, { area: 'project_refresh' });
         }
         setShowProcessingModal(true);
       }
@@ -847,6 +851,7 @@ function App() {
         setViewingResults(true);
       }
     } catch (e) {
+      captureError(e, { area: 'project_open' });
       if (e instanceof JobExpiredError) {
         setProjects(updateProject(p.id, { status: 'expired' }));
         setProcessingJobIds((ids) => ids.filter((id) => id !== p.id));
@@ -905,13 +910,10 @@ function App() {
     </div>
   );
 
-  const ShortcutItem = ({ icon: Icon, color, label, onClick, active = false, badge }) => (
+  const ShortcutItem = ({ icon: Icon, color, label, onClick, active = false }) => (
     <button onClick={onClick} className={`group flex flex-col items-center gap-2.5 transition-colors ${active ? 'text-fg' : 'text-muted hover:text-fg'}`}>
       <span className={`relative w-14 h-14 rounded-full bg-surface border flex items-center justify-center ${color} transition-colors ${active ? 'border-white/40' : 'border-edge group-hover:border-white/20'}`}>
         <Icon size={22} />
-        {badge && (
-          <span className="absolute -top-1 -right-1 px-1.5 py-px rounded-full bg-viral/20 border border-viral/40 text-viral text-[9px] font-semibold leading-none">{badge}</span>
-        )}
       </span>
       <span className="text-xs">{label}</span>
     </button>
@@ -931,13 +933,25 @@ function App() {
       e.stopPropagation();
       if (!window.confirm(`Delete "${p.title}"? This permanently deletes the project and its files.`)) return;
       let res;
-      try { res = await fetch(getApiUrl(`/api/jobs/${p.id}`), { method: 'DELETE' }); }
-      catch { /* offline / already gone — drop the local card below */ }
-      if (res && res.status === 409) {
+      try {
+        res = await fetch(getApiUrl(`/api/jobs/${p.id}`), { method: 'DELETE' });
+      } catch (error) {
+        captureError(error, { area: 'project_delete' });
+        window.alert('Could not delete this project. Check your connection and try again.');
+        return;
+      }
+      if (res.status === 409) {
         window.alert("This project is still processing — you can delete it once it finishes.");
         return; // keep the card; server refused to delete a running job
       }
+      if (!res.ok && res.status !== 404) {
+        const error = new Error(`Project deletion failed with status ${res.status}`);
+        captureError(error, { area: 'project_delete' });
+        window.alert('Could not delete this project. Try again.');
+        return;
+      }
       setProjects(removeProject(p.id));
+      track('project_deleted', { result_category: 'deleted' });
     };
     return (
       <div className="text-left group relative">
@@ -968,7 +982,7 @@ function App() {
           )}
         </div>
         <div className="mt-2">
-          <div className="text-xs text-fg truncate group-hover:text-white transition-colors">{p.title}</div>
+          <div className="ph-mask text-xs text-fg truncate group-hover:text-white transition-colors">{p.title}</div>
           <div className="flex items-center justify-between mt-1">
             <span className="text-[11px] text-muted">
               {proc ? 'Processing' : failed ? 'Failed' : expired ? 'Expired' : `${p.clipCount} clip${p.clipCount === 1 ? '' : 's'}`}
@@ -1012,15 +1026,7 @@ function App() {
         {/* Top Header */}
         <header className="h-14 border-b border-edge bg-background flex items-center justify-between px-6 shrink-0 z-10">
           <div className="flex items-center gap-4">
-            {status !== 'idle' && (
-              <button
-                onClick={handleReset}
-                className="flex items-center gap-2 text-sm text-zinc-400 hover:text-white transition-colors"
-              >
-                <PlusCircle size={16} />
-                <span className="hidden sm:inline">New Project</span>
-              </button>
-            )}
+            {/* "New project" lives in the results toolbar below — one entry point only. */}
           </div>
 
           <div className="flex items-center gap-4">
@@ -1111,6 +1117,7 @@ function App() {
                   <div className="flex gap-2">
                     <input
                       type="password"
+                      data-posthog-sensitive="true"
                       value={zernioKey}
                       onChange={(e) => setZernioKey(e.target.value)}
                       className="input-field"
@@ -1139,7 +1146,7 @@ function App() {
                                acc.platform === 'instagram' ? <Instagram size={13} className="text-pink-400" /> :
                                acc.platform === 'youtube' ? <Youtube size={13} className="text-red-400" /> :
                                <Globe size={13} className="text-zinc-400" />}
-                              <span className="text-zinc-200 font-medium">{acc.displayName || acc.username}</span>
+                              <span className="ph-mask text-zinc-200 font-medium">{acc.displayName || acc.username}</span>
                               <span className="text-zinc-600 capitalize">{acc.platform}</span>
                               {acc.isActive && <Check size={12} className="text-green-400 ml-auto" />}
                             </div>
@@ -1185,6 +1192,7 @@ function App() {
                   <div className="flex gap-2">
                     <input
                       type="password"
+                      data-posthog-sensitive="true"
                       value={elevenLabsKey}
                       onChange={(e) => setElevenLabsKey(e.target.value)}
                       className="input-field"
@@ -1238,6 +1246,7 @@ function App() {
                   <div className="flex gap-2">
                     <input
                       type="password"
+                      data-posthog-sensitive="true"
                       value={sonioxKey}
                       onChange={(e) => setSonioxKey(e.target.value)}
                       className="input-field"
@@ -1440,8 +1449,8 @@ function App() {
                 <div className="relative flex items-center justify-center gap-10 mt-12">
                   <ShortcutItem icon={Scissors} color="text-viral" label="Clip Generator" onClick={() => setQuickTool(null)} />
                   <ShortcutItem icon={Youtube} color="text-red-300" label="YouTube Studio" onClick={() => setActiveTab('thumbnails')} />
-                  <ShortcutItem icon={Captions} color="text-sky-300" label="AI Captions" active={quickTool === 'captions'} badge="New" onClick={() => setQuickTool((t) => t === 'captions' ? null : 'captions')} />
-                  <ShortcutItem icon={Film} color="text-violet-300" label="Video Editor" active={quickTool === 'editor'} badge="New" onClick={() => setQuickTool((t) => t === 'editor' ? null : 'editor')} />
+                  <ShortcutItem icon={Captions} color="text-sky-300" label="AI Captions" active={quickTool === 'captions'} onClick={() => setQuickTool((t) => t === 'captions' ? null : 'captions')} />
+                  <ShortcutItem icon={Film} color="text-violet-300" label="Video Editor" active={quickTool === 'editor'} onClick={() => setQuickTool((t) => t === 'editor' ? null : 'editor')} />
                 </div>
               </div>
 
@@ -1621,6 +1630,7 @@ function App() {
                   </ol>
                   <input
                     type="text"
+                    data-posthog-sensitive="true"
                     placeholder="Paste your Gemini API key here..."
                     className="w-full bg-black/50 border border-white/20 rounded-lg px-4 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-blue-500"
                     onKeyDown={(e) => {
@@ -1650,6 +1660,7 @@ function App() {
                   </ol>
                   <input
                     type="text"
+                    data-posthog-sensitive="true"
                     placeholder="Paste your Zernio API key here..."
                     className="w-full bg-black/50 border border-white/20 rounded-lg px-4 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-violet-500"
                     onKeyDown={(e) => {

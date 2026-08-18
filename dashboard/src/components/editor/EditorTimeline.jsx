@@ -278,19 +278,19 @@ const ClipBlock = React.memo(function ClipBlock({
  */
 const LaneBlock = React.memo(function LaneBlock({
     lane, itemId, label, Icon, colorClass, left, width, echo, selected, dragging,
-    onBodyDown, onTrimDown,
+    onBodyDown, onTrimDown, maskLabel = false,
 }) {
     return (
         <div
             onPointerDown={echo ? undefined : (e) => onBodyDown(lane, itemId, e)}
             style={{ left, width }}
-            title={`${label} — drag body to move, edges to trim`}
+            title={maskLabel ? 'Text overlay — drag body to move, edges to trim' : `${label} — drag body to move, edges to trim`}
             className={`absolute top-0 bottom-0 rounded-md border flex items-center px-2 text-[10px] overflow-hidden group shadow-sm ${colorClass} ${
                 echo ? 'opacity-45 pointer-events-none' : 'cursor-grab active:cursor-grabbing'
             } ${selected ? 'ring-1 ring-white/40 border-white/50' : ''} ${dragging ? 'opacity-85 z-30' : 'z-10'}`}
         >
             {Icon && <Icon size={11} className="mr-1 shrink-0 pointer-events-none opacity-90" />}
-            <span className="truncate pointer-events-none font-medium">{label}</span>
+            <span className={`truncate pointer-events-none font-medium ${maskLabel ? 'ph-mask' : ''}`}>{label}</span>
             {!echo && ['in', 'out'].map((edge) => (
                 <div
                     key={edge}
@@ -323,7 +323,7 @@ const AudioBlock = React.memo(function AudioBlock({
         <div
             onPointerDown={(e) => onBodyDown('audio', itemId, e)}
             style={{ left, width }}
-            title={`${label} — drag edges to cut / trim`}
+            title="Audio — drag edges to cut / trim"
             className={`absolute top-0 bottom-0 rounded-full border overflow-hidden cursor-grab active:cursor-grabbing group ${colorClass} ${
                 selected ? 'ring-1 ring-white/40 border-white/50' : ''
             } ${dragging ? 'opacity-85 z-30' : 'z-10'}`}
@@ -352,7 +352,7 @@ const AudioBlock = React.memo(function AudioBlock({
             )}
             <div className="absolute inset-0 flex items-center px-2 pointer-events-none z-10">
                 {Icon && <Icon size={11} className="mr-1 shrink-0 drop-shadow" />}
-                <span className="truncate text-[10px] font-medium drop-shadow-sm">{label}</span>
+                <span className="ph-mask truncate text-[10px] font-medium drop-shadow-sm">{label}</span>
             </div>
             {['in', 'out'].map((edge) => (
                 <div
@@ -1010,6 +1010,7 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
                                         lane="text"
                                         itemId={item.id}
                                         label={item.text || 'Text'}
+                                        maskLabel
                                         Icon={Type}
                                         colorClass="bg-emerald-500/25 border-emerald-400/35 text-emerald-50"
                                         left={w.outStart * pxPerFrame}
