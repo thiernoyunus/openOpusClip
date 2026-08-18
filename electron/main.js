@@ -759,6 +759,80 @@ autoUpdater.setFeedURL({
   repo: 'openOpusClip',
 });
 
+// electron-updater signals the same failure twice: the originating call
+// (checkForUpdates / downloadUpdate) rejects AND an 'error' event fires. If
+// both logged telemetry we'd double-count every failure (which is exactly what
+// inflated the updater failure numbers). So the 'error' handler is the single
+// reporter.
+//
+// Single-element stage buffer. electron-updater serializes its own
+// operations, so at most one update operation is ever in flight per
+// process. A manual "Check for Updates…" click mid-download must NOT
+// clobber the in-flight 'updater_download' stage — otherwise an eventual
+// download failure would be mis-reported as a check failure. pushUpdaterStage
+// overwrites the stage only when the new operation is intended to run; the
+// 'error' and 'update-not-available' handlers reset the stage to empty when
+// the previous operation is known to have ended, so the next operation
+// starts from a clean slate.
+let updaterStage = 'updater_check';
+function pushUpdaterStage(stage) {
+  updaterStage = stage;
+}
+function currentUpdaterStage() {
+  return updaterStage;
+}
+
+// Bucket an updater error into a small, PII-free set of categories so failures
+// can actually be told apart (offline vs GitHub rate-limit vs a broken
+// release) instead of collapsing into one opaque "updater_error". Only the
+// bucket and a sanitized code are ever sent — never the raw message, which can
+// embed the user's home-directory path.
+// Many providers (GitHub, S3, Azure) attach rate-limit headers to the
+// underlying error.response. electron-updater 6.8.9 doesn't expose response
+// headers directly, so this is a best-effort pass over the common locations.
+function errorHeadersInclude(err, header) {
+  if (!err || typeof err !== 'object') return false;
+  const key = header.toLowerCase();
+  const candidates = [err.headers, err.response && err.response.headers, err.context && err.context.headers];
+  for (const c of candidates) {
+    if (!c) continue;
+    if (typeof c.get === 'function' && c.get(header) != null) return true;
+    if (typeof c === 'object' && Object.keys(c).some((k) => k.toLowerCase() === key && c[k] != null)) return true;
+  }
+  return false;
+}
+
+function categorizeUpdaterError(err) {
+  const status = err && (err.statusCode != null ? err.statusCode : err.status);
+  const code = String((err && (err.code || err.name)) || '');
+  const msg = String((err && err.message) || '');
+  const haystack = `${code} ${msg}`;
+  if (/ENOTFOUND|EAI_AGAIN|ECONN|ETIMEDOUT|ENETUNREACH|getaddrinfo|network/i.test(haystack)) {
+    return 'updater_network';
+  }
+  // 429 is the unambiguous "rate limited" status. 403 is GitHub's catch-all
+  // (auth, private-repo, redirect-with-Authorization-stripped, rate-limit) —
+  // only bucket it as rate-limited when there's actual evidence in the message
+  // OR when GitHub's rate-limit headers survived onto the error.
+  const hasRateLimitMsg = /\brate limit|too many requests\b|abuse detection/i.test(msg);
+  const hasRateLimitHeader = errorHeadersInclude(err, 'x-ratelimit-remaining');
+  if (status === 429 || (status === 403 && (hasRateLimitMsg || hasRateLimitHeader))) {
+    return 'updater_rate_limited';
+  }
+  if (/signature|sha512|checksum|integrity/i.test(msg)) {
+    return 'updater_signature';
+  }
+  // Require a release-asset keyword so generic "file not found" messages
+  // from the user's filesystem don't get mis-classified as updater failures.
+  if (/latest[\w.-]*\.yml|published release|No published release|cannot find (release|asset|asset url)/i.test(msg)) {
+    return 'updater_not_found';
+  }
+  if (Number.isInteger(status) || /HTTPError|status code|\b40\d\b|\b50\d\b/i.test(haystack)) {
+    return 'updater_http';
+  }
+  return 'updater_error';
+}
+
 // GitHub can answer before the window exists: startup waits on the backend,
 // which can take up to 60s on a cold launch. Remember the update and prompt
 // once a window is available, otherwise the offer would be dropped silently
@@ -858,13 +932,12 @@ function promptForUpdate(info) {
     cancelId: 1,
   }).then(({ response }) => {
     if (response !== 0) return;
+    pushUpdaterStage('updater_download');
     showUpdateHUD('Downloading update…');
     autoUpdater.downloadUpdate().catch(() => {
+      // The 'error' handler reports this failure (with the real error); here we
+      // only tidy the UI and swallow the rejection so it isn't unhandled.
       updateHUD?.close();
-      telemetry.capture('desktop_updater_failed', {
-        stage: 'updater_download',
-        errorCategory: 'updater_error',
-      });
     });
   });
 }
@@ -886,6 +959,9 @@ let _manualUpdateCheck = false;
 autoUpdater.on('update-not-available', () => {
   if (!_manualUpdateCheck) return;
   _manualUpdateCheck = false;
+  // check completed without an update; reset to the default so the next
+  // operation doesn't carry a stale 'updater_check' label if it isn't a check.
+  updaterStage = '';
   const win = BrowserWindow.getAllWindows()[0];
   if (!win) return;
   dialog.showMessageBox(win, {
@@ -896,12 +972,20 @@ autoUpdater.on('update-not-available', () => {
   });
 });
 
-autoUpdater.on('error', () => {
+// The single place updater failures are reported. electron-updater emits
+// 'error' for every failure and hands us the actual error object here, so this
+// is where we can attach a real category and code — the originating .catch()
+// blocks only tidy up and swallow the rejection.
+autoUpdater.on('error', (err) => {
+  // The failing operation just ended. Reset the stage so the next
+  // operation starts clean (pushUpdaterStage will set its own).
+  updaterStage = '';
   BrowserWindow.getAllWindows()[0]?.setProgressBar(-1);
   updateHUD?.close();
   telemetry.capture('desktop_updater_failed', {
-    stage: 'updater_event',
-    errorCategory: 'updater_error',
+    stage: currentUpdaterStage(),
+    errorCategory: categorizeUpdaterError(err),
+    error: err,
   });
 });
 
@@ -928,7 +1012,12 @@ autoUpdater.on('update-downloaded', async (info) => {
     // process that is about to exit — leaving the new app with no backend at
     // all. Wait for them to actually go before handing over.
     await waitForProcessGroupsToExit([spawned.backend, spawned.renderer], 10000);
-    await telemetry.shutdown(750);
+    pushUpdaterStage('updater_install');
+    // Do NOT call telemetry.shutdown() here: quitAndInstall() can
+    // synchronously dispatch 'error' on install failure (elevation, missing
+    // installer, etc.) and the 'error' handler still needs a live telemetry
+    // client to report it. Telemetry shutdown is handled by the normal
+    // app-quit path before app.quit().
     autoUpdater.quitAndInstall();
   };
 
@@ -969,12 +1058,12 @@ app.whenReady().then(async () => {
   // on when a newer release is found.
   const updateMenuItem = {
     label: 'Check for Updates…',
-    click: () => { _manualUpdateCheck = true; autoUpdater.checkForUpdates().catch(() => {
-      telemetry.capture('desktop_updater_failed', {
-        stage: 'updater_check',
-        errorCategory: 'updater_error',
-      });
-    }); },
+    click: () => {
+      _manualUpdateCheck = true;
+      pushUpdaterStage('updater_check');
+      // Reported by the 'error' handler; swallow the rejection here.
+      autoUpdater.checkForUpdates().catch(() => {});
+    },
   };
   if (app.isPackaged) {
     // Not wired to .enabled yet — always clickable. If nothing is
@@ -1015,12 +1104,9 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
 
   if (app.isPackaged) {
-    autoUpdater.checkForUpdates().catch(() => {
-      telemetry.capture('desktop_updater_failed', {
-        stage: 'updater_check',
-        errorCategory: 'updater_error',
-      });
-    });
+    pushUpdaterStage('updater_check');
+    // Reported by the 'error' handler; swallow the rejection here.
+    autoUpdater.checkForUpdates().catch(() => {});
   }
 
   const alreadyUp = await checkUrlIsUp(BACKEND_URL + '/api/config', 1500);

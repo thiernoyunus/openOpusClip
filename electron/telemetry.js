@@ -53,6 +53,11 @@ const ALLOWED_STAGES = new Set([
   'updater_download',
   'updater_install',
   'updater_event',
+  'updater_network',
+  'updater_rate_limited',
+  'updater_http',
+  'updater_not_found',
+  'updater_signature',
 ]);
 
 const ALLOWED_ERROR_CATEGORIES = new Set([
@@ -126,6 +131,25 @@ function safeFeedbackDetail(value) {
   return safe || undefined;
 }
 
+// A short, PII-free identifier for an error: its HTTP status (in the valid
+// 100-599 range), or its Node/electron-updater code (e.g. ENOTFOUND,
+// ERR_UPDATER_LATEST_VERSION_NOT_FOUND). Never the message — updater error
+// messages routinely embed the user's home-directory path, so anything free-form
+// is rejected by the strict shape check below.
+function safeErrorCode(error) {
+  if (!error || typeof error !== 'object') return undefined;
+  const status = error.statusCode != null ? error.statusCode : error.status;
+  if (Number.isInteger(status) && status >= 100 && status <= 599) {
+    return String(status);
+  }
+  const raw = String(error.code || error.name || '').trim();
+  // 1-64 chars, leading letter, then letters/digits/underscores. Length
+  // check is a separate guard so the upper bound is unambiguous in the source
+  // (the {0,63} quantifier alone leaves room for 64-char codes that we don't want).
+  if (raw.length < 1 || raw.length > 64) return undefined;
+  return /^[A-Za-z][A-Za-z0-9_]*$/.test(raw) ? raw : undefined;
+}
+
 function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
   const distinctId = loadOrCreateDistinctId(userData);
   const context = Object.freeze({ distinctId, appVersion, platform, arch, packaged });
@@ -168,6 +192,8 @@ function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
     const exitCode = safeExitCode(details.exitCode);
     if (exitCode !== undefined) properties.exit_code = exitCode;
     if (ALLOWED_SIGNALS.has(details.signal)) properties.signal = details.signal;
+    const errorCode = safeErrorCode(details.error);
+    if (errorCode !== undefined) properties.error_code = errorCode;
     if (event === 'feedback_submitted') {
       if (!FEEDBACK_CATEGORIES.has(details.category)) return false;
       properties.category = details.category;
