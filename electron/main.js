@@ -763,9 +763,24 @@ autoUpdater.setFeedURL({
 // (checkForUpdates / downloadUpdate) rejects AND an 'error' event fires. If
 // both logged telemetry we'd double-count every failure (which is exactly what
 // inflated the updater failure numbers). So the 'error' handler is the single
-// reporter, and this tracks which operation was in flight so it can attach the
-// right stage without the originating .catch() having to log anything.
+// reporter.
+//
+// Single-element stage buffer. electron-updater serializes its own
+// operations, so at most one update operation is ever in flight per
+// process. A manual "Check for Updates…" click mid-download must NOT
+// clobber the in-flight 'updater_download' stage — otherwise an eventual
+// download failure would be mis-reported as a check failure. pushUpdaterStage
+// overwrites the stage only when the new operation is intended to run; the
+// 'error' and 'update-not-available' handlers reset the stage to empty when
+// the previous operation is known to have ended, so the next operation
+// starts from a clean slate.
 let updaterStage = 'updater_check';
+function pushUpdaterStage(stage) {
+  updaterStage = stage;
+}
+function currentUpdaterStage() {
+  return updaterStage;
+}
 
 // Bucket an updater error into a small, PII-free set of categories so failures
 // can actually be told apart (offline vs GitHub rate-limit vs a broken
@@ -917,8 +932,8 @@ function promptForUpdate(info) {
     cancelId: 1,
   }).then(({ response }) => {
     if (response !== 0) return;
+    pushUpdaterStage('updater_download');
     showUpdateHUD('Downloading update…');
-    updaterStage = 'updater_download';
     autoUpdater.downloadUpdate().catch(() => {
       // The 'error' handler reports this failure (with the real error); here we
       // only tidy the UI and swallow the rejection so it isn't unhandled.
@@ -944,6 +959,9 @@ let _manualUpdateCheck = false;
 autoUpdater.on('update-not-available', () => {
   if (!_manualUpdateCheck) return;
   _manualUpdateCheck = false;
+  // check completed without an update; reset to the default so the next
+  // operation doesn't carry a stale 'updater_check' label if it isn't a check.
+  updaterStage = '';
   const win = BrowserWindow.getAllWindows()[0];
   if (!win) return;
   dialog.showMessageBox(win, {
@@ -959,10 +977,13 @@ autoUpdater.on('update-not-available', () => {
 // is where we can attach a real category and code — the originating .catch()
 // blocks only tidy up and swallow the rejection.
 autoUpdater.on('error', (err) => {
+  // The failing operation just ended. Reset the stage so the next
+  // operation starts clean (pushUpdaterStage will set its own).
+  updaterStage = '';
   BrowserWindow.getAllWindows()[0]?.setProgressBar(-1);
   updateHUD?.close();
   telemetry.capture('desktop_updater_failed', {
-    stage: updaterStage,
+    stage: currentUpdaterStage(),
     errorCategory: categorizeUpdaterError(err),
     error: err,
   });
@@ -991,7 +1012,7 @@ autoUpdater.on('update-downloaded', async (info) => {
     // process that is about to exit — leaving the new app with no backend at
     // all. Wait for them to actually go before handing over.
     await waitForProcessGroupsToExit([spawned.backend, spawned.renderer], 10000);
-    updaterStage = 'updater_install';
+    pushUpdaterStage('updater_install');
     // Do NOT call telemetry.shutdown() here: quitAndInstall() can
     // synchronously dispatch 'error' on install failure (elevation, missing
     // installer, etc.) and the 'error' handler still needs a live telemetry
@@ -1039,7 +1060,7 @@ app.whenReady().then(async () => {
     label: 'Check for Updates…',
     click: () => {
       _manualUpdateCheck = true;
-      updaterStage = 'updater_check';
+      pushUpdaterStage('updater_check');
       // Reported by the 'error' handler; swallow the rejection here.
       autoUpdater.checkForUpdates().catch(() => {});
     },
@@ -1083,7 +1104,7 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
 
   if (app.isPackaged) {
-    updaterStage = 'updater_check';
+    pushUpdaterStage('updater_check');
     // Reported by the 'error' handler; swallow the rejection here.
     autoUpdater.checkForUpdates().catch(() => {});
   }
