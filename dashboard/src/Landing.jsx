@@ -1,9 +1,10 @@
 import React, { useLayoutEffect, useRef } from 'react';
-import { Github, ArrowRight, ChevronDown, Upload, Sparkles, Send, Captions, Clapperboard, Languages, CalendarDays } from 'lucide-react';
+import { Github, ArrowRight, ChevronDown, Upload, Sparkles, Send, Captions, Clapperboard, CalendarDays } from 'lucide-react';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { ScrollSmoother } from 'gsap/ScrollSmoother';
 import ClipShowcase from './components/landing/ClipShowcase';
+import { getPhase, armNext, runTourPhase, stopTour } from './lib/platformTour.js';
 
 gsap.registerPlugin(ScrollTrigger, ScrollSmoother);
 
@@ -67,14 +68,6 @@ const DeckVisual = () => (
   </div>
 );
 
-const LangVisual = () => (
-  <div className="flex flex-wrap gap-2.5 max-w-sm justify-center">
-    {['العربية', 'Español', 'Français', '中文', 'Deutsch', 'हिन्दी', 'Português', '日本語', '+30 more'].map((l) => (
-      <span key={l} className="text-sm text-zinc-200 bg-white/5 ring-1 ring-white/10 rounded-full px-3.5 py-1.5">{l}</span>
-    ))}
-  </div>
-);
-
 const CalendarVisual = () => {
   const events = { 1: ['#FF0000'], 3: ['#E1306C'], 5: ['#111111'] };
   return (
@@ -116,13 +109,6 @@ const PANELS = [
     title: 'Podcast Trailer mode',
     body: 'Turn a full episode into a Diary-of-a-CEO-style cold open — hook, story, cliffhanger, stitched into one vertical trailer.',
     Visual: DeckVisual,
-  },
-  {
-    icon: Languages,
-    eyebrow: '30+ languages',
-    title: 'Translate & dub',
-    body: 'ElevenLabs dubbing keeps the original voice while switching the language, then re-captions in the target tongue.',
-    Visual: LangVisual,
   },
   {
     icon: CalendarDays,
@@ -186,6 +172,20 @@ function FeatureRail() {
 export default function Landing({ onLaunchApp }) {
   const [openFaq, setOpenFaq] = React.useState(null);
   const smootherRef = useRef(null);
+  const handleLaunch = React.useCallback(() => {
+    // If the landing tour is armed, hand off to the app phase before
+    // navigating — the app screen picks the tour up on mount.
+    if (getPhase() === 'landing') armNext('landing');
+    stopTour();
+    onLaunchApp();
+  }, [onLaunchApp]);
+
+  // Runs the landing leg of the platform tour when it is armed. Cleanup on
+  // unmount stops the overlay so it can't outlive this screen.
+  React.useEffect(() => {
+    if (getPhase() === 'landing') runTourPhase('landing', { onLaunch: handleLaunch });
+    return () => stopTour();
+  }, [handleLaunch]);
 
   // ScrollSmoother — the smooth-scroll "wow". Only on desktop with motion
   // welcome; phones keep native scroll. Cleaned up via ctx.revert().
@@ -235,11 +235,11 @@ export default function Landing({ onLaunchApp }) {
     },
     {
       question: 'How does it compare to Opus Clip?',
-      answer: 'Same core idea — AI moment detection and vertical reframing — but self-hosted and free instead of $15–228/month. Your videos stay on your machine, and you also get dubbing, trailer mode, and a built-in scheduler.',
+      answer: 'Same core idea — AI moment detection and vertical reframing — but self-hosted and free instead of $15–228/month. Your videos stay on your machine, and you also get trailer mode and a built-in scheduler.',
     },
     {
       question: 'What do I need to run it?',
-      answer: 'Docker on any Mac, Linux, or Windows machine, plus a free Google Gemini API key. ElevenLabs and a social key are optional add-ons.',
+      answer: 'Docker on any Mac, Linux, or Windows machine, plus a free Google Gemini API key. A social key is an optional add-on.',
     },
   ];
 
@@ -268,7 +268,8 @@ export default function Landing({ onLaunchApp }) {
               <span>GitHub</span>
             </a>
             <button
-              onClick={onLaunchApp}
+              onClick={handleLaunch}
+              data-tour="landing-launch"
               className="bg-primary hover:bg-blue-600 text-white px-5 py-2 rounded-xl text-sm font-medium transition-all active:scale-[0.98] shadow-lg shadow-primary/20"
             >
               Launch App
@@ -282,7 +283,7 @@ export default function Landing({ onLaunchApp }) {
         <div id="smooth-content">
 
       {/* Hero */}
-      <section className="pt-36 pb-8 px-6">
+      <section data-tour="landing-hero" className="pt-36 pb-8 px-6">
         <div className="max-w-4xl mx-auto text-center">
           <p data-speed="1.05" className="text-xs font-semibold uppercase tracking-[0.2em] text-primary mb-6">
             Free &amp; Open-Source AI Clip Generator

@@ -107,7 +107,7 @@ export default function Legal() {
                             for debugging and abuse prevention.
                         </li>
                         <li>
-                            <strong className="text-white">API keys (Gemini, ElevenLabs, Zernio):</strong> stored
+                            <strong className="text-white">API keys (Gemini, Zernio):</strong> stored
                             encrypted in your browser's <code className="text-zinc-200">localStorage</code>. They are
                             sent as request headers when a feature needs them, used to call the relevant third party,
                             and never written to our database or disk.
@@ -119,8 +119,8 @@ export default function Legal() {
                 <Section title="Third-party APIs">
                     <p>
                         When you use a feature that requires it, OpenShorts forwards relevant data to the third-party
-                        API for which you provided a key — Google Gemini (AI analysis), ElevenLabs (optional dubbing),
-                        Zernio (optional social posting, scheduling &amp; analytics). Those services have their own terms and privacy policies
+                        API for which you provided a key — Google Gemini (AI analysis), Zernio (optional social posting,
+                        scheduling &amp; analytics). Those services have their own terms and privacy policies
                         which apply in addition to this notice.
                     </p>
                 </Section>

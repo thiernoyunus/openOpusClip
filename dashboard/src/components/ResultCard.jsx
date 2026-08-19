@@ -1,12 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Type, Calendar, Clock, Languages, Play, ArrowUp, ArrowDown, FileText, Crop, Flame } from 'lucide-react';
+import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Calendar, Clock, Play, ArrowUp, ArrowDown, FileText, Crop, Flame } from 'lucide-react';
 import { getApiUrl } from '../config';
 import { captureError, track } from '../analytics';
-import SubtitleModal from './SubtitleModal';
-import HookModal from './HookModal';
-import TranslateModal from './TranslateModal';
 import RemotionPreview from './RemotionPreview';
-import { renderInBrowser } from '../lib/renderInBrowser';
 import { renderClipOnServer, applyRender } from '../lib/renderClip';
 import { outputDurationFrames } from '@remotion-src/lib/edl';
 import { defaultSubtitleConfig, loadDefaultCaptionStyle } from './editor/useEditorState';
@@ -50,10 +46,9 @@ const YT_VISIBILITIES = [
     { value: 'private', label: 'Private' },
 ];
 
-export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], geminiApiKey, elevenLabsKey, onPlay, onPause, openIndex, setOpenIndex, totalClips: _totalClips, onEdit, framingVersion = 0 }) {
+export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], onPlay, onPause, openIndex, setOpenIndex, totalClips: _totalClips, onEdit, framingVersion = 0 }) {
     const isOpen = openIndex === index;
     const [showModal, setShowModal] = useState(false);
-    const [showSubtitleModal, setShowSubtitleModal] = useState(false);
     const [playing, setPlaying] = useState(false);
     const [captions, setCaptions] = useState([]);
     const videoRef = React.useRef(null);
@@ -95,14 +90,6 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     const [posting, setPosting] = useState(false);
     const [postResult, setPostResult] = useState(null);
 
-    const [isEditing, setIsEditing] = useState(false);
-    const [isSubtitling, setIsSubtitling] = useState(false);
-    const [isHooking, setIsHooking] = useState(false);
-    const [isTranslating, setIsTranslating] = useState(false);
-    const [showHookModal, setShowHookModal] = useState(false);
-    const [showTranslateModal, setShowTranslateModal] = useState(false);
-    const [editError, setEditError] = useState(null);
-
     // Server-side burn progress (download / social share)
     const [isRendering, setIsRendering] = useState(false);
     const [renderProgress, setRenderProgress] = useState(null); // 0–100 for UI
@@ -119,9 +106,6 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     }, [clip.rendered_edited_at]);
 
     const [clipDuration, setClipDuration] = useState(clip.end != null && clip.start != null ? clip.end - clip.start : 30);
-
-    // Accumulate Remotion layers across operations
-    const [activeLayers, setActiveLayers] = useState({ subtitles: null, hook: null, effects: null });
 
     // Caption config saved in the editor for this clip (position/style/on-off),
     // loaded from the clip's framing. null = clip has no framing / not loaded.
@@ -224,260 +208,6 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             setPostResult(null);
         }
     }, [showModal, clip]);
-
-    const handleAutoEdit = async () => {
-        setIsEditing(true);
-        setEditError(null);
-        try {
-            const apiKey = geminiApiKey || localStorage.getItem('gemini_key');
-
-            if (!apiKey) {
-                throw new Error("Gemini API Key is missing. Please set it in Settings.");
-            }
-
-            // Try Remotion effects endpoint first
-            const effectsRes = await fetch(getApiUrl('/api/effects/generate'), {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Gemini-Key': apiKey
-                },
-                body: JSON.stringify({
-                    job_id: jobId,
-                    clip_index: index,
-                    input_filename: currentVideoUrl.split('/').pop()
-                })
-            });
-
-            if (effectsRes.ok) {
-                const data = await effectsRes.json();
-                if (data.effects && data.effects.segments) {
-                    const newLayers = { ...activeLayers, effects: data.effects };
-                    setActiveLayers(newLayers);
-                    const blobUrl = await renderInBrowser({
-                        videoUrl: originalVideoUrl,
-                        durationInSeconds: clipDuration,
-                        subtitles: newLayers.subtitles,
-                        hook: newLayers.hook,
-                        effects: newLayers.effects,
-                    });
-                    setCurrentVideoUrl(blobUrl);
-                    if (videoRef.current) videoRef.current.load();
-                    return;
-                }
-            }
-
-            // Fallback: legacy FFmpeg edit endpoint
-            const res = await fetch(getApiUrl('/api/edit'), {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Gemini-Key': apiKey
-                },
-                body: JSON.stringify({
-                    job_id: jobId,
-                    clip_index: index,
-                    input_filename: currentVideoUrl.split('/').pop()
-                })
-            });
-
-            if (!res.ok) {
-                const errText = await res.text();
-                try {
-                    const jsonErr = JSON.parse(errText);
-                    throw new Error(jsonErr.detail || errText);
-                } catch (e) {
-                    throw new Error(errText);
-                }
-            }
-
-            const data = await res.json();
-            if (data.new_video_url) {
-                setCurrentVideoUrl(getApiUrl(data.new_video_url));
-                if (videoRef.current) {
-                    videoRef.current.load();
-                }
-            }
-
-        } catch (e) {
-            setEditError(e.message);
-            setTimeout(() => setEditError(null), 5000);
-        } finally {
-            setIsEditing(false);
-        }
-    };
-
-    const handleSubtitle = async (options) => {
-        setIsSubtitling(true);
-        setEditError(null);
-        try {
-            if (options.remotion) {
-                // Accumulate layer and render all layers together
-                const newLayers = { ...activeLayers, subtitles: options.remotion };
-                setActiveLayers(newLayers);
-                const blobUrl = await renderInBrowser({
-                    videoUrl: originalVideoUrl,
-                    durationInSeconds: clipDuration,
-                    subtitles: newLayers.subtitles,
-                    hook: newLayers.hook,
-                    effects: newLayers.effects,
-                });
-                setCurrentVideoUrl(blobUrl);
-                if (videoRef.current) videoRef.current.load();
-                setShowSubtitleModal(false);
-                return;
-            }
-
-            // Fallback: legacy FFmpeg
-            const res = await fetch(getApiUrl('/api/subtitle'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    job_id: jobId,
-                    clip_index: index,
-                    position: options.position,
-                    font_size: options.fontSize,
-                    font_name: options.fontName,
-                    font_color: options.fontColor,
-                    border_color: options.borderColor,
-                    border_width: options.borderWidth,
-                    bg_color: options.bgColor,
-                    bg_opacity: options.bgOpacity,
-                    input_filename: currentVideoUrl.split('/').pop()
-                })
-            });
-
-            if (!res.ok) throw new Error(await res.text());
-            const data = await res.json();
-            if (data.new_video_url) {
-                setCurrentVideoUrl(getApiUrl(data.new_video_url));
-                if (videoRef.current) videoRef.current.load();
-                setShowSubtitleModal(false);
-            }
-        } catch (e) {
-            setEditError(e.message);
-            setTimeout(() => setEditError(null), 5000);
-        } finally {
-            setIsSubtitling(false);
-        }
-    };
-
-    const handleHook = async (hookData) => {
-        setIsHooking(true);
-        setEditError(null);
-        try {
-            if (hookData.remotion) {
-                // Accumulate layer and render all layers together
-                const newLayers = { ...activeLayers, hook: hookData.remotion };
-                setActiveLayers(newLayers);
-                const blobUrl = await renderInBrowser({
-                    videoUrl: originalVideoUrl,
-                    durationInSeconds: clipDuration,
-                    subtitles: newLayers.subtitles,
-                    hook: newLayers.hook,
-                    effects: newLayers.effects,
-                });
-                setCurrentVideoUrl(blobUrl);
-                if (videoRef.current) videoRef.current.load();
-                setShowHookModal(false);
-                return;
-            }
-
-            // Fallback: legacy FFmpeg
-            const payload = typeof hookData === 'string'
-                ? { text: hookData, position: 'top', size: 'M' }
-                : hookData;
-
-            const res = await fetch(getApiUrl('/api/hook'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    job_id: jobId,
-                    clip_index: index,
-                    text: payload.text,
-                    position: payload.position,
-                    size: payload.size,
-                    input_filename: currentVideoUrl.split('/').pop()
-                })
-            });
-
-            if (!res.ok) throw new Error(await res.text());
-            const data = await res.json();
-            if (data.new_video_url) {
-                setCurrentVideoUrl(getApiUrl(data.new_video_url));
-                if (videoRef.current) videoRef.current.load();
-                setShowHookModal(false);
-            }
-        } catch (e) {
-            setEditError(e.message);
-            setTimeout(() => setEditError(null), 5000);
-        } finally {
-            setIsHooking(false);
-        }
-    };
-
-    const handleTranslate = async (options) => {
-        console.log('[Translate] Starting translation with options:', options);
-        setIsTranslating(true);
-        setEditError(null);
-        try {
-            const apiKey = elevenLabsKey;
-            console.log('[Translate] API Key available:', !!apiKey);
-
-            if (!apiKey) {
-                throw new Error("ElevenLabs API Key is missing. Please set it in Settings.");
-            }
-
-            const requestBody = {
-                job_id: jobId,
-                clip_index: index,
-                target_language: options.targetLanguage,
-                input_filename: currentVideoUrl.split('/').pop()
-            };
-            console.log('[Translate] Request body:', requestBody);
-            console.log('[Translate] Sending request to /api/translate');
-
-            const res = await fetch(getApiUrl('/api/translate'), {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-ElevenLabs-Key': apiKey
-                },
-                body: JSON.stringify(requestBody)
-            });
-
-            console.log('[Translate] Response status:', res.status);
-
-            if (!res.ok) {
-                const errText = await res.text();
-                console.error('[Translate] Error response:', errText);
-                try {
-                    const jsonErr = JSON.parse(errText);
-                    throw new Error(jsonErr.detail || errText);
-                } catch (e) {
-                    if (e.message !== errText) throw e;
-                    throw new Error(errText);
-                }
-            }
-
-            const data = await res.json();
-            console.log('[Translate] Success response:', data);
-            if (data.new_video_url) {
-                setCurrentVideoUrl(getApiUrl(data.new_video_url));
-                if (videoRef.current) {
-                    videoRef.current.load();
-                }
-                setShowTranslateModal(false);
-            }
-
-        } catch (e) {
-            console.error('[Translate] Exception:', e);
-            setEditError(e.message);
-            setTimeout(() => setEditError(null), 5000);
-        } finally {
-            setIsTranslating(false);
-        }
-    };
 
     /**
      * Ensure the file on disk matches what the card preview shows (edits + captions).
@@ -679,7 +409,6 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     };
 
     const handleDownload = async () => {
-        setEditError(null);
         track('clip_download_started', { source_category: 'clip_card' });
         try {
             const prepared = await ensureRenderedFile();
@@ -700,8 +429,6 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             console.error('Download error:', err);
             track('clip_download_failed', { failure_category: 'download' });
             captureError(err, { area: 'clip_download' });
-            setEditError(err.message || 'Download failed');
-            setTimeout(() => setEditError(null), 5000);
             // Do not fall back to the raw file — user expects what they saw
         }
     };
@@ -718,10 +445,11 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     const useFramingPreview = isEdited || !!previewSubtitles;
     const renderPct = renderProgress != null ? `${renderProgress}%` : null;
 
-    const ActionBtn = ({ icon: Icon, label, onClick, loading, primary }) => (
+    const ActionBtn = ({ icon: Icon, label, onClick, loading, primary, ...rest }) => (
         <button
             onClick={onClick}
             disabled={loading}
+            {...rest}
             className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 ${primary ? 'bg-fg text-[#18181b] hover:bg-white' : 'bg-surface2 text-fg hover:bg-white/10 border border-edge'}`}
         >
             {loading ? <Loader2 size={15} className="animate-spin shrink-0" /> : <Icon size={15} className="shrink-0" />}
@@ -732,7 +460,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
     return (
         <>
             {/* Compact grid card */}
-            <div className="group flex flex-col animate-[fadeIn_0.4s_ease-out]">
+            <div data-tour="clip-card" className="group flex flex-col animate-[fadeIn_0.4s_ease-out]">
                 <div
                     className="relative aspect-[9/16] rounded-xl overflow-hidden bg-black border border-edge cursor-pointer"
                     onClick={() => { if (!playing) setOpenIndex(index); }}
@@ -779,12 +507,6 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                         </div>
                     )}
 
-                    {isEditing && (
-                        <div className="absolute inset-0 bg-black/65 backdrop-blur-sm flex flex-col items-center justify-center z-10 p-4 text-center">
-                            <Loader2 size={28} className="text-viral animate-spin mb-2" />
-                            <span className="text-[11px] font-medium text-white">Applying AI edits…</span>
-                        </div>
-                    )}
                 </div>
 
                 <h3 className="ph-mask mt-2.5 text-sm font-medium text-fg leading-snug line-clamp-2 cursor-pointer hover:text-white" onClick={() => setOpenIndex(index)} title="Open clip">
@@ -798,7 +520,6 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                 </div>
                 <div className="flex items-center gap-1 mt-2">
                     <button onClick={(e) => { e.stopPropagation(); setShowModal(true); }} title="Post / schedule" className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors"><Share2 size={15} /></button>
-                    <button onClick={(e) => { e.stopPropagation(); setShowHookModal(true); }} title="Viral hook" className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-fg hover:bg-white/5 transition-colors"><Wand2 size={15} /></button>
                     <button
                         onClick={(e) => { e.stopPropagation(); handleDownload(); }}
                         title={isRendering ? `Preparing… ${renderPct || ''}`.trim() : 'Download'}
@@ -877,17 +598,12 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                     <p className="ph-mask text-sm text-zinc-300 leading-relaxed">{transcriptText}</p>
                                 </div>
                             )}
-                            {editError && (
-                                <div className="mt-4 p-2.5 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-lg flex items-center gap-2">
-                                    <AlertCircle size={13} className="shrink-0" /> {editError}
-                                </div>
-                            )}
                         </div>
 
                         {/* Actions */}
                         <div className="w-[200px] shrink-0 border-l border-edge p-4 space-y-2 overflow-y-auto custom-scrollbar">
                             {clip.framing_url && clip.source_url && onEdit && (
-                                <ActionBtn icon={Crop} label="Edit clip" primary onClick={() => { setOpenIndex(null); onEdit(index); }} />
+                                <ActionBtn icon={Crop} label="Edit clip" primary data-tour="edit-clip" onClick={() => { setOpenIndex(null); onEdit(index); }} />
                             )}
                             <ActionBtn icon={Share2} label="Publish on Social" primary onClick={() => setShowModal(true)} />
                             <ActionBtn
@@ -896,11 +612,6 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                 loading={isRendering}
                                 onClick={handleDownload}
                             />
-                            <div className="h-px bg-edge my-1" />
-                            <ActionBtn icon={Wand2} label="Auto edit" loading={isEditing} onClick={handleAutoEdit} />
-                            <ActionBtn icon={Type} label="Subtitles" loading={isSubtitling} onClick={() => setShowSubtitleModal(true)} />
-                            <ActionBtn icon={Wand2} label="Viral hook" loading={isHooking} onClick={() => setShowHookModal(true)} />
-                            <ActionBtn icon={Languages} label="Dub voice" loading={isTranslating} onClick={() => setShowTranslateModal(true)} />
                         </div>
                     </div>
                 </div>
@@ -1138,36 +849,6 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                 </div>
             )}
 
-            <SubtitleModal
-                isOpen={showSubtitleModal}
-                onClose={() => setShowSubtitleModal(false)}
-                onGenerate={handleSubtitle}
-                isProcessing={isSubtitling}
-                videoUrl={originalVideoUrl}
-                jobId={jobId}
-                clipIndex={index}
-                existingHook={activeLayers.hook}
-            />
-
-            <HookModal
-                isOpen={showHookModal}
-                onClose={() => setShowHookModal(false)}
-                onGenerate={handleHook}
-                isProcessing={isHooking}
-                videoUrl={originalVideoUrl}
-                initialText={clip.viral_hook_text}
-                durationInSeconds={clip.end && clip.start ? clip.end - clip.start : 30}
-                existingSubtitles={activeLayers.subtitles}
-            />
-
-            <TranslateModal
-                isOpen={showTranslateModal}
-                onClose={() => setShowTranslateModal(false)}
-                onTranslate={handleTranslate}
-                isProcessing={isTranslating}
-                videoUrl={currentVideoUrl}
-                hasApiKey={!!elevenLabsKey}
-            />
         </>
     );
 }

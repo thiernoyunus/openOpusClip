@@ -13,6 +13,7 @@ import EditorView from './components/editor/EditorView';
 import { getProjects, addProject, updateProject, removeProject, phaseFromLogs, titleFromPayload, thumbFromPayload, coverFromString, fetchVideoTitle, captureVideoFrame, isTrailerProject } from './lib/projectHistory';
 import { getApiUrl } from './config';
 import { captureError, track } from './analytics';
+import { getPhase, armNext, runTourPhase, stopTour } from './lib/platformTour.js';
 
 // Enhanced "Encryption" using XOR + Base64 with a Salt
 // This is better than plain Base64 but still client-side.
@@ -110,12 +111,6 @@ function App() {
     if (stored) return decrypt(stored);
     return '';
   });
-  // ElevenLabs API State - Load encrypted
-  const [elevenLabsKey, setElevenLabsKey] = useState(() => {
-    const stored = localStorage.getItem('elevenLabsKey_v1');
-    if (stored) return decrypt(stored);
-    return '';
-  });
   // Soniox API State - Load encrypted (multilingual transcription engine)
   const [sonioxKey, setSonioxKey] = useState(() => {
     const stored = localStorage.getItem('soniox_key_v1');
@@ -168,6 +163,27 @@ function App() {
     const project = getProjects().find((p) => p.id === id);
     return project?.createdAt ? (Date.now() - project.createdAt) / 1000 : null;
   };
+
+  // Platform tour: each phase runs when its screen is on stage. Ending a
+  // phase's tour arms the next one; closing it early stops the flow.
+  useEffect(() => {
+    if (getPhase() !== 'app') return;
+    // A recovered session can land straight on results — skip the dashboard
+    // tour and hand off to the results phase instead.
+    if (viewingResults && results) {
+      armNext('app');
+      stopTour();
+      return;
+    }
+    runTourPhase('app');
+    return () => stopTour();
+  }, [viewingResults, results]);
+
+  useEffect(() => {
+    if (getPhase() !== 'results' || !(viewingResults && results) || editingClip !== null) return;
+    runTourPhase('results');
+    return () => stopTour();
+  }, [viewingResults, results, editingClip]);
 
   // Sync state for original video playback
   const [_syncedTime, setSyncedTime] = useState(0);
@@ -375,12 +391,6 @@ function App() {
       localStorage.setItem('zernioKey_v1', encrypt(zernioKey));
     }
   }, [zernioKey]);
-
-  useEffect(() => {
-    if (elevenLabsKey) {
-      localStorage.setItem('elevenLabsKey_v1', encrypt(elevenLabsKey));
-    }
-  }, [elevenLabsKey]);
 
   useEffect(() => {
     if (sonioxKey) {
@@ -1180,58 +1190,6 @@ function App() {
 
               <div className="glass-panel p-6 mt-8">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold">Video Translation</h2>
-                  <span className="text-[10px] bg-white/5 border border-white/5 px-2 py-0.5 rounded text-zinc-500 uppercase tracking-wider">Optional</span>
-                </div>
-                <p className="text-xs text-zinc-500 mb-6 leading-relaxed">
-                  Translate your clips to different languages using <strong>ElevenLabs</strong> AI dubbing.
-                  Automatically translates speech while preserving the original voice characteristics.
-                </p>
-                <div className="space-y-4">
-                  <label className="block text-sm text-zinc-400">ElevenLabs API Key</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      data-posthog-sensitive="true"
-                      value={elevenLabsKey}
-                      onChange={(e) => setElevenLabsKey(e.target.value)}
-                      className="input-field"
-                      placeholder="sk_..."
-                    />
-                    <button
-                      onClick={() => {
-                        if (elevenLabsKey) {
-                          localStorage.setItem('elevenLabsKey_v1', encrypt(elevenLabsKey));
-                          alert('ElevenLabs API Key saved!');
-                        }
-                      }}
-                      className="btn-primary py-2 px-4 text-sm"
-                    >
-                      Save
-                    </button>
-                  </div>
-                  <p className="text-xs text-zinc-500 leading-relaxed">
-                    Get your API key from ElevenLabs to enable video translation.
-                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <a href="https://elevenlabs.io/sign-up" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
-                        <span className="text-zinc-400 font-medium">1. Sign Up</span>
-                        <span className="text-[10px] text-zinc-600">Create account</span>
-                      </a>
-                      <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
-                        <span className="text-zinc-400 font-medium">2. API Key</span>
-                        <span className="text-[10px] text-zinc-600">Generate key</span>
-                      </a>
-                    </div>
-                    <br />
-                    <span className="text-zinc-600 italic">
-                      Keys are only stored in your browser. They are sent to the backend only to process your request, never stored server-side.
-                    </span>
-                  </p>
-                </div>
-              </div>
-
-              <div className="glass-panel p-6 mt-8">
-                <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-semibold">Transcription (Soniox)</h2>
                   <span className="text-[10px] bg-white/5 border border-white/5 px-2 py-0.5 rounded text-zinc-500 uppercase tracking-wider">Optional</span>
                 </div>
@@ -1435,7 +1393,7 @@ function App() {
                   </span>
                 </div>
 
-                <div className="relative max-w-lg mx-auto">
+                <div data-tour="media-input" className="relative max-w-lg mx-auto">
                   <MediaInput
                     onProcess={handleProcess}
                     isProcessing={status === 'processing'}
@@ -1446,7 +1404,7 @@ function App() {
                 </div>
 
                 {/* Quick-tool shortcut row */}
-                <div className="relative flex items-center justify-center gap-10 mt-12">
+                <div data-tour="quick-tools" className="relative flex items-center justify-center gap-10 mt-12">
                   <ShortcutItem icon={Scissors} color="text-viral" label="Clip Generator" onClick={() => setQuickTool(null)} />
                   <ShortcutItem icon={Youtube} color="text-red-300" label="YouTube Studio" onClick={() => setActiveTab('thumbnails')} />
                   <ShortcutItem icon={Captions} color="text-sky-300" label="AI Captions" active={quickTool === 'captions'} onClick={() => setQuickTool((t) => t === 'captions' ? null : 'captions')} />
@@ -1458,7 +1416,7 @@ function App() {
               {(() => {
                 const clipProjects = projects.filter((p) => !isTrailerProject(p));
                 return (
-              <div className="max-w-5xl mx-auto px-6 pb-14">
+              <div data-tour="recent-projects" className="max-w-5xl mx-auto px-6 pb-14">
                 <div className="flex items-center gap-4 mb-3">
                   <span className="text-sm text-fg">Recent projects {clipProjects.length > 0 && <span className="text-muted">({clipProjects.length})</span>}</span>
                 </div>
@@ -1486,7 +1444,7 @@ function App() {
                   <PlusCircle size={16} /> New project
                 </button>
                 <span className="w-px h-4 bg-edge" />
-                <h2 className="text-sm font-medium text-fg flex items-center gap-2">
+                <h2 data-tour="results-header" className="text-sm font-medium text-fg flex items-center gap-2">
                   <Sparkles size={16} className="text-viral" /> Generated shorts
                 </h2>
                 {results?.clips?.length > 0 && (
@@ -1570,13 +1528,19 @@ function App() {
                         zernioKey={zernioKey}
                         socialAccounts={socialAccounts}
                         geminiApiKey={apiKey}
-                        elevenLabsKey={elevenLabsKey}
                         onPlay={(time) => handleClipPlay(time)}
                         onPause={handleClipPause}
                         openIndex={openClip}
                         setOpenIndex={setOpenClip}
                         totalClips={results.clips.length}
-                        onEdit={(clipIndex) => setEditingClip(clipIndex)}
+                        onEdit={(clipIndex) => {
+                          // Opening the editor hands the tour to the editor phase.
+                          if (getPhase() === 'results') {
+                            armNext('results');
+                            stopTour();
+                          }
+                          setEditingClip(clipIndex);
+                        }}
                         framingVersion={framingVersion}
                       />
                     ))}

@@ -140,9 +140,6 @@ Complete free AI YouTube toolkit: thumbnails, titles, descriptions, and direct p
 - **Viral Moment Detection**: Google Gemini 3.0 Flash analyzes transcripts and scene boundaries to detect 3-15 high-potential moments
 - **Smart 9:16 Cropping**: Dual-mode AI reframing — TRACK mode (MediaPipe + YOLOv8 face tracking) and GENERAL mode (blurred background)
 - **Auto Subtitles**: faster-whisper, plus optional MLX Whisper on Apple Silicon, with word-level timestamps styled and burned into clips
-- **AI Voice Dubbing**: ElevenLabs integration for 30+ languages with voice cloning
-- **Hook Text Overlays**: AI-generated attention-grabbing text overlays
-- **AI Video Effects**: Gemini-generated FFmpeg filters for professional effects
 
 ### YouTube Studio
 - AI-powered title generation with 10 viral options
@@ -190,9 +187,6 @@ Complete free AI YouTube toolkit: thumbnails, titles, descriptions, and direct p
 | **AI clip detection** | Yes | Yes | Yes | Yes | Yes | Yes |
 | **Smart 9:16 reframing** | Yes | Yes | Yes | Yes | Yes | No |
 | **Auto subtitles** | Yes | Yes | Yes | Yes | Yes | Yes |
-| **Voice dubbing (30+ langs)** | Yes | No | Pro only | No | Pro only | Business only |
-| **AI video effects** | Yes | No | Yes | No | No | No |
-| **Hook text overlays** | Yes | No | No | No | No | No |
 | **YouTube Studio (titles, thumbnails)** | **Yes** | No | No | No | No | No |
 | **Social auto-publishing** | Yes | Pro only | TikTok only | Paid only | Paid only | No |
 | **Schedule uploads** | Yes | Pro only | No | Paid only | Paid only | No |
@@ -207,7 +201,6 @@ OpenShorts is free. You only pay for the AI APIs you use — and most have gener
 | Service | Free Tier | Paid Cost | Used For |
 |---------|-----------|-----------|----------|
 | **Google Gemini** | Free trial with generous limits | < $0.01 per 10-min video | Viral moment detection, titles, thumbnails, descriptions |
-| **ElevenLabs** | Free tier available | Pay-per-use | Voice dubbing |
 | **Zernio** | Free tier available | Pay-per-use | Publishing, scheduling & analytics for TikTok, Instagram, YouTube and more |
 | **Cloud storage** (Cloudflare R2 / AWS S3 / any S3-compatible) | Optional — R2 free up to 10GB | R2: free egress · S3: ~$0.023/GB | Cloud backup for clips |
 
@@ -220,7 +213,6 @@ OpenShorts is free. You only pay for the AI APIs you use — and most have gener
 - **For local development:** Python 3.11, Node.js/npm, and FFmpeg
 - **For Docker:** Docker & Docker Compose
 - **Google Gemini API Key** ([Free — get it here](https://aistudio.google.com/app/apikey)) — required for all AI features
-- **ElevenLabs API Key** ([Free tier](https://elevenlabs.io)) — optional, required only for voice dubbing
 - **Zernio API Key** ([zernio.com](https://zernio.com)) — optional, required only for social posting, scheduling & analytics
 
 ---
@@ -250,7 +242,7 @@ cp .env.example .env
 # Edit .env if you want S3 backup or YouTube cookies
 ```
 
-API keys for Gemini, ElevenLabs, and Zernio are entered in the app Settings screen. The Clip Generator only needs a Gemini key. Zernio is not required unless you want to publish, schedule, or track posts on TikTok, Instagram, YouTube, and other platforms.
+API keys for Gemini and Zernio are entered in the app Settings screen. The Clip Generator only needs a Gemini key. Zernio is not required unless you want to publish, schedule, or track posts on TikTok, Instagram, YouTube, and other platforms.
 
 > **Running on a laptop?** The defaults are already laptop-safe: one video job at
 > a time, one clip at a time, one export at a time. If your machine still
@@ -308,7 +300,7 @@ Docker also serves the dashboard at **`http://localhost:5175/#app`**.
 |-------|-----------|
 | Backend | Python 3.11, FastAPI, google-genai, faster-whisper, ultralytics (YOLOv8), mediapipe, opencv-python, yt-dlp, FFmpeg, httpx |
 | Frontend | React 18, Vite 4, Tailwind CSS 3.4 |
-| AI APIs | Google Gemini, ElevenLabs |
+| AI APIs | Google Gemini |
 | Infrastructure | Docker + Docker Compose, AWS S3 |
 | Publishing | Zernio API (TikTok, Instagram, YouTube + 12 more) |
 
@@ -331,7 +323,6 @@ Docker also serves the dashboard at **`http://localhost:5175/#app`**.
 | Key | Description |
 |-----|------------|
 | `GEMINI_API_KEY` | Google Gemini — required |
-| `ELEVENLABS_API_KEY` | ElevenLabs — optional, required for voice dubbing |
 | `ZERNIO_API_KEY` | Zernio — optional, required only for social posting, scheduling & analytics |
 
 ---

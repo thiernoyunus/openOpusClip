@@ -52,24 +52,17 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 4. **AI Analysis** - Gemini identifies 3-15 viral moments (15-60 sec each)
 5. **FFmpeg Extraction** - Precise clip cutting
 6. **AI Cropping** - Vertical reframing with subject tracking
-7. **Effects/Subtitles** - Optional AI-generated FFmpeg filters
-8. **Hook Overlay** - Text overlays with styled fonts
-9. **Voice Dubbing** - Optional ElevenLabs AI translation (30+ languages)
-10. **S3 Backup** - Silent background upload
-11. **Social Distribution** - Zernio API (publish, schedule, calendar, analytics)
+7. **S3 Backup** - Silent background upload
+8. **Social Distribution** - Zernio API (publish, schedule, calendar, analytics)
 
 ### Key Files
 | File | Purpose |
 |------|---------|
 | `main.py` | Core video processing: transcription, scene detection, clip extraction, vertical reframing |
 | `app.py` | FastAPI server with async job queue and REST endpoints |
-| `editor.py` | Gemini AI integration for dynamic video effects (FFmpeg filter generation) |
-| `hooks.py` | Hook text overlay generation with font rendering |
+| `editor.py` | Gemini AI integration for caption enhancement and b-roll suggestions |
 | `s3_uploader.py` | AWS S3 upload with caching |
-| `subtitles.py` | SRT generation, FFmpeg subtitle burning, and dubbed video transcription |
-| `translate.py` | ElevenLabs dubbing API for AI voice translation |
 | `dashboard/src/App.jsx` | Main React component with state management |
-| `dashboard/src/components/TranslateModal.jsx` | Voice dubbing UI with language selection |
 
 ### Dual-Mode Video Reframing
 - **TRACK Mode** (single subject): MediaPipe face detection + YOLOv8 fallback with "Heavy Tripod" stabilization
@@ -84,11 +77,6 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 |--------|-------|---------|
 | POST | `/api/process` | Submit video for processing |
 | GET | `/api/status/{job_id}` | Poll job status and logs |
-| POST | `/api/edit` | Apply AI video effects |
-| POST | `/api/subtitle` | Generate and apply subtitles (auto-transcribes dubbed videos) |
-| POST | `/api/hook` | Add text hook overlays |
-| POST | `/api/translate` | AI voice dubbing via ElevenLabs |
-| GET | `/api/translate/languages` | List supported dubbing languages |
 | POST | `/api/social/post` | Publish/schedule a clip via Zernio |
 | GET | `/api/social/accounts` | List connected social accounts (Zernio) |
 | GET | `/api/social/connect/{platform}` | Get OAuth URL to connect an account |
