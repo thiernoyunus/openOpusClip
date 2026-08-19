@@ -5,7 +5,7 @@ import React from 'react';
  */
 function EditorToolRail({ tabs, activeId, onSelect }) {
     return (
-        <aside className="w-[64px] shrink-0 border-l border-white/[0.05] bg-[#0b0b0d] flex flex-col items-stretch pt-3 pb-2 gap-0.5">
+        <aside data-tour="editor-tools" className="w-[64px] shrink-0 border-l border-white/[0.05] bg-[#0b0b0d] flex flex-col items-stretch pt-3 pb-2 gap-0.5">
             <p className="px-1 mb-2 text-[9px] font-medium uppercase tracking-[0.08em] text-zinc-600 text-center">
                 Media
             </p>

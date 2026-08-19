@@ -19,7 +19,7 @@ export default function EditorTopBar({
     onExport,
 }) {
     return (
-        <header className="h-[48px] shrink-0 bg-[#0b0b0d] border-b border-white/[0.05] flex items-center px-3 gap-2">
+        <header data-tour="editor-topbar" className="h-[48px] shrink-0 bg-[#0b0b0d] border-b border-white/[0.05] flex items-center px-3 gap-2">
             <button
                 type="button"
                 onClick={onBack}

@@ -13,6 +13,7 @@ import TransitionsPanel from './TransitionsPanel';
 import TextPanel from './TextPanel';
 import MediaPanel from './MediaPanel';
 import ExtendClipModal from './ExtendClipModal';
+import { getPhase, runTourPhase, stopTour } from '../../lib/platformTour.js';
 import { renderClipOnServer, applyRender } from '../../lib/renderClip';
 import { captureError, track } from '../../analytics';
 
@@ -288,6 +289,13 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     useEffect(() => {
         track('editor_opened', { entry_category: 'clip' });
     }, []);
+    // Platform tour: the editor leg runs when the flow arms the editor phase.
+    // Waits for framing to load so the timeline exists before highlighting it.
+    useEffect(() => {
+        if (getPhase() !== 'editor' || !state.framing) return;
+        runTourPhase('editor');
+        return () => stopTour();
+    }, [state.framing]);
     // Local transcript-panel copy of the captions. Once framing.subtitles
     // exists, the effect below keeps this synced FROM it — subtitles.captions
     // is the actual undo/redo-tracked source of truth (via the reducer's
@@ -739,7 +747,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                         />
 
                         <div className="flex-1 min-w-0 bg-[#0b0b0d] flex min-h-0">
-                            <div data-editor-canvas-column className="flex-1 min-w-0 flex flex-col min-h-0">
+                            <div data-editor-canvas-column data-tour="editor-canvas" className="flex-1 min-w-0 flex flex-col min-h-0">
                                 <div className="h-10 shrink-0 flex items-center justify-center">
                                     <EditorCanvasControls
                                         framing={framing}

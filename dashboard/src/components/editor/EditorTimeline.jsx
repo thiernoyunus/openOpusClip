@@ -873,7 +873,7 @@ export default function EditorTimeline({ framing, playerRef, selectedIds, onSele
     const showAudioEmpty = audioItems.length === 0;
 
     return (
-        <div className="border-t border-white/[0.04] bg-black select-none">
+        <div data-tour="editor-timeline" className="border-t border-white/[0.04] bg-black select-none">
             {/* Subtle resize handle at very top */}
             <div
                 onPointerDown={onResizeDown}

@@ -3,7 +3,6 @@ import { createRoot } from 'react-dom/client'
 import { PostHogProvider } from '@posthog/react'
 import './index.css'
 import App from './App.jsx'
-import Landing from './Landing.jsx'
 import Legal from './Legal.jsx'
 import EditorView from './components/editor/EditorView.jsx'
 import ResultCard from './components/ResultCard.jsx'
@@ -137,10 +136,9 @@ function Root() {
   const resolveView = () => {
     const hash = window.location.hash;
     if (hash === '#legal') return 'legal';
-    // #trailer is a legacy deep link (the trailer tool used to be its own page) —
-    // treat it the same as #app; App reads the hash itself to open on that tab.
-    if (hash === '#app' || hash === '#trailer' || localStorage.getItem('openshorts_skip_landing') === '1') return 'app';
-    return 'landing';
+    // The app opens straight on the dashboard. #trailer is a legacy deep
+    // link — App reads the hash itself to open on that tab.
+    return 'app';
   };
 
   const [view, setView] = useState(resolveView);
@@ -154,12 +152,6 @@ function Root() {
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
-
-  const handleLaunchApp = () => {
-    localStorage.setItem('openshorts_skip_landing', '1');
-    window.location.hash = '#app';
-    setView('app');
-  };
 
   const params = new URLSearchParams(window.location.search);
   const editorDevMode = params.get('editorDev');
@@ -190,18 +182,18 @@ function Root() {
     );
   }
   if (view === 'legal') return <Legal />;
-  if (view === 'app') return <App />;
-  return <Landing onLaunchApp={handleLaunchApp} />;
+  return <App />;
 }
 
 function FeedbackButton() {
   const [showModal, setShowModal] = useState(false);
   return (
     <>
-      <button
-        id="app-feedback-button"
-        type="button"
-        className="fixed bottom-4 right-4 z-[100] rounded-lg border border-white/10 bg-zinc-900/95 px-3 py-2 text-xs font-medium text-zinc-300 shadow-lg hover:bg-zinc-800 hover:text-white focus:outline-none focus:ring-2 focus:ring-primary"
+    <button
+      id="app-feedback-button"
+      type="button"
+      data-tour="feedback-button"
+      className="fixed bottom-4 right-4 z-[100] rounded-lg border border-white/10 bg-zinc-900/95 px-3 py-2 text-xs font-medium text-zinc-300 shadow-lg hover:bg-zinc-800 hover:text-white focus:outline-none focus:ring-2 focus:ring-primary"
         onClick={() => setShowModal(true)}
       >
         Feedback

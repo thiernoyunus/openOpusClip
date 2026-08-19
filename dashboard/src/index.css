@@ -94,3 +94,15 @@ div:has(> [href*="posthog.com/surveys"]),
   visibility: hidden !important;
   pointer-events: none !important;
 }
+
+/* Platform tour: make the highlighted element pop against the dark app so
+   it's obvious what the current step is pointing at. */
+.driver-active .driver-active-element {
+  outline: 3px solid #ffffff;
+  outline-offset: 6px;
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 4px rgba(255, 255, 255, 0.25),
+    0 0 0 10px rgba(59, 130, 246, 0.45),
+    0 0 36px 10px rgba(59, 130, 246, 0.65);
+}

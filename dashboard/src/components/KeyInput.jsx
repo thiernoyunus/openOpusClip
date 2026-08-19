@@ -18,19 +18,23 @@ export default function KeyInput({ onKeySet, savedKey }) {
     };
 
     return (
-        <div className="bg-surface border border-white/5 rounded-2xl p-6 mb-8 animate-[fadeIn_0.5s_ease-out]">
+        <div data-tour="settings-page" className="bg-surface border border-white/5 rounded-2xl p-6 mb-8 animate-[fadeIn_0.5s_ease-out]">
             <div className="flex items-center gap-3 mb-4">
                 <div className="p-2 bg-accent/20 rounded-lg text-accent">
                     <Key size={20} />
                 </div>
                 <h2 className="text-lg font-semibold">Gemini API Key</h2>
             </div>
+            <p className="text-xs text-zinc-500 mb-4 -mt-2">
+                The AI that watches your video and finds the best moments — required to make clips.
+            </p>
 
             <div className="flex gap-3">
                 <div className="relative flex-1">
                     <input
                         type={isVisible ? "text" : "password"}
                         value={key}
+                        data-tour="gemini-key-input"
                         data-posthog-sensitive="true"
                         onChange={(e) => {
                             setKey(e.target.value);
@@ -64,9 +68,20 @@ export default function KeyInput({ onKeySet, savedKey }) {
                     href="https://aistudio.google.com/app/apikey"
                     target="_blank"
                     rel="noopener noreferrer"
+                    data-tour="gemini-key-link"
                     className="text-primary hover:underline mt-1 inline-block"
                 >
                     Get your free Gemini API Key here →
+                </a>
+                <br />
+                <a
+                    href="https://www.youtube.com/watch?v=YdalQ8UqMR4"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-tour="gemini-key-video"
+                    className="text-primary hover:underline mt-1 inline-block"
+                >
+                    Watch a video tutorial on getting your key →
                 </a>
             </p>
         </div>

@@ -130,7 +130,7 @@ export default function SocialCalendar({ zernioKey, accounts = [], onGoToSetting
 
   if (!zernioKey) {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-4 text-center p-8">
+      <div data-tour="calendar-page" className="h-full flex flex-col items-center justify-center gap-4 text-center p-8">
         <Calendar size={40} className="text-zinc-600" />
         <div>
           <h2 className="text-lg font-semibold text-fg mb-1">Connect Zernio to use the calendar</h2>
@@ -185,13 +185,13 @@ export default function SocialCalendar({ zernioKey, accounts = [], onGoToSetting
   ];
 
   return (
-    <div className="h-full overflow-y-auto custom-scrollbar animate-[fadeIn_0.3s_ease-out]">
+    <div data-tour="calendar-page" className="h-full overflow-y-auto custom-scrollbar animate-[fadeIn_0.3s_ease-out]">
       <div className="max-w-5xl mx-auto p-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold text-fg">Calendar</h1>
-            <div className="flex items-center rounded-lg border border-edge overflow-hidden text-xs">
+            <div data-tour="calendar-schedule" className="flex items-center rounded-lg border border-edge overflow-hidden text-xs">
               <button onClick={() => setView('calendar')} className={`px-3 py-1.5 transition-colors ${view === 'calendar' ? 'bg-surface2 text-fg' : 'text-muted hover:text-fg'}`}>Schedule</button>
               <button onClick={() => setView('analytics')} className={`px-3 py-1.5 border-l border-edge transition-colors ${view === 'analytics' ? 'bg-surface2 text-fg' : 'text-muted hover:text-fg'}`}>Analytics</button>
             </div>
