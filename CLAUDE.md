@@ -95,7 +95,6 @@ Async job queue with semaphore-based concurrency control. Configure via `MAX_CON
 
 **Client-side (localStorage, encrypted):**
 - `GEMINI_API_KEY` - Google Gemini API key (required)
-- `ELEVENLABS_API_KEY` - ElevenLabs API key for voice dubbing (optional)
 - `ZERNIO_API_KEY` - Zernio API key for social posting, scheduling & analytics (optional)
 
 > API keys are stored encrypted in the browser and sent via headers only when needed. Never stored server-side.
@@ -103,5 +102,5 @@ Async job queue with semaphore-based concurrency control. Configure via `MAX_CON
 ## Tech Stack
 - **Backend:** Python 3.11, FastAPI, google-genai, faster-whisper, ultralytics (YOLOv8), mediapipe, opencv-python, yt-dlp, FFmpeg, httpx
 - **Frontend:** React 18, Vite 4, Tailwind CSS 3.4
-- **External APIs:** Google Gemini, ElevenLabs Dubbing, Zernio
+- **External APIs:** Google Gemini, Zernio
 - **Infrastructure:** Docker + Docker Compose, AWS S3
