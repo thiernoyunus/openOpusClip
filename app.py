@@ -8,6 +8,7 @@ import glob
 import time
 import asyncio
 import sys
+import queue as _queue
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from typing import Dict, Optional, List
@@ -296,6 +297,35 @@ def _pick_free_port():
     return port
 
 
+# Cap how long we'll wait for a freshly spawned worker to announce READY.
+# Model loading happens lazily on the first *job*, not at boot, so this only
+# needs to cover process startup + socket bind -- a few seconds in practice.
+# Bounded so a broken worker can't block whoever is waiting on it forever.
+_WHISPER_WORKER_READY_TIMEOUT_S = float(
+    os.environ.get("WHISPER_WORKER_READY_TIMEOUT", "30")
+)
+
+
+def _read_ready_line(stream, timeout_s):
+    """Read one line from `stream` with a wall-clock timeout. Runs the actual
+    (blocking) readline() in a helper thread so a stuck child can't hang the
+    caller forever; the thread is daemonized so it doesn't block interpreter
+    exit if the read never returns."""
+    result: _queue.Queue = _queue.Queue(maxsize=1)
+
+    def _read():
+        try:
+            result.put(stream.readline())
+        except Exception:
+            result.put(b"")
+
+    threading.Thread(target=_read, daemon=True).start()
+    try:
+        return result.get(timeout=timeout_s)
+    except _queue.Empty:
+        return None  # caller distinguishes "timed out" from "EOF" (b"")
+
+
 def _start_whisper_worker():
     """Spawn the persistent worker; advertise its port via env so subprocesses
     (main.py) inherit it. Worker is best-effort: if it fails to boot we keep
@@ -328,14 +358,26 @@ def _start_whisper_worker():
                   f"transcription will run inline.")
             return
         # Wait for "READY <port>" handshake so the first request doesn't race
-        # the worker bind. Generous timeout because cold-start model loads
-        # happen lazily on the FIRST request, not on worker boot.
+        # the worker bind. Bounded (unlike a plain readline()) so a worker
+        # that hangs during startup -- e.g. the same kind of stuck model
+        # download this whole timeout/watchdog pair exists to catch -- can't
+        # block whoever called us (including the watchdog, on the event loop).
         try:
-            line = proc.stdout.readline()
+            line = _read_ready_line(proc.stdout, _WHISPER_WORKER_READY_TIMEOUT_S)
         except Exception as exc:
             print(f"⚠️  Whisper worker handshake failed: {exc}; "
                   f"transcription will run inline.")
             proc.terminate()
+            return
+        if line is None:
+            print(f"⚠️  Whisper worker didn't announce READY within "
+                  f"{_WHISPER_WORKER_READY_TIMEOUT_S:.0f}s; killing it and "
+                  f"falling back to inline transcription.")
+            proc.kill()
+            try:
+                proc.wait(timeout=5)  # reap it; avoid leaving a zombie
+            except subprocess.TimeoutExpired:
+                pass
             return
         if not line:
             print("⚠️  Whisper worker exited before announcing READY; "
@@ -392,7 +434,11 @@ async def _watch_whisper_worker():
             print(f"⚠️  Whisper worker (pid {proc.pid}) exited unexpectedly "
                   f"(code {proc.returncode}); restarting.")
             transcription.reset_worker_client()
-            _start_whisper_worker()
+            # _start_whisper_worker() is blocking (subprocess spawn + a
+            # bounded but still synchronous wait for READY) -- run it off
+            # the event loop so a slow-to-start replacement can't stall
+            # every other request being served while we wait for it.
+            await asyncio.to_thread(_start_whisper_worker)
 
 
 @asynccontextmanager

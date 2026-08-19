@@ -235,6 +235,54 @@ def test_worker_exits_when_job_exceeds_timeout():
         hang_script.unlink(missing_ok=True)
 
 
+def test_start_whisper_worker_bounds_ready_wait():
+    """Regression guard for a real review finding: _start_whisper_worker()
+    used to block on a plain readline() with no timeout, so a worker that
+    hangs before announcing READY (e.g. the same stuck-download class of bug
+    the timeout/watchdog pair exists to catch) could freeze whoever called
+    it -- including the watchdog, on the app's event loop -- forever. It
+    must now give up after WHISPER_WORKER_READY_TIMEOUT and kill the
+    unresponsive process rather than hang."""
+    import app  # noqa: F401 (imports FastAPI etc.)
+
+    # A worker script that never prints READY.
+    silent_script = ROOT / "_silent_worker_for_test.py"
+    silent_script.write_text("import time\ntime.sleep(3600)\n")
+    env_saved = {
+        k: os.environ.get(k)
+        for k in ("OPENSHORTS_WHISPER_WORKER_PORT", "WHISPER_WORKER_READY_TIMEOUT")
+    }
+    try:
+        # Point _start_whisper_worker at our silent script instead of the
+        # real worker, with a short ready-timeout so the test is fast.
+        app._WHISPER_WORKER_READY_TIMEOUT_S = 1.0
+        real_popen = subprocess.Popen
+
+        def fake_popen(cmd, **kwargs):
+            cmd = [sys.executable, "-u", str(silent_script)]
+            return real_popen(cmd, **kwargs)
+
+        subprocess.Popen = fake_popen
+        try:
+            start = time.monotonic()
+            app._start_whisper_worker()
+            elapsed = time.monotonic() - start
+        finally:
+            subprocess.Popen = real_popen
+
+        assert elapsed < 10, f"blocked for {elapsed:.1f}s, expected ~1s bound"
+        assert app._whisper_worker_proc is None, "should not adopt a silent worker"
+    finally:
+        for k, v in env_saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        app._WHISPER_WORKER_READY_TIMEOUT_S = 30.0
+        silent_script.unlink(missing_ok=True)
+        app._stop_whisper_worker()
+
+
 if __name__ == "__main__":
     test_protocol_round_trip_missing_file_surfaces_as_error()
     print("✓ protocol round-trip (missing-file error path)")
@@ -248,4 +296,6 @@ if __name__ == "__main__":
     print("✓ app._start_whisper_worker() boots & stops a worker")
     test_worker_exits_when_job_exceeds_timeout()
     print("✓ worker self-exits on a stuck job past its timeout ceiling")
+    test_start_whisper_worker_bounds_ready_wait()
+    print("✓ worker startup gives up (doesn't hang) when READY never arrives")
     print("\nAll Whisper worker self-checks passed.")
