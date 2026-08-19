@@ -77,8 +77,14 @@ function beforeSend(event) {
     properties[key] = typeof value === 'string' ? scrubText(value) : value;
   }
 
-  properties.$current_url = SAFE_APP_URL;
-  properties.$pathname = '/app';
+  // Desktop navigation is virtual. Fold each pageview's view into a stable,
+  // non-sensitive path so web analytics and paths read the in-app screens
+  // without exposing a real URL or filesystem location.
+  const view = event.event === '$pageview' && typeof event.properties.view === 'string'
+    ? safeContextValue(event.properties.view)
+    : null;
+  properties.$current_url = view ? `${SAFE_APP_URL}/${view}` : SAFE_APP_URL;
+  properties.$pathname = view ? `/app/${view}` : '/app';
   properties.$host = 'app';
   properties.$referrer = '';
   properties.$initial_referrer = '';
@@ -219,6 +225,14 @@ export function track(eventName, properties = {}) {
     }
   }
   return Boolean(posthog.capture(eventName, safeProperties, { send_instantly: true }));
+}
+
+// Emit a real `$pageview` for each in-app navigation. `autocapture` and
+// `capture_pageview` stay off, so this is the only source of pageviews and web
+// analytics, paths, and the health check now read the desktop app as active.
+export function trackPageview(view) {
+  if (!initialized) return false;
+  return Boolean(posthog.capture('$pageview', { view: safeContextValue(view) }, { send_instantly: true }));
 }
 
 export async function submitFeedback(properties = {}) {

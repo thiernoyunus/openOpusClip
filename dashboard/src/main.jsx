@@ -7,7 +7,7 @@ import Legal from './Legal.jsx'
 import EditorView from './components/editor/EditorView.jsx'
 import ResultCard from './components/ResultCard.jsx'
 import FeedbackModal from './components/FeedbackModal.jsx'
-import { analyticsClient, analyticsRuntime, captureError, initAnalytics, track } from './analytics.js'
+import { analyticsClient, analyticsRuntime, captureError, initAnalytics, track, trackPageview } from './analytics.js'
 
 const buildDevTranscript = (items) => {
   let t = 0;
@@ -145,6 +145,7 @@ function Root() {
 
   useEffect(() => {
     track('view_changed', { view });
+    trackPageview(view);
   }, [view]);
 
   useEffect(() => {
