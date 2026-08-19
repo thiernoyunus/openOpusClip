@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from s3_uploader import upload_job_artifacts
+import transcription
 from transcription import WHISPER_MODELS
 
 load_dotenv()
@@ -378,6 +379,22 @@ def _stop_whisper_worker():
             pass
 
 
+async def _watch_whisper_worker():
+    """Poll the worker subprocess and respawn it if it ever exits on its
+    own (crash, or transcription_worker.py's timeout self-exit). Idle
+    polling only -- restart is cheap (model reloads lazily on next job)."""
+    if not _WHISPER_WORKER_ENABLED:
+        return
+    while True:
+        await asyncio.sleep(5)
+        proc = _whisper_worker_proc
+        if proc is not None and proc.poll() is not None:
+            print(f"⚠️  Whisper worker (pid {proc.pid}) exited unexpectedly "
+                  f"(code {proc.returncode}); restarting.")
+            transcription.reset_worker_client()
+            _start_whisper_worker()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Start worker and cleanup
@@ -388,10 +405,17 @@ async def lifespan(app: FastAPI):
     # thumbnails, subtitles, and main.py subprocesses (which inherit the
     # env var we set below) reuses that loaded model.
     _start_whisper_worker()
+    # Watch for the worker exiting (crash, or the self-imposed timeout exit
+    # in transcription_worker.py when a job hangs past REQUEST_TIMEOUT_S) and
+    # respawn it. Without this, one stuck job would permanently degrade every
+    # later transcription to the slow "reload the model every time" inline
+    # path instead of getting a fresh fast worker back.
+    watchdog_task = asyncio.create_task(_watch_whisper_worker())
     try:
         yield
     finally:
         _stop_whisper_worker()
+        watchdog_task.cancel()
 
 app = FastAPI(lifespan=lifespan)
 

@@ -197,11 +197,36 @@ def _handle(conn, addr):
 
         t = threading.Thread(target=_run, daemon=True)
         t.start()
+        job_started = time.monotonic()
 
         try:
             heartbeat_ok = True
             while t.is_alive():
-                t.join(timeout=10)
+                remaining = REQUEST_TIMEOUT_S - (time.monotonic() - job_started)
+                if remaining <= 0:
+                    # Hard ceiling hit. The thread is stuck in native code (a
+                    # hung model download, in practice) so it cannot be
+                    # cancelled from Python -- heartbeats would otherwise let
+                    # it stall the client forever (see REQUEST_TIMEOUT_S doc).
+                    # Exiting the process is the only guaranteed way to free
+                    # the lock/socket/thread; the parent respawns a clean
+                    # worker on the next job (see app.py cleanup_jobs()).
+                    try:
+                        _send_message(conn, {
+                            "id": req_id,
+                            "error": f"transcription timed out after {REQUEST_TIMEOUT_S:.0f}s",
+                        })
+                    except Exception:
+                        pass
+                    print(
+                        f"\u23f1\ufe0f [worker] job {req_id[:8]} exceeded "
+                        f"{REQUEST_TIMEOUT_S:.0f}s timeout; exiting worker to "
+                        f"clear the stuck thread.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    os._exit(1)
+                t.join(timeout=min(10, remaining))
                 if t.is_alive() and heartbeat_ok:
                     try:
                         _send_message(conn, {"id": req_id, "heartbeat": True})
