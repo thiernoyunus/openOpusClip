@@ -16,6 +16,7 @@
     "@remotion/media-utils": "^4.0.447",
     "@remotion/player": "^4.0.447",
     "@remotion/web-renderer": "^4.0.447",
+    "driver.js": "^1.8.0",
     "gsap": "^3.15.0",
     "lucide-react": "^0.344.0",
     "posthog-js": "^1.407.2",

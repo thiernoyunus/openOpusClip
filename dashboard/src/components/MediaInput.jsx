@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Youtube, Upload, FileVideo, X, Scissors, Captions, ChevronLeft, ChevronRight, Ban } from 'lucide-react';
 import { getApiUrl } from '../config';
 import { CAPTION_TEMPLATES } from '@remotion-src/lib/captionTemplates';
+import { useTourActive } from '../lib/useTourActive.js';
 import { saveDefaultCaptionStyle, loadDefaultCaptionStyle } from './editor/useEditorState';
 import CaptionPreview from './editor/CaptionPreview';
 
@@ -52,11 +53,12 @@ function CaptionCell({ selected, label, onClick, children }) {
     );
 }
 
-function ClipTab({ active, onClick, icon: Icon, label }) {
+function ClipTab({ active, onClick, icon: Icon, label, ...rest }) {
     return (
         <button
             type="button"
             onClick={onClick}
+            {...rest}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
                 active ? 'bg-white/10 text-fg' : 'text-muted hover:text-fg'
             }`}
@@ -133,6 +135,9 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
     const [durMeta, setDurMeta] = useState(null); // { file, duration }
     const [trimStart, setTrimStart] = useState(0);
     const [trimEnd, setTrimEnd] = useState(0);
+    // Reactive: re-render this component when a tour starts/stops so the
+    // option controls mount for the first-run dashboard tour.
+    const tourActive = useTourActive();
 
     useEffect(() => {
         fetch(getApiUrl('/api/config'))
@@ -184,7 +189,9 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
 
     // Progressive disclosure: options only appear once there's something to
     // process. State is preserved when input is removed (we only hide the UI).
-    const hasInput = mode === 'url' ? url.trim().length > 0 : files.length > 0;
+    // The tour opens the options before any link/file exists so newcomers can
+    // see what the controls do without running a job first.
+    const hasInput = tourActive || (mode === 'url' ? url.trim().length > 0 : files.length > 0);
 
     // In the Captions tool a caption style is the whole point, so block submit
     // until one is chosen.
@@ -374,17 +381,17 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
                 {/* Options appear once there's a video to work with (state is
                     preserved when input is removed — we only hide the UI). */}
                 {hasInput && (
-                <div className="animate-[optionsReveal_0.28s_ease-out]">
+                <div data-tour="media-options" className="animate-[optionsReveal_0.28s_ease-out]">
                 {/* Clip mode */}
                 <div className="mt-5 bg-black/20 border border-edge rounded-xl p-4">
                     {!inTool && (
                         <div className="flex gap-1 mb-4 p-1 bg-black/30 rounded-lg w-fit">
-                            <ClipTab active={clipMode === 'ai'} onClick={() => setClipMode('ai')} icon={Scissors} label="AI clipping" />
-                            <ClipTab active={clipMode === 'none'} onClick={() => setClipMode('none')} icon={Captions} label="Don't clip" />
+                            <ClipTab data-tour="option-ai-clipping" active={clipMode === 'ai'} onClick={() => setClipMode('ai')} icon={Scissors} label="AI clipping" />
+                            <ClipTab data-tour="option-dont-clip" active={clipMode === 'none'} onClick={() => setClipMode('none')} icon={Captions} label="Don't clip" />
                         </div>
                     )}
 
-                    <label className={inTool ? 'block' : 'block mb-4'}>
+                    <label data-tour="option-aspect-ratio" className={inTool ? 'block' : 'block mb-4'}>
                         <span className="block text-xs font-medium text-zinc-400 mb-2">Aspect ratio</span>
                         <select
                             value={aspectRatio}
@@ -399,7 +406,7 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
 
                     {!inTool && (clipMode === 'ai' ? (
                         <div className="space-y-4">
-                            <label className="block">
+                            <label data-tour="option-clip-length" className="block">
                                 <span className="block text-xs font-medium text-zinc-400 mb-2">Clip length</span>
                                 <select
                                     value={clipLength}
@@ -411,7 +418,7 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
                                     ))}
                                 </select>
                             </label>
-                            <label className="block">
+                            <label data-tour="option-moments" className="block">
                                 <span className="block text-xs font-medium text-zinc-400 mb-2">Include specific moments <span className="text-zinc-600">(optional)</span></span>
                                 <textarea
                                     value={momentPrompt}
@@ -488,6 +495,7 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
                     </div>
                     <div
                         ref={captionStripRef}
+                        data-tour="caption-style"
                         className="grid grid-rows-2 grid-flow-col auto-cols-max gap-2.5 overflow-x-auto custom-scrollbar pb-2 snap-x"
                     >
                         {/* Captions tool exists to add captions — hide "No caption" there. */}
@@ -519,7 +527,7 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
 
                 {/* Transcription powers captions AND the editor's transcript,
                     so the model picker stays visible in quick-tool modes too. */}
-                <label className="block mt-5">
+                <label data-tour="transcription-engine" className="block mt-5">
                     <span className="block text-xs font-medium text-zinc-400 mb-2">Transcription</span>
                     <select
                         value={transcriptionEngine === 'soniox' ? 'soniox' : `whisper:${whisperModel}`}
@@ -568,6 +576,7 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
 
                 <button
                     type="submit"
+                    data-tour="media-submit"
                     disabled={!acknowledged || sonioxBlocked || captionsBlocked || submitting || (mode === 'url' && !url) || (mode === 'file' && files.length === 0)}
                     className="w-full mt-4 py-3 rounded-lg bg-fg text-[#18181b] font-medium text-sm hover:bg-white active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >

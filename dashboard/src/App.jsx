@@ -1,17 +1,61 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, FileVideo, Sparkles, Scissors, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield, LayoutGrid, Image, RotateCcw, AlertTriangle, KeyRound, ExternalLink, Copy, CheckCircle2, Trash2, Film, Captions, Calendar, Globe } from 'lucide-react';
+import { Upload, FileVideo, Sparkles, Scissors, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, ArrowLeft, History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, ExternalLink, Copy, CheckCircle2, Trash2, Film, Captions, Compass } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
 import { GhostClipCard, SkeletonClipCard } from './components/GenerateMoreCards';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
+import SocialCalendar from './components/SocialCalendar';
 import TrailerPage from './TrailerPage';
 import ProcessingModal from './components/ProcessingModal';
 import EditorView from './components/editor/EditorView';
 import { getProjects, addProject, updateProject, removeProject, phaseFromLogs, titleFromPayload, thumbFromPayload, coverFromString, fetchVideoTitle, captureVideoFrame, isTrailerProject } from './lib/projectHistory';
 import { getApiUrl } from './config';
 import { captureError, track } from './analytics';
-import { getPhase, armNext, runTourPhase, stopTour } from './lib/platformTour.js';
+import { getPhase, setPhase, armNext, runTourPhase, stopTour, startTourFromHome, APP_FEEDBACK_INDEX } from './lib/platformTour.js';
+
+// Sidebar pieces live at module scope (not inside App) so React re-renders
+// don't remount them. A remount would orphan the tour's highlighted element
+// mid-step, which made the spotlight invisible on the sidebar items.
+const RailItem = ({ icon: Icon, label, active, onClick }) => (
+  <button
+    onClick={onClick}
+    aria-label={label}
+    className={`relative group w-10 h-10 mx-auto rounded-lg flex items-center justify-center transition-colors ${active ? 'bg-white/10 text-fg' : 'text-muted hover:text-fg hover:bg-white/5'}`}
+  >
+    <Icon size={20} />
+    <span className="pointer-events-none absolute left-full ml-3 px-2 py-1 rounded-md bg-surface2 border border-edge text-fg text-xs whitespace-nowrap opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-150 z-50 shadow-lg">
+      {label}
+    </span>
+  </button>
+);
+
+const Sidebar = ({ activeTab, onNavigate, onOpenSettings }) => (
+  <div className="w-[60px] bg-background border-r border-edge flex flex-col items-center py-4 shrink-0">
+    <div className="w-9 h-9 rounded-lg overflow-hidden border border-edge mb-5 shrink-0">
+      <img src="/logo-openshorts.png" alt="OpenShorts" className="w-full h-full object-cover" />
+    </div>
+
+    <nav className="flex-1 flex flex-col gap-1.5 w-full">
+      <RailItem icon={Scissors} label="Clip Generator" active={activeTab === 'dashboard'} onClick={() => onNavigate('dashboard')} />
+      <RailItem icon={Film} label="Podcast Trailer" active={activeTab === 'trailer'} onClick={() => onNavigate('trailer')} />
+      <RailItem icon={Calendar} label="Calendar" active={activeTab === 'calendar'} onClick={() => onNavigate('calendar')} />
+    </nav>
+
+    <div className="flex flex-col gap-1.5 w-full">
+      <RailItem icon={Settings} label="Settings" active={activeTab === 'settings'} onClick={onOpenSettings} />
+    </div>
+  </div>
+);
+
+const ShortcutItem = ({ icon: Icon, color, label, onClick, active = false, ...rest }) => (
+  <button onClick={onClick} {...rest} className={`group flex flex-col items-center gap-2.5 transition-colors ${active ? 'text-fg' : 'text-muted hover:text-fg'}`}>
+    <span className={`relative w-14 h-14 rounded-full bg-surface border flex items-center justify-center ${color} transition-colors ${active ? 'border-white/40' : 'border-edge group-hover:border-white/20'}`}>
+      <Icon size={22} />
+    </span>
+    <span className="text-xs">{label}</span>
+  </button>
+);
 
 // Enhanced "Encryption" using XOR + Base64 with a Salt
 // This is better than plain Base64 but still client-side.
@@ -173,7 +217,15 @@ function App() {
       stopTour();
       return;
     }
-    runTourPhase('app');
+    // The last step points at Settings; finishing it (or clicking the gear)
+    // hands the flow to the Gemini-key leg there.
+    runTourPhase('app', {
+      onDone: () => {
+        stopTour();
+        setPhase('settings');
+        setActiveTab('settings');
+      },
+    });
     return () => stopTour();
   }, [viewingResults, results]);
 
@@ -182,6 +234,76 @@ function App() {
     runTourPhase('results');
     return () => stopTour();
   }, [viewingResults, results, editingClip]);
+
+  // Settings (Gemini key) leg of the tour, reached from the gear in the
+  // dashboard leg or via the settings tab itself.
+  useEffect(() => {
+    if (getPhase() !== 'settings' || activeTab !== 'settings') return;
+    runTourPhase('settings', {
+      onDone: () => {
+        armNext('settings');
+        stopTour();
+        setActiveTab('dashboard');
+      },
+    });
+    return () => stopTour();
+  }, [activeTab]);
+
+  // Calendar leg: entered from the calendar step of the dashboard tour, then
+  // the tour resumes on the dashboard at the Feedback step.
+  useEffect(() => {
+    if (getPhase() !== 'calendar' || activeTab !== 'calendar') return;
+    runTourPhase('calendar', {
+      onDone: () => {
+        armNext('calendar'); // -> 'app'
+        setActiveTab('dashboard');
+        // Resume the app tour at the Feedback step once the calendar view
+        // has unmounted (the deferred call outlives this effect's cleanup).
+        setTimeout(() => runTourPhase('app', {
+          startIndex: APP_FEEDBACK_INDEX,
+          onDone: () => {
+            stopTour();
+            setPhase('settings');
+            setActiveTab('settings');
+          },
+        }), 80);
+      },
+    });
+    return () => stopTour();
+  }, [activeTab]);
+
+  // Legacy #trailer deep link: react to hash changes so navigating to the
+  // trailer tab mid-session actually opens it.
+  useEffect(() => {
+    const applyHash = () => {
+      const h = window.location.hash;
+      if (h === '#trailer') setActiveTab('trailer');
+      else if (!h || h === '#app') setActiveTab('dashboard');
+    };
+    applyHash();
+    window.addEventListener('hashchange', applyHash);
+    return () => window.removeEventListener('hashchange', applyHash);
+  }, []);
+
+  // Sidebar navigation. During the dashboard tour, opening Calendar hands the
+  // flow to the calendar leg instead of just switching tabs.
+  const handleNavigate = (tab) => {
+    if (getPhase() === 'app' && tab === 'calendar') {
+      setPhase('calendar');
+      stopTour();
+    }
+    setActiveTab(tab);
+  };
+
+  // Opening Settings from the sidebar ends the dashboard leg of the tour and
+  // hands off to the Gemini-key leg.
+  const handleOpenSettings = () => {
+    if (getPhase() === 'app') {
+      setPhase('settings');
+      stopTour();
+    }
+    setActiveTab('settings');
+  };
 
   // Sync state for original video playback
   const [_syncedTime, setSyncedTime] = useState(0);
@@ -872,47 +994,6 @@ function App() {
     }
   };
 
-  // --- UI Components ---
-
-  const RailItem = ({ icon: Icon, label, active, onClick }) => (
-    <button
-      onClick={onClick}
-      aria-label={label}
-      className={`relative group w-10 h-10 mx-auto rounded-lg flex items-center justify-center transition-colors ${active ? 'bg-white/10 text-fg' : 'text-muted hover:text-fg hover:bg-white/5'}`}
-    >
-      <Icon size={20} />
-      <span className="pointer-events-none absolute left-full ml-3 px-2 py-1 rounded-md bg-surface2 border border-edge text-fg text-xs whitespace-nowrap opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-150 z-50 shadow-lg">
-        {label}
-      </span>
-    </button>
-  );
-
-  const Sidebar = () => (
-    <div className="w-[60px] bg-background border-r border-edge flex flex-col items-center py-4 shrink-0">
-      <div className="w-9 h-9 rounded-lg overflow-hidden border border-edge mb-5 shrink-0">
-        <img src="/logo-openshorts.png" alt="OpenShorts" className="w-full h-full object-cover" />
-      </div>
-
-      <nav className="flex-1 flex flex-col gap-1.5 w-full">
-        <RailItem icon={Scissors} label="Clip Generator" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-        <RailItem icon={Film} label="Podcast Trailer" active={activeTab === 'trailer'} onClick={() => setActiveTab('trailer')} />
-      </nav>
-
-      <div className="flex flex-col gap-1.5 w-full">
-        <RailItem icon={Settings} label="Settings" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
-      </div>
-    </div>
-  );
-
-  const ShortcutItem = ({ icon: Icon, color, label, onClick, active = false }) => (
-    <button onClick={onClick} className={`group flex flex-col items-center gap-2.5 transition-colors ${active ? 'text-fg' : 'text-muted hover:text-fg'}`}>
-      <span className={`relative w-14 h-14 rounded-full bg-surface border flex items-center justify-center ${color} transition-colors ${active ? 'border-white/40' : 'border-edge group-hover:border-white/20'}`}>
-        <Icon size={22} />
-      </span>
-      <span className="text-xs">{label}</span>
-    </button>
-  );
-
   const ProjectCard = ({ p }) => {
     const isActive = p.id === jobId;
     const proc = p.status === 'processing';
@@ -1014,7 +1095,7 @@ function App() {
 
   return (
     <div className="flex h-screen bg-background overflow-hidden selection:bg-primary/30">
-      <Sidebar />
+      <Sidebar activeTab={activeTab} onNavigate={handleNavigate} onOpenSettings={handleOpenSettings} />
 
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
         {/* Top Header */}
@@ -1024,6 +1105,14 @@ function App() {
           </div>
 
           <div className="flex items-center gap-4">
+            <button
+              onClick={startTourFromHome}
+              className="flex items-center gap-2 bg-surface border border-white/10 rounded-lg px-3 py-2 text-xs text-zinc-300 hover:bg-white/5 transition-colors"
+              title="Start the guided tour"
+            >
+              <Compass size={14} className="text-primary" />
+              Take the tour
+            </button>
 
             {!apiKey && (
               <button
@@ -1087,7 +1176,7 @@ function App() {
               </div>
               <KeyInput onKeySet={setApiKey} savedKey={apiKey} />
 
-              <div className="glass-panel p-6 mt-8">
+              <div data-tour="zernio-section" className="glass-panel p-6 mt-8">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-semibold">Social Integration</h2>
                   <span className="text-[10px] bg-zinc-500/10 border border-white/10 px-2 py-0.5 rounded text-zinc-400 uppercase tracking-wider">Optional</span>
@@ -1162,7 +1251,7 @@ function App() {
                 </div>
               </div>
 
-              <div className="glass-panel p-6 mt-8">
+              <div data-tour="soniox-section" className="glass-panel p-6 mt-8">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-semibold">Transcription (Soniox)</h2>
                   <span className="text-[10px] bg-white/5 border border-white/5 px-2 py-0.5 rounded text-zinc-500 uppercase tracking-wider">Optional</span>
@@ -1226,6 +1315,15 @@ function App() {
             </div>
           )}
 
+          {/* View: Social Calendar & Analytics */}
+          {activeTab === 'calendar' && (
+            <SocialCalendar
+              zernioKey={zernioKey}
+              accounts={socialAccounts}
+              onGoToSettings={() => setActiveTab('settings')}
+            />
+          )}
+
           {/* View: Dashboard homepage (idle / processing / error) — Opus-style */}
           {activeTab === 'dashboard' && !(viewingResults && results) && (
             <div className="h-full overflow-y-auto custom-scrollbar animate-[fadeIn_0.3s_ease-out]">
@@ -1249,9 +1347,8 @@ function App() {
 
                 {/* Quick-tool shortcut row */}
                 <div data-tour="quick-tools" className="relative flex items-center justify-center gap-10 mt-12">
-                  <ShortcutItem icon={Scissors} color="text-viral" label="Clip Generator" onClick={() => setQuickTool(null)} />
-                  <ShortcutItem icon={Captions} color="text-sky-300" label="AI Captions" active={quickTool === 'captions'} onClick={() => setQuickTool((t) => t === 'captions' ? null : 'captions')} />
-                  <ShortcutItem icon={Film} color="text-violet-300" label="Video Editor" active={quickTool === 'editor'} onClick={() => setQuickTool((t) => t === 'editor' ? null : 'editor')} />
+                  <ShortcutItem icon={Captions} color="text-sky-300" label="AI Captions" data-tour="shortcut-captions" active={quickTool === 'captions'} onClick={() => setQuickTool((t) => t === 'captions' ? null : 'captions')} />
+                  <ShortcutItem icon={Film} color="text-violet-300" label="Video Editor" data-tour="shortcut-editor" active={quickTool === 'editor'} onClick={() => setQuickTool((t) => t === 'editor' ? null : 'editor')} />
                 </div>
               </div>
 
@@ -1284,7 +1381,7 @@ function App() {
             <div className="h-full flex flex-col animate-[fadeIn_0.3s_ease-out]">
               <div className="flex items-center gap-3 px-6 py-3.5 border-b border-edge shrink-0">
                 <button onClick={handleReset} className="flex items-center gap-1.5 text-sm text-muted hover:text-fg transition-colors">
-                  <PlusCircle size={16} /> New project
+                  <ArrowLeft size={16} /> Go back
                 </button>
                 <span className="w-px h-4 bg-edge" />
                 <h2 data-tour="results-header" className="text-sm font-medium text-fg flex items-center gap-2">
@@ -1505,6 +1602,7 @@ function App() {
         jobId={jobId}
         zernioKey={zernioKey}
         socialAccounts={socialAccounts}
+        onViewCalendar={() => setActiveTab('calendar')}
       />
 
       {showProcessingModal && (
