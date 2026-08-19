@@ -184,33 +184,6 @@ def extend_clip(
 # ── AI features ────────────────────────────────────────────────────────
 
 
-def generate_effects(
-    job_id: str,
-    clip_index: int,
-    prompt: str = "",
-    api_key: str = "",
-) -> str:
-    """Generate AI visual effects for a clip.
-
-    prompt is passed for future backend use but currently ignored by the backend.
-    api_key: Gemini API key (required if backend has no GEMINI_API_KEY env var).
-    """
-    headers = {}
-    if api_key:
-        headers["X-Gemini-Key"] = api_key
-    with _client(timeout=120) as c:
-        r = c.post(
-            _url("/api/effects/generate"),
-            json={
-                "jobId": job_id,
-                "clipIndex": clip_index,
-                "prompt": prompt,
-            },
-            headers=headers,
-        )
-        return _json(r)
-
-
 def generate_captions(
     job_id: str,
     clip_index: int,
@@ -244,36 +217,6 @@ def suggest_broll(job_id: str, clip_index: int) -> str:
                 "clipIndex": clip_index,
             },
         )
-        return _json(r)
-
-
-def translate_clip(
-    job_id: str,
-    clip_index: int,
-    target_language: str,
-    elevenlabs_key: str = "",
-) -> str:
-    """Translate clip audio to another language via ElevenLabs AI dubbing."""
-    headers = {}
-    if elevenlabs_key:
-        headers["X-ElevenLabs-Key"] = elevenlabs_key
-    with _client(timeout=300) as c:
-        r = c.post(
-            _url("/api/translate"),
-            json={
-                "jobId": job_id,
-                "clipIndex": clip_index,
-                "targetLanguage": target_language,
-            },
-            headers=headers,
-        )
-        return _json(r)
-
-
-def get_translate_languages() -> str:
-    """List all supported dubbing languages."""
-    with _client(timeout=10) as c:
-        r = c.get(_url("/api/translate/languages"))
         return _json(r)
 
 
@@ -335,11 +278,8 @@ mcp.add_tool(list_jobs)
 mcp.add_tool(delete_job)
 mcp.add_tool(get_transcript)
 mcp.add_tool(extend_clip)
-mcp.add_tool(generate_effects)
 mcp.add_tool(generate_captions)
 mcp.add_tool(suggest_broll)
-mcp.add_tool(translate_clip)
-mcp.add_tool(get_translate_languages)
 mcp.add_tool(social_post)
 mcp.add_tool(social_accounts)
 mcp.add_tool(social_analytics)

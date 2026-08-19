@@ -45,8 +45,8 @@ def resolve_backend(backend=None):
     if requested == "soniox":
         # Only honour Soniox when its key is present in THIS process. The key is
         # passed per-job to the worker subprocess; if WHISPER_BACKEND=soniox is
-        # set globally, the main API process (e.g. /api/subtitle re-transcription)
-        # has no key, so fall back to auto instead of crashing.
+        # set globally, the main API process has no key, so fall back to auto
+        # instead of crashing.
         if os.getenv("SONIOX_API_KEY"):
             return "soniox"
         requested = "auto"

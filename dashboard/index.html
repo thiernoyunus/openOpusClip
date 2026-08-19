@@ -10,7 +10,7 @@
   <title>OpenShorts - Free Open Source Clip Generator | TikTok, Reels & Shorts</title>
     <meta name="description" content="Free open source clip generator. Turn your long-form videos into viral shorts for TikTok, Reels, and YouTube Shorts." />
   <meta name="keywords"
-    content="free clip generator, open source clip generator, AI clip generator, free video clip generator, AI video clipping tool, AI short video generator, vertical video maker, open source video editor, YouTube Shorts maker, Instagram Reels creator, video repurposing tool, AI viral moment detection, auto subtitle generator, AI voice dubbing, Opus Clip alternative free, free YouTube thumbnail generator, AI YouTube title generator, free YouTube description generator" />
+    content="free clip generator, open source clip generator, AI clip generator, free video clip generator, AI video clipping tool, AI short video generator, vertical video maker, open source video editor, YouTube Shorts maker, Instagram Reels creator, video repurposing tool, AI viral moment detection, auto subtitle generator, Opus Clip alternative free, free YouTube thumbnail generator, AI YouTube title generator, free YouTube description generator" />
   <meta name="author" content="OpenShorts" />
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
   <link rel="canonical" href="https://openshorts.app" />
@@ -72,10 +72,7 @@
             "AI viral moment detection with Google Gemini 3.0 Flash",
             "Smart 9:16 vertical cropping with face tracking",
             "Automatic subtitle generation with word-level timestamps",
-            "AI voice dubbing in 30+ languages via ElevenLabs",
             "Local video file upload support",
-            "Hook text overlays with styled fonts",
-            "AI-generated video effects via FFmpeg",
             "Direct social media posting",
             "Free AI YouTube thumbnail generator",
             "Free AI YouTube title generator with 10 viral suggestions",
@@ -104,7 +101,7 @@
               "name": "What is OpenShorts?",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "OpenShorts is a free, open source AI clip generator that automatically transforms your long-form videos — podcasts, webinars, livestreams, vlogs, interviews — into viral-ready short clips (9:16 vertical format) for TikTok, Instagram Reels, and YouTube Shorts. It uses Google Gemini 3.0 Flash AI to detect the most engaging viral moments, then applies smart cropping with MediaPipe face tracking, automatic subtitles via faster-whisper, and optional AI voice dubbing in over 30 languages via ElevenLabs. According to HubSpot's 2025 State of Marketing report, short-form video delivers the highest ROI of any content format."
+                "text": "OpenShorts is a free, open source AI clip generator that automatically transforms your long-form videos — podcasts, webinars, livestreams, vlogs, interviews — into viral-ready short clips (9:16 vertical format) for TikTok, Instagram Reels, and YouTube Shorts. It uses Google Gemini 3.0 Flash AI to detect the most engaging viral moments, then applies smart cropping with MediaPipe face tracking and automatic subtitles via faster-whisper. According to HubSpot's 2025 State of Marketing report, short-form video delivers the highest ROI of any content format."
               }
             },
             {
@@ -120,7 +117,7 @@
               "name": "Is OpenShorts really free? What's the catch?",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "OpenShorts is 100% free and open source. You self-host it using Docker on your own machine or server. It uses three external APIs — all with free tiers. Google Gemini API (required) powers AI analysis, viral moment detection, and thumbnail generation — free tier includes 1,500 requests per day. ElevenLabs API (optional) enables AI voice dubbing in 30+ languages — free tier included. Upload-Post API (optional) allows direct publishing to YouTube, TikTok, and Instagram — also free tier. There are no watermarks, no usage limits, and no subscription fees."
+                "text": "OpenShorts is 100% free and open source. You self-host it using Docker on your own machine or server. It uses two external APIs — all with free tiers. Google Gemini API (required) powers AI analysis, viral moment detection, and thumbnail generation — free tier includes 1,500 requests per day. Zernio API (optional) allows direct publishing to YouTube, TikTok, and Instagram — also free tier. There are no watermarks, no usage limits, and no subscription fees."
               }
             },
             {
@@ -136,15 +133,15 @@
               "name": "Is there a free alternative to Opus Clip?",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "Yes. OpenShorts is a free, open source alternative to Opus Clip that you can self-host. Unlike Opus Clip's $15-228/month pricing, OpenShorts is completely free with no watermarks or usage limits. It offers comparable AI viral moment detection powered by Google Gemini, smart vertical cropping with face tracking, automatic subtitles, and AI voice dubbing — all running on your own infrastructure with full data privacy."
+                "text": "Yes. OpenShorts is a free, open source alternative to Opus Clip that you can self-host. Unlike Opus Clip's $15-228/month pricing, OpenShorts is completely free with no watermarks or usage limits. It offers comparable AI viral moment detection powered by Google Gemini, smart vertical cropping with face tracking, and automatic subtitles — all running on your own infrastructure with full data privacy."
               }
             },
             {
               "@type": "Question",
-              "name": "Can OpenShorts add subtitles and translate videos?",
+              "name": "Can OpenShorts add subtitles?",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "Yes. OpenShorts automatically generates subtitles using faster-whisper with word-level timestamps and burns them into the video using FFmpeg. For translation, it integrates with ElevenLabs AI dubbing to translate and dub video audio into over 30 languages, preserving the original speaker's voice characteristics. The dubbed video is automatically re-transcribed and subtitled in the new language."
+                "text": "Yes. OpenShorts automatically generates subtitles using faster-whisper with word-level timestamps, and the editor lets you style and burn captions into the final clip before exporting or posting."
               }
             },
             {

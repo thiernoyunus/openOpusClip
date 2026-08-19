@@ -18,8 +18,6 @@
 #     dashboard/                 built Vite dashboard (copy of dashboard/dist)
 #     backend/                   Python runtime source (app.py, main.py, ...)
 #       dashboard/dist/          copy of the built dashboard (app.py mounts this)
-#       fonts/                   hook fonts (hooks.py FONT_DIR="fonts", cwd-relative)
-#       remotion/public/fonts/   caption/RTL fonts (subtitles.py/_FONTS_DIR, __file__-relative)
 #     render-service/dist/       compiled TS renderer (node dist/server.js)
 #     render-service/node_modules  prod-only deps (@remotion/renderer + compositor, express; NO bundler)
 #     remotion-bundle/           prebuilt Remotion bundle (REMOTION_PREBUILT_BUNDLE)
@@ -299,16 +297,11 @@ Write-Log 'e. Staging backend Python source + fonts'
 $Backend = Join-Path $Stage 'backend'
 New-Item -ItemType Directory -Force -Path $Backend | Out-Null
 # Exact set of local modules the app imports (grep-verified in app.py/main.py/etc.).
-foreach ($f in @('app.py', 'main.py', 'editor.py', 'hooks.py', 'subtitles.py', 'translate.py',
+foreach ($f in @('app.py', 'main.py', 'editor.py',
                  'transcription.py', 'transcription_worker.py', 'thumbnail.py', 's3_uploader.py',
                  'ffmpeg_utils.py', 'requirements.txt')) {
     Copy-Item -Force (Join-Path $RepoRoot $f) (Join-Path $Backend $f)
 }
-# Hook fonts: hooks.py uses FONT_DIR="fonts" relative to cwd (backend runs cwd=backend).
-Copy-Tree (Join-Path $RepoRoot 'fonts') (Join-Path $Backend 'fonts')
-# Caption + RTL fonts: subtitles.py/_FONTS_DIR and hooks.py ARABIC_FONT_PATH resolve
-# <module dir>/remotion/public/fonts relative to __file__.
-Copy-Tree (Join-Path $RepoRoot 'remotion\public\fonts') (Join-Path $Backend 'remotion\public\fonts')
 # app.py mounts <module dir>/dashboard/dist as the SPA root.
 Copy-Tree (Join-Path $Stage 'dashboard') (Join-Path $Backend 'dashboard\dist')
 Write-Info "backend -> $Backend (modules + fonts + dashboard/dist)"
