@@ -252,6 +252,8 @@ def test_start_whisper_worker_bounds_ready_wait():
         k: os.environ.get(k)
         for k in ("OPENSHORTS_WHISPER_WORKER_PORT", "WHISPER_WORKER_READY_TIMEOUT")
     }
+    orig_ready_timeout = app._WHISPER_WORKER_READY_TIMEOUT_S
+    spawned = []
     try:
         # Point _start_whisper_worker at our silent script instead of the
         # real worker, with a short ready-timeout so the test is fast.
@@ -260,7 +262,9 @@ def test_start_whisper_worker_bounds_ready_wait():
 
         def fake_popen(cmd, **kwargs):
             cmd = [sys.executable, "-u", str(silent_script)]
-            return real_popen(cmd, **kwargs)
+            proc = real_popen(cmd, **kwargs)
+            spawned.append(proc)
+            return proc
 
         subprocess.Popen = fake_popen
         try:
@@ -272,13 +276,17 @@ def test_start_whisper_worker_bounds_ready_wait():
 
         assert elapsed < 10, f"blocked for {elapsed:.1f}s, expected ~1s bound"
         assert app._whisper_worker_proc is None, "should not adopt a silent worker"
+        # It's not enough that we didn't adopt it -- it must actually be dead,
+        # not left running/zombied in the background.
+        assert len(spawned) == 1
+        assert spawned[0].wait(timeout=5) is not None, "silent worker was not reaped"
     finally:
         for k, v in env_saved.items():
             if v is None:
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
-        app._WHISPER_WORKER_READY_TIMEOUT_S = 30.0
+        app._WHISPER_WORKER_READY_TIMEOUT_S = orig_ready_timeout
         silent_script.unlink(missing_ok=True)
         app._stop_whisper_worker()
 
