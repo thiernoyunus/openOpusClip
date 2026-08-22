@@ -145,7 +145,7 @@ function Root() {
 
   useEffect(() => {
     track('view_changed', { view });
-    trackPageview(view);
+    if (view !== 'app') trackPageview(view);
   }, [view]);
 
   useEffect(() => {
