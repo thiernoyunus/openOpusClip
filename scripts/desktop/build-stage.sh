@@ -344,8 +344,11 @@ SMOKE
 [[ -n "${note_mp:-}" ]] && info "${note_mp}"
 
 # --- e. Backend source -------------------------------------------------------
-log "e. Staging backend Python source + fonts"
+log "e. Staging backend Python source"
 BACKEND="${STAGE}/backend"
+# Replace the generated backend wholesale so removed modules cannot survive a
+# later incremental stage rebuild.
+rm -rf "${BACKEND}"
 mkdir -p "${BACKEND}"
 # Exact set of local modules the app imports (grep-verified in app.py/main.py/etc.).
 for f in app.py main.py editor.py \
