@@ -8,6 +8,7 @@ import glob
 import time
 import asyncio
 import sys
+import queue as _queue
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from typing import Dict, Optional, List
@@ -18,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from s3_uploader import upload_job_artifacts
+import transcription
 from transcription import WHISPER_MODELS
 
 load_dotenv()
@@ -295,6 +297,51 @@ def _pick_free_port():
     return port
 
 
+# Cap how long we'll wait for a freshly spawned worker to announce READY.
+# Model loading happens lazily on the first *job*, not at boot, so this only
+# needs to cover process startup + socket bind -- a few seconds in practice.
+# Bounded so a broken worker can't block whoever is waiting on it forever.
+_WHISPER_WORKER_READY_TIMEOUT_S = float(
+    os.environ.get("WHISPER_WORKER_READY_TIMEOUT", "30")
+)
+
+
+def _read_ready_line(stream, timeout_s):
+    """Read one line from `stream` with a wall-clock timeout. Runs the actual
+    (blocking) readline() in a helper thread so a stuck child can't hang the
+    caller forever; the thread is daemonized so it doesn't block interpreter
+    exit if the read never returns."""
+    result: _queue.Queue = _queue.Queue(maxsize=1)
+
+    def _read():
+        try:
+            result.put(stream.readline())
+        except Exception:
+            result.put(b"")
+
+    threading.Thread(target=_read, daemon=True).start()
+    try:
+        return result.get(timeout=timeout_s)
+    except _queue.Empty:
+        return None  # caller distinguishes "timed out" from "EOF" (b"")
+
+
+def _kill_and_reap(proc):
+    """Terminate a subprocess and make sure it's actually gone -- SIGTERM
+    first (graceful), SIGKILL if it ignores that, then wait() either way so
+    it doesn't linger as a zombie. Shared by every failed-handshake path in
+    _start_whisper_worker()."""
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+
 def _start_whisper_worker():
     """Spawn the persistent worker; advertise its port via env so subprocesses
     (main.py) inherit it. Worker is best-effort: if it fails to boot we keep
@@ -326,37 +373,66 @@ def _start_whisper_worker():
             print(f"⚠️  Failed to start Whisper worker: {exc}; "
                   f"transcription will run inline.")
             return
-        # Wait for "READY <port>" handshake so the first request doesn't race
-        # the worker bind. Generous timeout because cold-start model loads
-        # happen lazily on the FIRST request, not on worker boot.
-        try:
-            line = proc.stdout.readline()
-        except Exception as exc:
-            print(f"⚠️  Whisper worker handshake failed: {exc}; "
-                  f"transcription will run inline.")
-            proc.terminate()
-            return
-        if not line:
-            print("⚠️  Whisper worker exited before announcing READY; "
-                  "transcription will run inline.")
-            return
-        announcement = line.decode("utf-8", errors="replace").strip()
-        if not announcement.startswith("READY "):
-            print(f"⚠️  Unexpected Whisper worker banner: {announcement!r}; "
-                  f"transcription will run inline.")
-            proc.terminate()
-            return
-        announced_port = int(announcement.split()[1])
-        if announced_port != port:
-            # Shouldn't happen with port=0; defensive.
-            os.environ["OPENSHORTS_WHISPER_WORKER_PORT"] = str(announced_port)
-        def drain_worker_output(stream):
-            for output in iter(stream.readline, b""):
-                sys.stdout.buffer.write(output)
-                sys.stdout.buffer.flush()
-        threading.Thread(target=drain_worker_output, args=(proc.stdout,), daemon=True).start()
+        # Publish the process (still un-READY) under the lock immediately,
+        # so _stop_whisper_worker()/the watchdog can see and kill it without
+        # waiting on our READY handshake below -- that wait is bounded but
+        # still synchronous, and holding the lock through it would make
+        # shutdown (or a concurrent restart) block for up to
+        # _WHISPER_WORKER_READY_TIMEOUT_S.
         _whisper_worker_proc = proc
-        print(f"🎙️  Whisper worker ready on 127.0.0.1:{announced_port} (pid {proc.pid})")
+    # Wait for "READY <port>" handshake so the first request doesn't race
+    # the worker bind. Bounded (unlike a plain readline()) so a worker that
+    # hangs during startup -- e.g. the same kind of stuck model download this
+    # whole timeout/watchdog pair exists to catch -- can't block whoever
+    # called us (including the watchdog, on the event loop) forever.
+    try:
+        line = _read_ready_line(proc.stdout, _WHISPER_WORKER_READY_TIMEOUT_S)
+    except Exception as exc:
+        print(f"⚠️  Whisper worker handshake failed: {exc}; "
+              f"transcription will run inline.")
+        _kill_and_reap(proc)
+        _clear_whisper_worker_proc(proc)
+        return
+    if line is None:
+        print(f"⚠️  Whisper worker didn't announce READY within "
+              f"{_WHISPER_WORKER_READY_TIMEOUT_S:.0f}s; killing it and "
+              f"falling back to inline transcription.")
+        _kill_and_reap(proc)
+        _clear_whisper_worker_proc(proc)
+        return
+    if not line:
+        print("⚠️  Whisper worker exited before announcing READY; "
+              "transcription will run inline.")
+        _kill_and_reap(proc)
+        _clear_whisper_worker_proc(proc)
+        return
+    announcement = line.decode("utf-8", errors="replace").strip()
+    if not announcement.startswith("READY "):
+        print(f"⚠️  Unexpected Whisper worker banner: {announcement!r}; "
+              f"transcription will run inline.")
+        _kill_and_reap(proc)
+        _clear_whisper_worker_proc(proc)
+        return
+    announced_port = int(announcement.split()[1])
+    if announced_port != port:
+        # Shouldn't happen with port=0; defensive.
+        os.environ["OPENSHORTS_WHISPER_WORKER_PORT"] = str(announced_port)
+    def drain_worker_output(stream):
+        for output in iter(stream.readline, b""):
+            sys.stdout.buffer.write(output)
+            sys.stdout.buffer.flush()
+    threading.Thread(target=drain_worker_output, args=(proc.stdout,), daemon=True).start()
+    print(f"🎙️  Whisper worker ready on 127.0.0.1:{announced_port} (pid {proc.pid})")
+
+
+def _clear_whisper_worker_proc(proc):
+    """Unpublish `proc` from _whisper_worker_proc, but only if nothing else
+    (a concurrent _stop_whisper_worker/restart) already replaced or cleared
+    it first -- avoids clobbering a newer worker with a stale None."""
+    global _whisper_worker_proc
+    with _whisper_worker_lock:
+        if _whisper_worker_proc is proc:
+            _whisper_worker_proc = None
 
 
 def _stop_whisper_worker():
@@ -378,6 +454,26 @@ def _stop_whisper_worker():
             pass
 
 
+async def _watch_whisper_worker():
+    """Poll the worker subprocess and respawn it if it ever exits on its
+    own (crash, or transcription_worker.py's timeout self-exit). Idle
+    polling only -- restart is cheap (model reloads lazily on next job)."""
+    if not _WHISPER_WORKER_ENABLED:
+        return
+    while True:
+        await asyncio.sleep(5)
+        proc = _whisper_worker_proc
+        if proc is not None and proc.poll() is not None:
+            print(f"⚠️  Whisper worker (pid {proc.pid}) exited unexpectedly "
+                  f"(code {proc.returncode}); restarting.")
+            transcription.reset_worker_client()
+            # _start_whisper_worker() is blocking (subprocess spawn + a
+            # bounded but still synchronous wait for READY) -- run it off
+            # the event loop so a slow-to-start replacement can't stall
+            # every other request being served while we wait for it.
+            await asyncio.to_thread(_start_whisper_worker)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Start worker and cleanup
@@ -388,10 +484,17 @@ async def lifespan(app: FastAPI):
     # thumbnails, subtitles, and main.py subprocesses (which inherit the
     # env var we set below) reuses that loaded model.
     _start_whisper_worker()
+    # Watch for the worker exiting (crash, or the self-imposed timeout exit
+    # in transcription_worker.py when a job hangs past REQUEST_TIMEOUT_S) and
+    # respawn it. Without this, one stuck job would permanently degrade every
+    # later transcription to the slow "reload the model every time" inline
+    # path instead of getting a fresh fast worker back.
+    watchdog_task = asyncio.create_task(_watch_whisper_worker())
     try:
         yield
     finally:
         _stop_whisper_worker()
+        watchdog_task.cancel()
 
 app = FastAPI(lifespan=lifespan)
 

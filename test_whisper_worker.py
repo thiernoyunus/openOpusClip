@@ -170,6 +170,127 @@ def test_app_lifespan_boots_worker(monkeypatched=False):
         os.environ.pop("OPENSHORTS_WHISPER_WORKER_PORT", None)
 
 
+def test_worker_exits_when_job_exceeds_timeout():
+    """A job stuck forever (e.g. a hung model download, exactly what caused
+    the "processing for 2 hours" report this test guards against) must not
+    be able to out-wait every timeout via heartbeats. The worker enforces a
+    hard ceiling (REQUEST_TIMEOUT_S) and exits rather than hanging forever,
+    so the parent's watchdog (app._watch_whisper_worker) can respawn a clean
+    one. We patch _do_transcribe to hang indefinitely and shrink the ceiling
+    via the env var so the test itself completes quickly."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+
+    # A worker script that hangs "transcription" forever but has a 1s ceiling.
+    hang_script = ROOT / "_hang_worker_for_test.py"
+    hang_script.write_text(
+        "import sys, time\n"
+        "sys.path.insert(0, %r)\n"
+        "import transcription_worker as w\n"
+        "w._do_transcribe = lambda *a, **k: time.sleep(3600)\n"
+        "w.main()\n" % str(ROOT)
+    )
+    env = os.environ.copy()
+    env["OPENSHORTS_WHISPER_WORKER_PORT"] = str(port)
+    env["OPENSHORTS_WHISPER_WORKER_HOST"] = "127.0.0.1"
+    env["WHISPER_WORKER_REQUEST_TIMEOUT"] = "1"
+    proc = subprocess.Popen(
+        [sys.executable, "-u", str(hang_script)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        env=env,
+        cwd=str(ROOT),
+    )
+    try:
+        deadline = time.time() + 15
+        banner = ""
+        while time.time() < deadline:
+            line = proc.stdout.readline()
+            if not line:
+                raise RuntimeError("worker exited before READY")
+            banner = line.decode("utf-8").strip()
+            if banner.startswith("READY "):
+                break
+        assert banner.startswith("READY "), banner
+
+        # Fire a request; a video file just needs to exist for the worker to
+        # accept the job (it never actually reads it -- _do_transcribe is
+        # mocked to hang).
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as f:
+            client = _WorkerClient("127.0.0.1", port)
+            try:
+                client.request(f.name, "tiny", "auto", False)
+            except RuntimeError as exc:
+                assert "timed out" in str(exc), str(exc)
+            else:
+                raise AssertionError("expected timeout error, got a result")
+
+        # The worker process must have exited on its own (not just sent an
+        # error and kept the stuck thread/lock alive forever).
+        assert proc.wait(timeout=5) != 0
+    finally:
+        _stop_worker(proc)
+        hang_script.unlink(missing_ok=True)
+
+
+def test_start_whisper_worker_bounds_ready_wait():
+    """Regression guard for a real review finding: _start_whisper_worker()
+    used to block on a plain readline() with no timeout, so a worker that
+    hangs before announcing READY (e.g. the same stuck-download class of bug
+    the timeout/watchdog pair exists to catch) could freeze whoever called
+    it -- including the watchdog, on the app's event loop -- forever. It
+    must now give up after WHISPER_WORKER_READY_TIMEOUT and kill the
+    unresponsive process rather than hang."""
+    import app  # noqa: F401 (imports FastAPI etc.)
+
+    # A worker script that never prints READY.
+    silent_script = ROOT / "_silent_worker_for_test.py"
+    silent_script.write_text("import time\ntime.sleep(3600)\n")
+    env_saved = {
+        k: os.environ.get(k)
+        for k in ("OPENSHORTS_WHISPER_WORKER_PORT", "WHISPER_WORKER_READY_TIMEOUT")
+    }
+    orig_ready_timeout = app._WHISPER_WORKER_READY_TIMEOUT_S
+    spawned = []
+    try:
+        # Point _start_whisper_worker at our silent script instead of the
+        # real worker, with a short ready-timeout so the test is fast.
+        app._WHISPER_WORKER_READY_TIMEOUT_S = 1.0
+        real_popen = subprocess.Popen
+
+        def fake_popen(cmd, **kwargs):
+            cmd = [sys.executable, "-u", str(silent_script)]
+            proc = real_popen(cmd, **kwargs)
+            spawned.append(proc)
+            return proc
+
+        subprocess.Popen = fake_popen
+        try:
+            start = time.monotonic()
+            app._start_whisper_worker()
+            elapsed = time.monotonic() - start
+        finally:
+            subprocess.Popen = real_popen
+
+        assert elapsed < 10, f"blocked for {elapsed:.1f}s, expected ~1s bound"
+        assert app._whisper_worker_proc is None, "should not adopt a silent worker"
+        # It's not enough that we didn't adopt it -- it must actually be dead,
+        # not left running/zombied in the background.
+        assert len(spawned) == 1
+        assert spawned[0].wait(timeout=5) is not None, "silent worker was not reaped"
+    finally:
+        for k, v in env_saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        app._WHISPER_WORKER_READY_TIMEOUT_S = orig_ready_timeout
+        silent_script.unlink(missing_ok=True)
+        app._stop_whisper_worker()
+
+
 if __name__ == "__main__":
     test_protocol_round_trip_missing_file_surfaces_as_error()
     print("✓ protocol round-trip (missing-file error path)")
@@ -181,4 +302,8 @@ if __name__ == "__main__":
     print("✓ inline backends intact")
     test_app_lifespan_boots_worker()
     print("✓ app._start_whisper_worker() boots & stops a worker")
+    test_worker_exits_when_job_exceeds_timeout()
+    print("✓ worker self-exits on a stuck job past its timeout ceiling")
+    test_start_whisper_worker_bounds_ready_wait()
+    print("✓ worker startup gives up (doesn't hang) when READY never arrives")
     print("\nAll Whisper worker self-checks passed.")
