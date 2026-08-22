@@ -403,6 +403,7 @@ def _start_whisper_worker():
     if not line:
         print("⚠️  Whisper worker exited before announcing READY; "
               "transcription will run inline.")
+        _kill_and_reap(proc)
         _clear_whisper_worker_proc(proc)
         return
     announcement = line.decode("utf-8", errors="replace").strip()
