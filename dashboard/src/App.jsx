@@ -11,7 +11,7 @@ import ProcessingModal from './components/ProcessingModal';
 import EditorView from './components/editor/EditorView';
 import { getProjects, addProject, updateProject, removeProject, phaseFromLogs, titleFromPayload, thumbFromPayload, coverFromString, fetchVideoTitle, captureVideoFrame, isTrailerProject } from './lib/projectHistory';
 import { getApiUrl } from './config';
-import { captureError, track } from './analytics';
+import { captureError, track, trackPageview } from './analytics';
 import { getPhase, setPhase, armNext, runTourPhase, stopTour, startTourFromHome, APP_FEEDBACK_INDEX } from './lib/platformTour.js';
 
 // Sidebar pieces live at module scope (not inside App) so React re-renders
@@ -322,6 +322,7 @@ function App() {
 
   useEffect(() => {
     track('view_changed', { view: activeTab });
+    trackPageview(activeTab);
   }, [activeTab]);
 
   // Session Recovery: Restore on mount
