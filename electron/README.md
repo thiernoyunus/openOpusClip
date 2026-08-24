@@ -86,7 +86,7 @@ Every release must explain what users will notice, not just say that a build
 finished. Generate the source-change section from the commits between releases:
 
 ```bash
-TAG=v1.0.11
+TAG=v1.0.12
 NOTES_FILE=$(mktemp)
 scripts/desktop/release-notes.sh "$TAG" > "$NOTES_FILE"
 ```
