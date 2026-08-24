@@ -86,10 +86,9 @@ Every release must explain what users will notice, not just say that a build
 finished. Generate the source-change section from the commits between releases:
 
 ```bash
-TAG=v1.0.10
-PREVIOUS=$(git describe --tags --abbrev=0 "${TAG}^")
+TAG=v1.0.11
 NOTES_FILE=$(mktemp)
-scripts/desktop/release-notes.sh "$TAG" "$PREVIOUS" > "$NOTES_FILE"
+scripts/desktop/release-notes.sh "$TAG" > "$NOTES_FILE"
 ```
 
 Before publishing, add the packaging result, signing/notarization status,

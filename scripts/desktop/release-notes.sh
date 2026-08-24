@@ -2,7 +2,7 @@
 # Generate detailed release notes from the commits between two tags.
 #
 # Usage:
-#   scripts/desktop/release-notes.sh v1.0.10 [v1.0.9]
+#   scripts/desktop/release-notes.sh v1.0.11 [v1.0.10]
 #
 # The output is ready for `gh release create/edit --notes-file`. Commit bodies
 # are kept under each entry because they often contain the user-facing details
