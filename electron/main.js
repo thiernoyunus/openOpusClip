@@ -64,7 +64,7 @@ const telemetry = createTelemetry({
 ipcMain.handle('open-opus-telemetry:get-context', () => telemetry.getContext());
 ipcMain.handle('open-opus-telemetry:capture-feedback', (_event, feedback) => {
   if (!feedback || typeof feedback !== 'object') return false;
-  return telemetry.capture('feedback_submitted', feedback);
+  return telemetry.capture('survey sent', feedback);
 });
 
 function launchErrorCategory(err) {
