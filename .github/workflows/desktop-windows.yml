@@ -46,6 +46,21 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Create detailed draft release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          notes_file="$(mktemp)"
+          trap 'rm -f "$notes_file"' EXIT
+          bash scripts/desktop/release-notes.sh "$GITHUB_REF_NAME" > "$notes_file"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$notes_file"
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --notes-file "$notes_file"
+          fi
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22

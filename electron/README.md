@@ -80,6 +80,32 @@ Upload **all five** to the GitHub release — both DMGs, both zips, and the sing
 `ERR_UPDATER_ZIP_FILE_NOT_FOUND` if the matching zip is missing, so a DMG-only
 release installs fine but can never update itself.
 
+### Release notes (required)
+
+Every release must explain what users will notice, not just say that a build
+finished. Generate the source-change section from the commits between releases:
+
+```bash
+TAG=v1.0.10
+PREVIOUS=$(git describe --tags --abbrev=0 "${TAG}^")
+NOTES_FILE=$(mktemp)
+scripts/desktop/release-notes.sh "$TAG" "$PREVIOUS" > "$NOTES_FILE"
+```
+
+Before publishing, add the packaging result, signing/notarization status,
+updater files, and any known limitations to the `Packaging and verification`
+section, then attach it to the release:
+
+```bash
+gh release edit "$TAG" --notes-file "$NOTES_FILE"
+rm "$NOTES_FILE"
+```
+
+The script keeps commit bodies under each change, grouped into features, fixes,
+performance/reliability, and other work. The Windows tag workflow creates the
+same detailed notes automatically; Mac releases must run this step after the
+final artifacts are verified.
+
 If you invoke electron-builder directly, pass **both** targets — a CLI target
 list replaces the one in `electron-builder.js` rather than merging with it, so
 `--mac dmg` silently drops the zip:
