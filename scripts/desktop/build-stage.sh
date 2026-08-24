@@ -344,8 +344,11 @@ SMOKE
 [[ -n "${note_mp:-}" ]] && info "${note_mp}"
 
 # --- e. Backend source -------------------------------------------------------
-log "e. Staging backend Python source + fonts"
+log "e. Staging backend Python source"
 BACKEND="${STAGE}/backend"
+# Refresh the whole generated backend tree so deleted source modules cannot
+# survive a rebuild and end up inside a new installer.
+rm -rf "${BACKEND}"
 mkdir -p "${BACKEND}"
 # Exact set of local modules the app imports (grep-verified in app.py/main.py/etc.).
 for f in app.py main.py editor.py \
@@ -356,7 +359,7 @@ done
 rm -rf "${BACKEND}/dashboard"
 mkdir -p "${BACKEND}/dashboard"
 cp -R "${STAGE}/dashboard" "${BACKEND}/dashboard/dist"
-info "backend -> ${BACKEND} (modules + fonts + dashboard/dist)"
+info "backend -> ${BACKEND} (modules + dashboard/dist)"
 
 # --- f. Static ffmpeg + ffprobe ----------------------------------------------
 log "f. Staging static ffmpeg + ffprobe (${TARGET_ARCH})"
