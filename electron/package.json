@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
-    "posthog-node": "^5.46.1"
+    "posthog-node": "^5.50.0"
   },
   "description": "AI-powered vertical video generator",
   "author": "Thierno Yunus Diallo <youndiallo@gmail.com>",

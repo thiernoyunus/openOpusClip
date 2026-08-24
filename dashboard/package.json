@@ -19,7 +19,7 @@
     "driver.js": "^1.8.0",
     "gsap": "^3.15.0",
     "lucide-react": "^0.344.0",
-    "posthog-js": "^1.407.2",
+    "posthog-js": "^1.418.11",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "remotion": "^4.0.447",
