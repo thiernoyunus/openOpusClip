@@ -56,8 +56,7 @@ jobs:
         run: |
           notes_file="$(mktemp)"
           trap 'rm -f "$notes_file"' EXIT
-          previous_tag="$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^")"
-          bash scripts/desktop/release-notes.sh "$GITHUB_REF_NAME" "$previous_tag" > "$notes_file"
+          bash scripts/desktop/release-notes.sh "$GITHUB_REF_NAME" > "$notes_file"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$notes_file"
           else
@@ -154,8 +153,7 @@ jobs:
         run: |
           notes_file="$(mktemp)"
           trap 'rm -f "$notes_file"' EXIT
-          previous_tag="$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^")"
-          bash scripts/desktop/release-notes.sh "$GITHUB_REF_NAME" "$previous_tag" > "$notes_file"
+          bash scripts/desktop/release-notes.sh "$GITHUB_REF_NAME" > "$notes_file"
           sed -i '$d' "$notes_file"
           printf '%s\n' \
             '- Windows x64 NSIS installer, updater metadata, and blockmap were built by this CI run.' \

@@ -28,7 +28,7 @@ git rev-parse --verify "${TAG}^{commit}" >/dev/null || {
 }
 
 if [[ -z "${PREVIOUS}" ]]; then
-  PREVIOUS="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+  PREVIOUS="$(git tag --sort=-version:refname | grep -Fvx -- "${TAG}" | head -n 1 || true)"
 fi
 
 if [[ -z "${PREVIOUS}" ]]; then
