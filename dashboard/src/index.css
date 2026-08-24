@@ -87,7 +87,6 @@
 .ph-survey-modal,
 [class^="PostHogSurvey"],
 [class*="posthog-survey"],
-.ph-widget,
 div:has(> [href*="posthog.com/surveys"]),
 .ph-no-survey * .ph-survey * {
   display: none !important;
