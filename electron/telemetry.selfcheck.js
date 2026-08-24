@@ -39,18 +39,24 @@ async function main() {
     packaged: true,
   });
 
-  const delivered = await telemetry.capture('feedback_submitted', {
+  const delivered = await telemetry.capture('survey sent', {
     category: 'bug',
     detail: 'Export freezes after clicking save. API key: AIza12345678901234567890123456789012345',
+    sessionId: '019fdfec-e7a0-7230-bf66-23721d3d8bc7',
+    submissionId: '019fdfec-e7a0-7230-bf66-23721d3d8bc8',
   });
 
   assert.equal(delivered, true, 'feedback delivery must be acknowledged');
   assert.equal(captured.length, 1, 'feedback must use the proven Electron telemetry transport');
-  assert.equal(captured[0].event, 'feedback_submitted');
-  assert.equal(captured[0].properties.category, 'bug');
-  assert.match(captured[0].properties.detail, /Export freezes after clicking save/);
-  assert.doesNotMatch(captured[0].properties.detail, /AIza/);
-  assert.match(captured[0].properties.detail, /\[redacted-secret\]/);
+  assert.equal(captured[0].event, 'survey sent');
+  assert.equal(captured[0].properties.$survey_id, '019f9b37-0d93-0000-f07e-c4f19c01caa8');
+  assert.equal(captured[0].properties.$survey_submission_id, '019fdfec-e7a0-7230-bf66-23721d3d8bc8');
+  assert.equal(captured[0].properties['$survey_response_7b090021-a54b-46c7-bb6e-b63344919e93'], 'Something broke');
+  assert.match(captured[0].properties['$survey_response_c05020a8-b34e-4da3-b246-14261967456e'], /Export freezes after clicking save/);
+  assert.doesNotMatch(captured[0].properties['$survey_response_c05020a8-b34e-4da3-b246-14261967456e'], /AIza/);
+  assert.match(captured[0].properties['$survey_response_c05020a8-b34e-4da3-b246-14261967456e'], /\[redacted-secret\]/);
+  assert.equal(captured[0].properties.$survey_questions[0].response, 'Something broke');
+  assert.equal(captured[0].properties.$session_id, '019fdfec-e7a0-7230-bf66-23721d3d8bc7');
   assert.equal(flushes, 1, 'feedback must be flushed before success is shown');
 
   assert.equal(await telemetry.capture('not_allowed', {}), false);

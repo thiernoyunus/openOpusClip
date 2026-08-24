@@ -14,6 +14,16 @@ const POSTHOG_HOST = 'https://us.i.posthog.com';
 const INSTALLATION_ID_FILE = 'anonymous-installation-id';
 const DEV_OPT_IN_ENV = 'OPENSHORTS_TELEMETRY_OPT_IN';
 const FEEDBACK_CATEGORIES = new Set(['bug', 'confusing', 'feature', 'other']);
+const FEEDBACK_SURVEY_ID = '019f9b37-0d93-0000-f07e-c4f19c01caa8';
+const FEEDBACK_SURVEY_NAME = 'OpenOpusClips in-app feedback';
+const FEEDBACK_CATEGORY_QUESTION_ID = '7b090021-a54b-46c7-bb6e-b63344919e93';
+const FEEDBACK_DETAIL_QUESTION_ID = 'c05020a8-b34e-4da3-b246-14261967456e';
+const FEEDBACK_CATEGORY_LABELS = Object.freeze({
+  bug: 'Something broke',
+  confusing: 'Something was confusing',
+  feature: 'Feature request',
+  other: 'Other',
+});
 const API_KEY_TEXT = /\b(?:phc|sk|zern|soniox)[_-][A-Za-z0-9_-]{12,}\b|\bAIza[A-Za-z0-9_-]{30,}\b|\b(?:api[_ -]?key|token|secret|bearer)\s*[:= ]\s*[A-Za-z0-9_.-]{12,}\b/gi;
 
 function telemetryDisabled(packaged) {
@@ -36,6 +46,7 @@ const ALLOWED_EVENTS = new Set([
   'desktop_main_uncaught_exception',
   'desktop_updater_failed',
   'feedback_submitted',
+  'survey sent',
 ]);
 
 const ALLOWED_STAGES = new Set([
@@ -131,6 +142,16 @@ function safeFeedbackDetail(value) {
   return safe || undefined;
 }
 
+function safeUuid(value) {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+    ? value
+    : undefined;
+}
+
+function safeSessionId(value) {
+  return safeUuid(value);
+}
+
 // A short, PII-free identifier for an error: its HTTP status (in the valid
 // 100-599 range), or its Node/electron-updater code (e.g. ENOTFOUND,
 // ERR_UPDATER_LATEST_VERSION_NOT_FOUND). Never the message — updater error
@@ -200,6 +221,24 @@ function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
       const detail = safeFeedbackDetail(details.detail);
       if (detail) properties.detail = detail;
       properties.runtime = 'desktop';
+    }
+    if (event === 'survey sent') {
+      if (!FEEDBACK_CATEGORIES.has(details.category)) return false;
+      properties.runtime = 'desktop';
+      const categoryResponse = FEEDBACK_CATEGORY_LABELS[details.category];
+      const detail = safeFeedbackDetail(details.detail) || '';
+      properties.$survey_id = FEEDBACK_SURVEY_ID;
+      properties.$survey_name = FEEDBACK_SURVEY_NAME;
+      properties.$survey_submission_id = safeUuid(details.submissionId) || crypto.randomUUID();
+      properties.$survey_questions = [
+        { id: FEEDBACK_CATEGORY_QUESTION_ID, question: 'What best describes your feedback?', response: categoryResponse },
+        { id: FEEDBACK_DETAIL_QUESTION_ID, question: 'What were you trying to do, and what happened instead?', response: detail },
+      ];
+      properties[`$survey_response_${FEEDBACK_CATEGORY_QUESTION_ID}`] = categoryResponse;
+      properties[`$survey_response_${FEEDBACK_DETAIL_QUESTION_ID}`] = detail;
+      properties.$survey_completed = true;
+      const sessionId = safeSessionId(details.sessionId);
+      if (sessionId) properties.$session_id = sessionId;
     }
 
     try {

@@ -15,6 +15,16 @@ const POSTHOG_TOKEN = 'phc_kUQRck5LKwiSJJC2Zv8H8xxFbGksCtmuxdV5Uw7pTpne';
 const POSTHOG_HOST = 'https://us.i.posthog.com';
 const SAFE_APP_URL = 'desktop://app';
 const DEV_OPT_IN = import.meta.env.VITE_POSTHOG_DEV === 'true';
+const FEEDBACK_SURVEY_ID = '019f9b37-0d93-0000-f07e-c4f19c01caa8';
+const FEEDBACK_SURVEY_NAME = 'OpenOpusClips in-app feedback';
+const FEEDBACK_CATEGORY_QUESTION_ID = '7b090021-a54b-46c7-bb6e-b63344919e93';
+const FEEDBACK_DETAIL_QUESTION_ID = 'c05020a8-b34e-4da3-b246-14261967456e';
+const FEEDBACK_CATEGORY_LABELS = {
+  bug: 'Something broke',
+  confusing: 'Something was confusing',
+  feature: 'Feature request',
+  other: 'Other',
+};
 
 // Top-level `$exception_*` keys that describe where a crash happened, not what
 // the user was doing. They stay diagnostic once scrubText redacts any path or
@@ -239,21 +249,43 @@ export async function submitFeedback(properties = {}) {
   if (!initialized) return false;
   const category = safeContextValue(properties.category);
   const detail = scrubText(properties.detail || '');
+  const categoryResponse = FEEDBACK_CATEGORY_LABELS[category] || category;
+  const submissionId = crypto.randomUUID();
+  const surveyProperties = {
+    $survey_name: FEEDBACK_SURVEY_NAME,
+    $survey_id: FEEDBACK_SURVEY_ID,
+    $survey_submission_id: submissionId,
+    $survey_questions: [
+      { id: FEEDBACK_CATEGORY_QUESTION_ID, question: 'What best describes your feedback?', response: categoryResponse },
+      { id: FEEDBACK_DETAIL_QUESTION_ID, question: 'What were you trying to do, and what happened instead?', response: detail },
+    ],
+    [`$survey_response_${FEEDBACK_CATEGORY_QUESTION_ID}`]: categoryResponse,
+    [`$survey_response_${FEEDBACK_DETAIL_QUESTION_ID}`]: detail,
+    $survey_completed: true,
+  };
 
   // The desktop main process already delivers startup and failure events
   // reliably. Use that same route for feedback and wait for its result so the
   // modal never claims success for a request that was dropped.
   if (desktopRuntime && window.openOpusTelemetry?.captureFeedback) {
     try {
-      return await window.openOpusTelemetry.captureFeedback({ category, detail });
+      return await window.openOpusTelemetry.captureFeedback({
+        category,
+        detail,
+        sessionId: posthog.get_session_id(),
+        submissionId,
+      });
     } catch {
       return false;
     }
   }
 
-  // Web builds have no Electron bridge. A capture result means the browser
-  // SDK accepted the event into its immediate delivery queue.
-  return track('feedback_submitted', { category, detail });
+  // Web builds have no Electron bridge. The browser SDK adds its current
+  // session ID automatically, so the response stays linked to its replay.
+  return Boolean(posthog.capture('survey sent', surveyProperties, {
+    send_instantly: true,
+    $set: { [`$survey_responded/${FEEDBACK_SURVEY_ID}`]: true },
+  }));
 }
 
 export function captureError(error, { area = 'renderer' } = {}) {
