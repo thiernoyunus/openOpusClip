@@ -259,7 +259,7 @@ function createTelemetry({ userData, appVersion, platform, arch, packaged }) {
             client.flush().then(() => true, () => false),
             new Promise((resolve) => setTimeout(
               () => resolve(false),
-              event === 'feedback_submitted' ? 5000 : 750
+              event === 'feedback_submitted' || event === 'survey sent' ? 5000 : 750
             )),
           ]);
         } catch (_) {

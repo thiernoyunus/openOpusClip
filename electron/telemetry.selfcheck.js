@@ -84,9 +84,16 @@ async function main() {
     },
     Object,
   });
-  assert.equal(await exposedBridge.captureFeedback({ category: 'bug', detail: 'Bridge check' }), true);
+  assert.equal(await exposedBridge.captureFeedback({
+    category: 'bug',
+    detail: 'Bridge check',
+    sessionId: '019fdfec-e7a0-7230-bf66-23721d3d8bc7',
+    submissionId: '019fdfec-e7a0-7230-bf66-23721d3d8bc8',
+  }), true);
   assert.equal(invocations[0].channel, 'open-opus-telemetry:capture-feedback');
   assert.equal(invocations[0].payload.detail, 'Bridge check');
+  assert.equal(invocations[0].payload.sessionId, '019fdfec-e7a0-7230-bf66-23721d3d8bc7');
+  assert.equal(invocations[0].payload.submissionId, '019fdfec-e7a0-7230-bf66-23721d3d8bc8');
 
   await telemetry.shutdown();
   fs.rmSync(userData, { recursive: true, force: true });
