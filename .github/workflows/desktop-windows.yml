@@ -45,6 +45,8 @@ jobs:
         run: git config --global core.longpaths true
 
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Create detailed draft release notes
         if: startsWith(github.ref, 'refs/tags/v')
@@ -54,7 +56,8 @@ jobs:
         run: |
           notes_file="$(mktemp)"
           trap 'rm -f "$notes_file"' EXIT
-          bash scripts/desktop/release-notes.sh "$GITHUB_REF_NAME" > "$notes_file"
+          previous_tag="$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^")"
+          bash scripts/desktop/release-notes.sh "$GITHUB_REF_NAME" "$previous_tag" > "$notes_file"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$notes_file"
           else
@@ -142,3 +145,21 @@ jobs:
             electron/dist/latest.yml
           if-no-files-found: error
           retention-days: 14
+
+      - name: Finalize detailed release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          notes_file="$(mktemp)"
+          trap 'rm -f "$notes_file"' EXIT
+          previous_tag="$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^")"
+          bash scripts/desktop/release-notes.sh "$GITHUB_REF_NAME" "$previous_tag" > "$notes_file"
+          sed -i '$d' "$notes_file"
+          printf '%s\n' \
+            '- Windows x64 NSIS installer, updater metadata, and blockmap were built by this CI run.' \
+            '- The Windows installer was uploaded to this draft release; the downloadable CI artifact is retained for 14 days.' \
+            '- Native Windows launch validation is limited to the CI build and packaging checks.' \
+            >> "$notes_file"
+          gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$notes_file"
