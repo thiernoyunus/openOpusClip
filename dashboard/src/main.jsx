@@ -194,7 +194,7 @@ function FeedbackButton() {
       id="app-feedback-button"
       type="button"
       data-tour="feedback-button"
-      className="fixed bottom-4 right-24 z-[100] rounded-lg border border-white/10 bg-zinc-900/95 px-3 py-2 text-xs font-medium text-zinc-300 shadow-lg hover:bg-zinc-800 hover:text-white focus:outline-none focus:ring-2 focus:ring-primary"
+      className="hidden fixed bottom-4 right-24 z-[100] rounded-lg border border-white/10 bg-zinc-900/95 px-3 py-2 text-xs font-medium text-zinc-300 shadow-lg hover:bg-zinc-800 hover:text-white focus:outline-none focus:ring-2 focus:ring-primary"
         onClick={() => setShowModal(true)}
       >
         Feedback

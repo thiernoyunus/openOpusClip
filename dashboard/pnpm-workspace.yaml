@@ -1,0 +1,2 @@
+# Temporary local marker: keeps Vite's TypeScript scan inside this package.
+packages: []

@@ -62,7 +62,7 @@ export default function KeyInput({ onKeySet, savedKey }) {
                 </button>
             </div>
             <p className="mt-3 text-xs text-zinc-500">
-                Your key is stored locally in your browser for convenience.
+                Your key stays local. The app stores it in the browser and syncs it to your OS keychain for the local MCP.
                 <br />
                 <a
                     href="https://aistudio.google.com/app/apikey"

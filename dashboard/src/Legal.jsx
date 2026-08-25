@@ -56,10 +56,9 @@ export default function Legal() {
                         paths, file names, and key-like text before they leave the app.
                     </p>
                     <p>
-                        Session replay masks API-key and password inputs plus user-derived project, clip, transcript,
-                        caption, filename, account, and social-post content. Beta feedback and other non-sensitive form
-                        text may remain visible so we can reproduce bugs; do not enter private data. Media, images, and
-                        editor canvases are blocked, and network request and response bodies and headers are not recorded.
+                        Session replay masks API-key and password inputs. Project thumbnails, titles, transcripts,
+                        captions, filenames, and other app content remain visible so we can reproduce bugs; do not enter
+                        unrelated private data. Network request and response bodies and headers are not recorded.
                         PostHog processes this anonymous analytics data in the United States. Development builds do not
                         send analytics unless a developer explicitly enables them.
                     </p>

@@ -11,7 +11,7 @@ const WHISPER_MODELS = [
     { value: 'base', label: 'Base', help: 'Current default' },
     { value: 'small', label: 'Small', help: 'Better accuracy, slower' },
     { value: 'medium', label: 'Medium', help: 'Strong accuracy, much slower' },
-    { value: 'large-v3-turbo', label: 'Large v3 Turbo', help: 'Near-best accuracy, much faster' },
+    { value: 'large-v3-turbo', label: 'Large v3 Turbo', help: 'Near-best accuracy, faster than Large v3 but still slow' },
     { value: 'large-v3', label: 'Large v3', help: 'Best accuracy, slowest' },
 ];
 
@@ -549,8 +549,8 @@ export default function MediaInput({ onProcess, isProcessing, hasSonioxKey = fal
                                 </option>
                             ))}
                         </optgroup>
-                        <optgroup label="Soniox · best for multilingual (Arabic, etc.) · needs API key">
-                            <option value="soniox">Soniox v5 - catches multiple languages in one video</option>
+                        <optgroup label="Soniox · best for mixed-language speech · needs API key">
+                            <option value="soniox">Soniox v5 - best when speakers switch between languages</option>
                         </optgroup>
                     </select>
                     {transcriptionEngine === 'soniox' && !hasSonioxKey && (

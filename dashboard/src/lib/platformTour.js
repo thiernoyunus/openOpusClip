@@ -79,8 +79,8 @@ export const runTourPhase = (phase, opts = {}) => {
   activeDriver = driver({
     steps: STEPS[phase],
     overlayColor: '#000000',
-    overlayOpacity: 0.85,
-    stagePadding: 10,
+    overlayOpacity: 0.95,
+    stagePadding: 20,
     stageRadius: 10,
     showProgress: true,
     nextBtnText: 'Next',
@@ -191,7 +191,7 @@ const appSteps = [
     popover: {
       title: 'Transcription',
       description:
-        "Before making clips, the app writes out everything said in the video — that's the transcript. Captions and the editor's text come from it. Built-in transcription is free; Soniox is better for Arabic and other languages.",
+        "Before making clips, the app writes out everything said in the video — that's the transcript. Captions and the editor's text come from it. Built-in transcription is free; Soniox is better for mixed-language speech, such as Arabic and English in one video.",
       side: 'bottom',
     },
   },
@@ -241,11 +241,15 @@ const appSteps = [
     },
   },
   {
-    element: '[data-tour="feedback-button"]',
+    // Highlight the visible 50px chat button, not the widget's full container.
+    element: () => document.querySelector(
+      '#ph-conversations-widget-container button[aria-label^="Open chat"]',
+    ),
+    waitForElement: 3000,
     popover: {
-      title: 'Feedback',
+      title: 'Support',
       description:
-        "Spot a bug or want a feature? This button in the corner lets you tell us — it's always on screen.",
+        'If you have an issue, open Support here and send us a message so we can investigate it.',
       side: 'top',
     },
   },
@@ -341,7 +345,7 @@ const settingsSteps = [
     popover: {
       title: 'Soniox (optional)',
       description:
-        "Soniox makes transcription much better for Arabic and other languages, if you need it. It needs its own key.",
+        "Soniox is especially useful when speakers switch between languages, such as Arabic and English. It needs its own key.",
       side: 'bottom',
     },
   },
@@ -439,6 +443,6 @@ const STEPS = {
   editor: editorSteps,
 };
 
-// Index of the Feedback step in appSteps — the calendar leg resumes the app
+// Index of the Support step in appSteps — the calendar leg resumes the app
 // tour here after it finishes.
-export const APP_FEEDBACK_INDEX = appSteps.findIndex((s) => s.popover?.title === 'Feedback');
+export const APP_SUPPORT_INDEX = appSteps.findIndex((s) => s.popover?.title === 'Support');

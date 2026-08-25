@@ -22,6 +22,11 @@ from s3_uploader import upload_job_artifacts
 import transcription
 from transcription import WHISPER_MODELS
 
+try:
+    import keyring
+except ImportError:  # Optional until the app environment is upgraded.
+    keyring = None
+
 load_dotenv()
 
 # Constants
@@ -47,6 +52,8 @@ UPLOAD_RETENTION_SECONDS = int(os.environ.get("UPLOAD_RETENTION_SECONDS", "3600"
 # thumbnail studio's "thumbnails" dir). Never auto-purged or deletable as a job.
 RESERVED_OUTPUT_DIRS = {"thumbnails"}
 DISABLE_YOUTUBE_URL = os.environ.get("DISABLE_YOUTUBE_URL", "false").lower() in ("1", "true", "yes")
+MCP_KEYRING_SERVICE = os.environ.get("OPENOPUSCLIPS_KEYRING_SERVICE", "openopusclips")
+MCP_KEYRING_USERNAME = "gemini"
 
 # Application State
 job_queue = asyncio.Queue()
@@ -660,6 +667,19 @@ async def run_job(job_id, job_data):
 async def get_config():
     return {"youtubeUrlEnabled": not DISABLE_YOUTUBE_URL}
 
+@app.put("/api/mcp/credentials")
+async def save_mcp_credentials(x_gemini_key: Optional[str] = Header(None, alias="X-Gemini-Key")):
+    """Keep the local MCP in sync without returning or logging the key."""
+    if not x_gemini_key:
+        raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
+    if keyring is None:
+        raise HTTPException(status_code=503, detail="Local credential storage is unavailable")
+    try:
+        keyring.set_password(MCP_KEYRING_SERVICE, MCP_KEYRING_USERNAME, x_gemini_key)
+    except Exception:
+        raise HTTPException(status_code=503, detail="Local credential storage is unavailable")
+    return {"saved": True}
+
 @app.post("/api/process")
 async def process_endpoint(
     request: Request,
@@ -841,6 +861,35 @@ async def process_endpoint(
     await job_queue.put(job_id)
 
     return {"job_id": job_id, "status": "queued"}
+
+@app.get("/api/status/all")
+async def get_all_status():
+    """List active jobs plus completed projects persisted on disk."""
+    for job_id in os.listdir(OUTPUT_DIR):
+        if not _safe_job_id(job_id) or job_id in jobs:
+            continue
+        snap = _load_persisted_result(job_id)
+        if snap is not None:
+            jobs[job_id] = {
+                "status": snap.get("status", "completed"),
+                "logs": [],
+                "result": snap.get("result"),
+            }
+
+    projects = []
+    for job_id, job in jobs.items():
+        if not _safe_job_id(job_id):
+            continue
+        result = job.get("result") or {}
+        projects.append({
+            "job_id": job_id,
+            "status": job.get("status", "unknown"),
+            "clip_count": len(result.get("clips") or []),
+            "created_at": job.get("created_at"),
+            "completed_at": job.get("completed_at"),
+        })
+    projects.sort(key=lambda item: item.get("created_at") or 0, reverse=True)
+    return {"jobs": projects}
 
 @app.get("/api/status/{job_id}")
 async def get_status(job_id: str):

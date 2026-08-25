@@ -12,7 +12,7 @@ import EditorView from './components/editor/EditorView';
 import { getProjects, addProject, updateProject, removeProject, phaseFromLogs, titleFromPayload, thumbFromPayload, coverFromString, fetchVideoTitle, captureVideoFrame, isTrailerProject } from './lib/projectHistory';
 import { getApiUrl } from './config';
 import { captureError, track, trackPageview } from './analytics';
-import { getPhase, setPhase, armNext, runTourPhase, stopTour, startTourFromHome, APP_FEEDBACK_INDEX } from './lib/platformTour.js';
+import { getPhase, setPhase, armNext, runTourPhase, stopTour, startTourFromHome, APP_SUPPORT_INDEX } from './lib/platformTour.js';
 
 // Sidebar pieces live at module scope (not inside App) so React re-renders
 // don't remount them. A remount would orphan the tour's highlighted element
@@ -250,17 +250,17 @@ function App() {
   }, [activeTab]);
 
   // Calendar leg: entered from the calendar step of the dashboard tour, then
-  // the tour resumes on the dashboard at the Feedback step.
+  // the tour resumes on the dashboard at the Support step.
   useEffect(() => {
     if (getPhase() !== 'calendar' || activeTab !== 'calendar') return;
     runTourPhase('calendar', {
       onDone: () => {
         armNext('calendar'); // -> 'app'
         setActiveTab('dashboard');
-        // Resume the app tour at the Feedback step once the calendar view
+        // Resume the app tour at the Support step once the calendar view
         // has unmounted (the deferred call outlives this effect's cleanup).
         setTimeout(() => runTourPhase('app', {
-          startIndex: APP_FEEDBACK_INDEX,
+          startIndex: APP_SUPPORT_INDEX,
           onDone: () => {
             stopTour();
             setPhase('settings');
@@ -504,7 +504,12 @@ function App() {
   useEffect(() => {
     // Encrypt Gemini Key too for consistency if desired, but user asked specifically about Social integration not saving well.
     // For now keeping gemini plain for compatibility unless requested.
-    if (apiKey) localStorage.setItem('gemini_key', apiKey);
+    if (!apiKey) return;
+    localStorage.setItem('gemini_key', apiKey);
+    fetch(getApiUrl('/api/mcp/credentials'), {
+      method: 'PUT',
+      headers: { 'X-Gemini-Key': apiKey },
+    }).catch(() => {});
   }, [apiKey]);
 
   useEffect(() => {
@@ -1259,8 +1264,8 @@ function App() {
                 </div>
                 <p className="text-xs text-zinc-500 mb-6 leading-relaxed">
                   Use <strong>Soniox</strong> for transcription instead of the built-in Whisper.
-                  It's far better at <strong>multilingual</strong> audio &mdash; it catches both
-                  languages when someone speaks, e.g., Arabic and English in the same video.
+                  It's especially good for <strong>mixed-language</strong> audio, when a speaker
+                  switches between languages such as Arabic and English in the same video.
                   Select it under "Transcription" when you start a clip.
                 </p>
                 <div className="space-y-4">

@@ -164,15 +164,11 @@ export async function initAnalytics() {
     get_current_url: () => SAFE_APP_URL,
     before_send: beforeSend,
     session_recording: {
-      // Show form values so replay can reveal the exact bug report and state.
-      // Only password/API-key fields are masked; add `ph-mask` to private
-      // non-input text that should stay hidden.
-      maskAllInputs: false,
+      // Keep replay readable for debugging. API-key/password inputs are the
+      // only values masked by maskInputFn; normal form text remains visible.
+      maskAllInputs: true,
       maskInputOptions: {
-        text: true,
-        textarea: true,
         password: true,
-        url: true,
       },
       maskInputFn: (value, element) => {
         const context = [
@@ -188,13 +184,21 @@ export async function initAnalytics() {
           : value;
       },
       sampleRate: 1,
-      maskTextSelector: '.ph-mask',
-      blockSelector: 'video, audio, canvas, img, [data-posthog-block]',
+      // Existing `ph-mask` labels mark useful debugging content in this app;
+      // use opt-in selectors for any future truly private non-input content.
+      maskTextClass: 'ph-api-key-mask',
+      maskTextSelector: '[data-posthog-mask]',
+      blockSelector: '[data-posthog-block]',
       recordHeaders: false,
       recordBody: false,
       collectFonts: false,
       captureCanvas: { recordCanvas: false },
-      maskCapturedNetworkRequestFn: () => null,
+      // Keep replay's initial Meta event playable while hiding the local
+      // backend URL. Returning null here drops that event and leaves a blank
+      // recording in PostHog.
+      maskCapturedNetworkRequestFn: (request) => request
+        ? { ...request, name: SAFE_APP_URL }
+        : undefined,
     },
   });
 
