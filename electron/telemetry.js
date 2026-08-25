@@ -64,11 +64,6 @@ const ALLOWED_STAGES = new Set([
   'updater_download',
   'updater_install',
   'updater_event',
-  'updater_network',
-  'updater_rate_limited',
-  'updater_http',
-  'updater_not_found',
-  'updater_signature',
 ]);
 
 const ALLOWED_ERROR_CATEGORIES = new Set([
@@ -94,6 +89,14 @@ const ALLOWED_ERROR_CATEGORIES = new Set([
   'updater_error',
   'stack_setup_failed',
   'unknown',
+  // categorizeUpdaterError() in main.js returns these buckets. They are error
+  // categories, not stages, so they must live here — otherwise capture() drops
+  // error_category and every updater failure looks the same.
+  'updater_network',
+  'updater_rate_limited',
+  'updater_http',
+  'updater_not_found',
+  'updater_signature',
 ]);
 
 const ALLOWED_SIGNALS = new Set([

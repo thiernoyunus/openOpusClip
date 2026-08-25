@@ -61,6 +61,30 @@ async function main() {
 
   assert.equal(await telemetry.capture('not_allowed', {}), false);
 
+  // Every bucket categorizeUpdaterError() can return must survive capture, or
+  // an updater failure reaches PostHog with a null error_category and stays
+  // undiagnosable — the exact gap behind the updater relapse.
+  const updaterCategories = [
+    'updater_network',
+    'updater_rate_limited',
+    'updater_http',
+    'updater_not_found',
+    'updater_signature',
+    'updater_error',
+  ];
+  for (const errorCategory of updaterCategories) {
+    captured.length = 0;
+    await telemetry.capture('desktop_updater_failed', {
+      stage: 'updater_download',
+      errorCategory,
+      error: { code: 'ENOTFOUND' },
+    });
+    assert.equal(captured.length, 1, `${errorCategory} must be sent`);
+    assert.equal(captured[0].properties.error_category, errorCategory);
+    assert.equal(captured[0].properties.stage, 'updater_download');
+    assert.equal(captured[0].properties.error_code, 'ENOTFOUND');
+  }
+
   const preloadSource = fs.readFileSync(path.join(__dirname, 'preload.js'), 'utf8');
   let exposedBridge;
   const invocations = [];
