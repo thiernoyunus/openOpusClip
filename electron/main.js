@@ -363,6 +363,10 @@ function buildPackagedPlan() {
         // ffmpeg/ffprobe (bundled bin) + the yt-dlp node shim, ahead of the
         // inherited PATH.
         PATH: packagedPath,
+        // The app bundle is signed and must stay byte-for-byte unchanged after
+        // installation. Python may read the bundled bytecode cache, but must
+        // never rewrite it inside Contents/Resources.
+        PYTHONDONTWRITEBYTECODE: '1',
         OPENSHORTS_OUTPUT_DIR: outputDir,
         OPENSHORTS_UPLOAD_DIR: uploadsDir,
         HF_HOME: hfHome, // whisper model cache
@@ -686,8 +690,12 @@ async function waitForProcessGroupsToExit(children, timeoutMs) {
 let windowOpen = false;
 
 let quitting = false;
+let installingUpdate = false;
 let telemetryShutdownStarted = false;
 app.on('before-quit', (event) => {
+  // quitAndInstall has already prepared its own install-and-relaunch exit.
+  // Replacing that exit with a later ordinary app.quit() drops the update.
+  if (installingUpdate) return;
   if (telemetryShutdownStarted) return;
   telemetryShutdownStarted = true;
   event.preventDefault();
@@ -753,6 +761,10 @@ if (!gotSingleInstanceLock) {
 // --- Auto-update (packaged mode only) --------------------------------
 
 autoUpdater.autoDownload = false;
+// On macOS, electron-updater emits its public "update-downloaded" event
+// before Squirrel has staged the ZIP. Keep staging manual so Restart Now starts
+// that native handoff deterministically instead of racing it in the background.
+autoUpdater.autoInstallOnAppQuit = false;
 autoUpdater.setFeedURL({
   provider: 'github',
   owner: 'thiernoyunus',
@@ -977,16 +989,24 @@ autoUpdater.on('update-not-available', () => {
 // is where we can attach a real category and code — the originating .catch()
 // blocks only tidy up and swallow the rejection.
 autoUpdater.on('error', (err) => {
+  const failedStage = currentUpdaterStage();
   // The failing operation just ended. Reset the stage so the next
   // operation starts clean (pushUpdaterStage will set its own).
   updaterStage = '';
+  installingUpdate = false;
   BrowserWindow.getAllWindows()[0]?.setProgressBar(-1);
   updateHUD?.close();
   telemetry.capture('desktop_updater_failed', {
-    stage: currentUpdaterStage(),
+    stage: failedStage,
     errorCategory: categorizeUpdaterError(err),
     error: err,
   });
+  if (failedStage === 'updater_install') {
+    dialog.showErrorBox(
+      'Update could not be installed',
+      'openOpusClip is still open and unchanged. Please try Check for Updates again.'
+    );
+  }
 });
 
 autoUpdater.on('update-downloaded', async (info) => {
@@ -1013,11 +1033,10 @@ autoUpdater.on('update-downloaded', async (info) => {
     // all. Wait for them to actually go before handing over.
     await waitForProcessGroupsToExit([spawned.backend, spawned.renderer], 10000);
     pushUpdaterStage('updater_install');
-    // Do NOT call telemetry.shutdown() here: quitAndInstall() can
-    // synchronously dispatch 'error' on install failure (elevation, missing
-    // installer, etc.) and the 'error' handler still needs a live telemetry
-    // client to report it. Telemetry shutdown is handled by the normal
-    // app-quit path before app.quit().
+    // The normal before-quit handler replaces the requested quit with a later
+    // app.quit() so telemetry can flush. That is correct for ordinary quits,
+    // but it discards Squirrel's install-and-relaunch intent.
+    installingUpdate = true;
     autoUpdater.quitAndInstall();
   };
 

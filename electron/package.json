@@ -1,11 +1,12 @@
 {
   "name": "openopusclip-desktop",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "private": true,
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "test:telemetry": "node telemetry.selfcheck.js",
+    "test:updater": "node updater.selfcheck.js",
     "test:telemetry:live": "electron posthog-live-smoke.js",
     "package": "electron-builder --mac dir --arm64",
     "package:arm64": "electron-builder --mac dmg zip --arm64",
