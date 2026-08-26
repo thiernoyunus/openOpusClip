@@ -27,6 +27,7 @@ def test_adds_bounded_numeric_fields_without_altering_existing_shape():
         "total_cost": 0.00012,
         "model": "gemini-2.5-flash",
     }
+    original_keys = set(base)
     out = _augment_attempt_metrics(
         base, latency_ms=842.7, attempts_used=2, max_retries=3)
     # Existing fields preserved verbatim.
@@ -41,7 +42,7 @@ def test_adds_bounded_numeric_fields_without_altering_existing_shape():
     assert isinstance(out["attempts_used"], int)
     assert isinstance(out["max_retries"], int)
     # No new sensitive fields slipped in: only the three bounded numerics.
-    assert set(out) == set(base) | {"latency_ms", "attempts_used", "max_retries"}
+    assert set(out) == original_keys | {"latency_ms", "attempts_used", "max_retries"}
 
 
 def test_attempts_used_is_recorded_verbatim_for_diagnostics():

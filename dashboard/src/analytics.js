@@ -84,7 +84,9 @@ function beforeSend(event) {
       properties[key] = value;
       continue;
     }
-    if (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key)) continue;
+    const overridden = EVENT_NUMERIC_OVERRIDES[event.event]?.has(key)
+      && typeof value === 'number' && Number.isFinite(value);
+    if (!overridden && (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key))) continue;
     // Replay snapshots are already masked by the recorder below. They are an
     // encoded protocol payload, not ordinary text: scrubbing/truncating them
     // corrupts the recording and makes it unplayable.
