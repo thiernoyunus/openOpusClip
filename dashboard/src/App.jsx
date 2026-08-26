@@ -565,8 +565,21 @@ function App() {
             const outcomeKey = `completed:${id}:${operation.type}:${operation.run}`;
             if (!trackedProcessOutcomes.current.has(outcomeKey)) {
               trackedProcessOutcomes.current.add(outcomeKey);
+              const clips = data.result?.clips;
+              const scores = (clips || []).map(c => c?.virality_score).filter(s => typeof s === 'number');
+              const cost = data.result?.cost_analysis;
               track('process_completed', {
                 result_category: isGenerateMore ? 'additional_clips' : 'clips_ready',
+                clip_count: clips?.length || 0,
+                elapsed_seconds: data.elapsed_seconds,
+                total_cost: cost?.total_cost,
+                input_tokens: cost?.input_tokens,
+                output_tokens: cost?.output_tokens,
+                gemini_latency_ms: cost?.latency_ms,
+                gemini_attempts_used: cost?.attempts_used,
+                gemini_max_retries: cost?.max_retries,
+                avg_virality_score: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : undefined,
+                min_virality_score: scores.length ? Math.min(...scores) : undefined,
               });
             }
             setProjects(updateProject(id, {
@@ -593,7 +606,10 @@ function App() {
             const failureKey = `failed:${id}:${operation.type}:${operation.run}`;
             if (!trackedProcessOutcomes.current.has(failureKey)) {
               trackedProcessOutcomes.current.add(failureKey);
-              track('process_failed', { failure_category: 'processing' });
+              track('process_failed', {
+                failure_category: 'processing',
+                elapsed_seconds: data.elapsed_seconds,
+              });
             }
             setProjects(updateProject(id, {
               status: 'failed',

@@ -26,6 +26,14 @@ const FEEDBACK_CATEGORY_LABELS = {
   other: 'Other',
 };
 
+// Per-event numeric overrides: keys that match SENSITIVE_PROPERTY (because the
+// regex contains a broad substring like "token") but are safe to send when the
+// value is a finite number.  Only listed events pass these through; every other
+// event still blocks them globally.
+const EVENT_NUMERIC_OVERRIDES = Object.freeze({
+  process_completed: new Set(['input_tokens', 'output_tokens']),
+});
+
 // Top-level `$exception_*` keys that describe where a crash happened, not what
 // the user was doing. They stay diagnostic once scrubText redacts any path or
 // filename, so let them through instead of dropping the whole prefix.
@@ -229,7 +237,13 @@ export function track(eventName, properties = {}) {
   if (!initialized) return false;
   const safeProperties = {};
   for (const [key, value] of Object.entries(properties)) {
-    if (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key)) continue;
+    // Event-scoped numeric overrides: allow a handful of keys that match
+    // SENSITIVE_PROPERTY (e.g. "token" in input_tokens) ONLY when the event
+    // explicitly opts in AND the value is a finite number.  Every other event
+    // and every non-numeric value still hits the global block.
+    const overridden = EVENT_NUMERIC_OVERRIDES[eventName]?.has(key)
+      && typeof value === 'number' && Number.isFinite(value);
+    if (!overridden && (SENSITIVE_PROPERTY.test(key) || URL_PROPERTY.test(key))) continue;
     if (typeof value === 'number' || typeof value === 'boolean') {
       safeProperties[key] = value;
     } else if (typeof value === 'string') {
