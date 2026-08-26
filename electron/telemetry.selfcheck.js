@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const Module = require('node:module');
 const vm = require('node:vm');
+const { UPDATER_ERROR_CATEGORIES, categorizeUpdaterError } = require('./updater-categories');
 
 const captured = [];
 let flushes = 0;
@@ -60,6 +61,32 @@ async function main() {
   assert.equal(flushes, 1, 'feedback must be flushed before success is shown');
 
   assert.equal(await telemetry.capture('not_allowed', {}), false);
+
+  // Every bucket categorizeUpdaterError() can return must survive capture, or
+  // an updater failure reaches PostHog with a null error_category and stays
+  // undiagnosable — the exact gap behind the updater relapse.
+  const updaterFailures = [
+    { error: { code: 'ENOTFOUND' }, expectedCategory: UPDATER_ERROR_CATEGORIES.NETWORK, expectedCode: 'ENOTFOUND' },
+    { error: { statusCode: 429 }, expectedCategory: UPDATER_ERROR_CATEGORIES.RATE_LIMITED, expectedCode: '429' },
+    { error: { statusCode: 500 }, expectedCategory: UPDATER_ERROR_CATEGORIES.HTTP, expectedCode: '500' },
+    { error: { message: 'latest-mac.yml was not found' }, expectedCategory: UPDATER_ERROR_CATEGORIES.NOT_FOUND },
+    { error: { message: 'sha512 checksum mismatch' }, expectedCategory: UPDATER_ERROR_CATEGORIES.SIGNATURE },
+    { error: { code: 'ERR_UPDATER_UNKNOWN' }, expectedCategory: UPDATER_ERROR_CATEGORIES.UNKNOWN, expectedCode: 'ERR_UPDATER_UNKNOWN' },
+  ];
+  for (const { error, expectedCategory, expectedCode } of updaterFailures) {
+    const errorCategory = categorizeUpdaterError(error);
+    assert.equal(errorCategory, expectedCategory);
+    captured.length = 0;
+    await telemetry.capture('desktop_updater_failed', {
+      stage: 'updater_download',
+      errorCategory,
+      error,
+    });
+    assert.equal(captured.length, 1, `${errorCategory} must be sent`);
+    assert.equal(captured[0].properties.error_category, errorCategory);
+    assert.equal(captured[0].properties.stage, 'updater_download');
+    assert.equal(captured[0].properties.error_code, expectedCode);
+  }
 
   const preloadSource = fs.readFileSync(path.join(__dirname, 'preload.js'), 'utf8');
   let exposedBridge;

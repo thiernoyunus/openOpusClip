@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { UPDATER_ERROR_CATEGORIES } = require('./updater-categories');
 let PostHog = null;
 try {
   ({ PostHog } = require('posthog-node'));
@@ -64,11 +65,6 @@ const ALLOWED_STAGES = new Set([
   'updater_download',
   'updater_install',
   'updater_event',
-  'updater_network',
-  'updater_rate_limited',
-  'updater_http',
-  'updater_not_found',
-  'updater_signature',
 ]);
 
 const ALLOWED_ERROR_CATEGORIES = new Set([
@@ -94,6 +90,7 @@ const ALLOWED_ERROR_CATEGORIES = new Set([
   'updater_error',
   'stack_setup_failed',
   'unknown',
+  ...Object.values(UPDATER_ERROR_CATEGORIES),
 ]);
 
 const ALLOWED_SIGNALS = new Set([
