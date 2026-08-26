@@ -1913,11 +1913,13 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
     last_error = None
     for attempt in range(1, max_retries + 1):
         try:
+            call_started = time.perf_counter()
             response = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(response_mime_type="application/json"),
             )
+            latency_ms = int(round((time.perf_counter() - call_started) * 1000))
 
             # --- Cost Calculation ---
             try:
@@ -1943,7 +1945,10 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
                         "input_cost": input_cost,
                         "output_cost": output_cost,
                         "total_cost": total_cost,
-                        "model": model_name
+                        "model": model_name,
+                        "latency_ms": latency_ms,
+                        "attempts_used": attempt,
+                        "max_retries": max_retries,
                     }
 
                     print(f"💰 Token Usage ({model_name}):")
@@ -2308,6 +2313,23 @@ def _trailer_cost(response, model_name):
         return None
 
 
+def _augment_attempt_metrics(cost_analysis, latency_ms, attempts_used, max_retries):
+    """Attach bounded numeric latency/retry metadata to a Gemini cost dict.
+
+    Returns cost_analysis unchanged when it's None (preserves the existing
+    behaviour of get_viral_clips / _generate_trailer_candidate when usage
+    metadata was unavailable). When a dict is present, three integer fields
+    are added in place — no prompt bodies, transcripts, response text, or
+    identifiers cross this boundary.
+    """
+    if cost_analysis is None:
+        return None
+    cost_analysis['latency_ms'] = int(latency_ms)
+    cost_analysis['attempts_used'] = int(attempts_used)
+    cost_analysis['max_retries'] = int(max_retries)
+    return cost_analysis
+
+
 def _generate_trailer_candidate(client, model_name, prompt, sentences,
                                 refine_words, video_duration, lo, hi, max_retries):
     """One flash selection call (with transient-error retries) -> a validated,
@@ -2316,11 +2338,16 @@ def _generate_trailer_candidate(client, model_name, prompt, sentences,
     last_error = None
     for attempt in range(1, max_retries + 1):
         try:
+            call_started = time.perf_counter()
             response = client.models.generate_content(
                 model=model_name, contents=prompt,
                 config=types.GenerateContentConfig(response_mime_type="application/json"),
             )
+            latency_ms = int(round((time.perf_counter() - call_started) * 1000))
             cost_analysis = _trailer_cost(response, model_name)
+            if cost_analysis is not None:
+                cost_analysis = _augment_attempt_metrics(
+                    cost_analysis, latency_ms, attempts_used=attempt, max_retries=max_retries)
             result_json = json.loads(_strip_json_fence(response.text))
 
             moments = result_json.get('moments_ordered')
@@ -2507,12 +2534,20 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
     costs = [c['cost_analysis'] for c in candidates if c.get('cost_analysis')]
     out = {'moments_ordered': moments, 'script': script, 'phrases': []}
     if costs:
+        candidate_latencies = [c.get('latency_ms') for c in costs if c.get('latency_ms') is not None]
+        candidate_attempts = [c.get('attempts_used') for c in costs if c.get('attempts_used') is not None]
+        candidate_retry_caps = [c.get('max_retries') for c in costs if c.get('max_retries') is not None]
         out['cost_analysis'] = {
             "input_tokens": sum(c['input_tokens'] for c in costs),
             "output_tokens": sum(c['output_tokens'] for c in costs),
             "total_cost": sum(c['total_cost'] for c in costs),
             "model": model_name,
             "candidates": len(candidates),
+            # Trailer cost covers usable candidate calls; the optional judge
+            # call is intentionally not included because it has no cost dict.
+            "latency_ms": sum(candidate_latencies) if candidate_latencies else None,
+            "attempts_used": sum(candidate_attempts) if candidate_attempts else None,
+            "max_retries": max(candidate_retry_caps) if candidate_retry_caps else None,
         }
     return out
 
