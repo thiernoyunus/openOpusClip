@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { UPDATER_ERROR_CATEGORIES } = require('./updater-categories');
 let PostHog = null;
 try {
   ({ PostHog } = require('posthog-node'));
@@ -89,14 +90,7 @@ const ALLOWED_ERROR_CATEGORIES = new Set([
   'updater_error',
   'stack_setup_failed',
   'unknown',
-  // categorizeUpdaterError() in main.js returns these buckets. They are error
-  // categories, not stages, so they must live here — otherwise capture() drops
-  // error_category and every updater failure looks the same.
-  'updater_network',
-  'updater_rate_limited',
-  'updater_http',
-  'updater_not_found',
-  'updater_signature',
+  ...Object.values(UPDATER_ERROR_CATEGORIES),
 ]);
 
 const ALLOWED_SIGNALS = new Set([
