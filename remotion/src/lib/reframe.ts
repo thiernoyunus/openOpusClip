@@ -122,10 +122,13 @@ const atCenter = (
 
 /**
  * Smoothed face rect at a frame: the face CENTER averaged over a
- * +/-SMOOTH_WINDOW source-frame window, at the median SIZE for `range` (the
- * clip being rendered; omitted = the whole track). Falls back to the nearest
- * sample within SAMPLE_REACH frames so brief detection gaps don't drop the
- * panel.
+ * +/-SMOOTH_WINDOW source-frame window, at the median SIZE for the same
+ * window. `range` is the clip being rendered (omitted = the whole track); both
+ * the average and the median stay inside it, because a face track can survive
+ * a scene cut and averaging across one would open the new shot framed
+ * somewhere between the two positions. Falls back to the nearest sample within
+ * SAMPLE_REACH frames — deliberately allowed to reach outside `range` — so a
+ * clip that begins in a detection gap still draws a panel.
  */
 export const smoothedFaceRect = (
   track: FaceTrack | undefined,
@@ -137,10 +140,12 @@ export const smoothedFaceRect = (
   const size = medianFaceSize(track, range);
   // samples are sorted by frame; binary-search the window instead of filtering
   // the whole track every playback frame.
+  const from = Math.max(frame - SMOOTH_WINDOW, range ? range.from : -Infinity);
+  const to = Math.min(frame + SMOOTH_WINDOW, range ? range.to - 1 : Infinity);
   let cx = 0, cy = 0, n = 0;
-  for (let i = lowerBoundByFrame(samples, frame - SMOOTH_WINDOW); i < samples.length; i++) {
+  for (let i = lowerBoundByFrame(samples, from); i < samples.length; i++) {
     const s = samples[i];
-    if (s.frame > frame + SMOOTH_WINDOW) break;
+    if (s.frame > to) break;
     cx += s.x + s.w / 2; cy += s.y + s.h / 2;
     n++;
   }

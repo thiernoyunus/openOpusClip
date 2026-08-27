@@ -93,6 +93,26 @@ assert.notStrictEqual(wideCrop.h, closeCrop.h, "both shots got the same zoom");
 assert.strictEqual(wideCrop.h, cropIn(wideOnly, 100).h, "wide shot pulled in the close-up");
 assert.strictEqual(closeCrop.h, cropIn(closeOnly, 390).h, "close-up pulled in the wide shot");
 
+// 4b. POSITION must not blend across the cut either. Subject on the left in
+//     scene one, on the right in scene two: the new shot has to open framed on
+//     the right, not somewhere between the two.
+const movesAtCut: FaceTrack = {
+  id: 5,
+  samples: Array.from({ length: 80 }, (_, i) => ({
+    frame: i * 5,
+    x: i < 60 ? 0.12 : 0.72,
+    y: 0.3,
+    w: 0.1,
+    h: 0.18,
+  })),
+};
+const firstFrameOfScene2 = cropIn(movesAtCut, 300, closeClip);
+const deepInScene2 = cropIn(movesAtCut, 390, closeClip);
+assert.ok(
+  Math.abs(firstFrameOfScene2.x - deepInScene2.x) < 0.01,
+  "scene two opened framed between the two shots"
+);
+
 // 5. The proxy sizer's guarantee: render-service picks the SMALLEST sample in
 //    [from-45, to+45) and assumes the renderer never crops tighter than that.
 //    Only holds if the median looks at the same samples.

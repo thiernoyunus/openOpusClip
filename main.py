@@ -610,6 +610,12 @@ class SplitCameraman:
         self.vh = video_height
         self.panel_aspect = panel_aspect  # panel pixel width / height
         self.slots = [None, None]  # {cx, cy, ch} in source pixels
+        # Per-slot "still owes a re-frame" flag. A scene cut sets both, and each
+        # slot clears its own on the first frame a face is actually detected for
+        # it — a panel whose face is missing at the cut must NOT keep the
+        # previous scene's zoom for the whole shot (zoom is locked below, so a
+        # stale one would never converge away).
+        self.pending_snap = [False, False]
 
     def _target_for_face(self, box):
         x, y, w, h = box
@@ -622,13 +628,16 @@ class SplitCameraman:
 
     def update(self, ordered_faces, force_snap=False):
         """ordered_faces: up to 2 face boxes sorted left-to-right."""
+        if force_snap:
+            self.pending_snap = [True, True]
         for i in range(2):
             if i >= len(ordered_faces):
                 continue  # face missing this frame: keep last crop (sticky)
             target = self._target_for_face(ordered_faces[i]['box'])
             slot = self.slots[i]
-            if slot is None or force_snap:
+            if slot is None or self.pending_snap[i]:
                 self.slots[i] = target
+                self.pending_snap[i] = False
             else:
                 # Zoom is fixed at the scene's first face size (force_snap
                 # re-frames at every cut). Detected face height wobbles a few
