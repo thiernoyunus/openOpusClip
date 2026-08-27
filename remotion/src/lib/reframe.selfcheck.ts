@@ -138,7 +138,9 @@ assert.strictEqual(
 
 // 5. The proxy sizer's guarantee: render-service picks the SMALLEST sample in
 //    [from-45, to+45) and assumes the renderer never crops tighter than that.
-//    Only holds if the median looks at the same samples.
+//    The median scans a SUBSET of that window (the clip's own samples), so the
+//    minimum below can only be <= it. Widening the median past this window is
+//    what would break the bound.
 for (const range of [wideClip, closeClip, { from: 0, to: 400 }]) {
   const inWindow = acrossACut.samples.filter(
     (s) => s.frame >= range.from - 45 && s.frame < range.to + 45
