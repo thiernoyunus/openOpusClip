@@ -626,14 +626,31 @@ class SplitCameraman:
             ch = cw / self.panel_aspect
         return {'cx': x + w / 2, 'cy': y + h / 2, 'ch': ch}
 
+    def _assign(self, ordered_faces):
+        """Map detections to panels: [left_face_or_None, right_face_or_None].
+
+        Two faces keep reading order. A LONE detection is placed by which half
+        of the frame it is in — indexing it as face 0 would let the RIGHT
+        participant define the LEFT panel's zoom, which (zoom being locked)
+        then sticks for the rest of the scene.
+        """
+        if len(ordered_faces) >= 2:
+            return [ordered_faces[0], ordered_faces[1]]
+        if len(ordered_faces) == 1:
+            x, _, w, _ = ordered_faces[0]['box']
+            slot = 0 if (x + w / 2) < self.vw / 2 else 1
+            return [ordered_faces[0], None] if slot == 0 else [None, ordered_faces[0]]
+        return [None, None]
+
     def update(self, ordered_faces, force_snap=False):
         """ordered_faces: up to 2 face boxes sorted left-to-right."""
         if force_snap:
             self.pending_snap = [True, True]
+        assigned = self._assign(ordered_faces)
         for i in range(2):
-            if i >= len(ordered_faces):
+            if assigned[i] is None:
                 continue  # face missing this frame: keep last crop (sticky)
-            target = self._target_for_face(ordered_faces[i]['box'])
+            target = self._target_for_face(assigned[i]['box'])
             slot = self.slots[i]
             if slot is None or self.pending_snap[i]:
                 self.slots[i] = target

@@ -113,6 +113,29 @@ assert.ok(
   "scene two opened framed between the two shots"
 );
 
+// 4c. A SHORT clip must not be outvoted by its neighbours. A 30-frame
+//     close-up sandwiched between wide shots has fewer samples of its own
+//     than the +/-45-frame reach would pull in from either side.
+const shortCloseUp: FaceTrack = {
+  id: 6,
+  samples: Array.from({ length: 60 }, (_, i) => {
+    // frames 0-140 wide, 150-180 close-up, 190-295 wide again
+    const f = i * 5;
+    const h = f >= 150 && f <= 180 ? 0.30 : 0.08;
+    return { frame: f, x: 0.45, y: 0.3, w: h * 0.55, h };
+  }),
+};
+const shortClip = { from: 150, to: 185 };
+const closeUpOnly: FaceTrack = {
+  id: 7,
+  samples: shortCloseUp.samples.filter((s) => s.frame >= 150 && s.frame < 185),
+};
+assert.strictEqual(
+  cropIn(shortCloseUp, 165, shortClip).h,
+  cropIn(closeUpOnly, 165).h,
+  "a short clip inherited its neighbours' zoom"
+);
+
 // 5. The proxy sizer's guarantee: render-service picks the SMALLEST sample in
 //    [from-45, to+45) and assumes the renderer never crops tighter than that.
 //    Only holds if the median looks at the same samples.

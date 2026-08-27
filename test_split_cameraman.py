@@ -57,6 +57,38 @@ def test_a_panel_missing_at_the_cut_still_reframes_when_its_face_appears():
     assert abs(scene2[0] - scene2[1]) < 1e-6, f"panels disagree on the shot: {scene2}"
 
 
+def test_a_lone_detection_lands_in_its_own_panel():
+    """The symmetric case: if only the RIGHT participant is seen at the cut, it
+    must not define the LEFT panel's zoom (sorted order would index it as 0).
+
+    The two participants sit at different distances, so borrowing the wrong
+    one's size is visible: the far speaker's panel would be zoomed as if their
+    face filled the frame.
+    """
+    FAR, NEAR = 0.09, 0.28  # face heights: left is distant, right is close
+    for present, label in ((1, 'right'), (0, 'left')):
+        absent = 1 - present
+        cam = SplitCameraman(VW, VH, PANEL_ASPECT)
+        cam.update([face(500, 0.30), face(1400, 0.30)], force_snap=True)
+        scene1 = zooms(cam)
+
+        # New scene. Only one participant is detected on the frame of the cut.
+        lone = face(1500, NEAR) if present == 1 else face(400, FAR)
+        cam.update([lone], force_snap=True)
+        assert cam.slots[present]['ch'] != scene1[present], (
+            f"{label} panel did not take the lone detection")
+        assert cam.pending_snap[absent], (
+            f"the {label}-only detection consumed the other panel's snap")
+
+        # The other participant appears a detection later and frames itself.
+        cam.update([face(400, FAR), face(1500, NEAR)])
+        left, right = zooms(cam)
+        assert right > left * 2, (
+            f"after a {label}-only cut the panels share one zoom: {(left, right)}")
+        assert left != scene1[0] and right != scene1[1], (
+            "a panel kept the old scene's zoom")
+
+
 def test_a_slot_snaps_once_and_then_holds():
     cam = SplitCameraman(VW, VH, PANEL_ASPECT)
     cam.update([face(500, 0.20), face(1400, 0.20)], force_snap=True)

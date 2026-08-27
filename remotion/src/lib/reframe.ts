@@ -64,17 +64,18 @@ const SAMPLE_REACH = 45;
  * straight into a zoom, so the shot breathes in and out even when nobody
  * moves. Holding the median kills it.
  *
- * Scoped to the clip, not the whole track, for two reasons:
- * - FaceTrackRecorder matches faces across scene cuts, so one track can span a
- *   wide shot and a close-up. A track-wide median would blend the two and
- *   mis-frame whichever scene is shorter, for its whole duration.
- * - render-service sizes the source proxy from the SMALLEST face sample in
- *   this same window. Sharing the window keeps that a true lower bound
- *   (min <= median over the same set), so the proxy can never be fed less
- *   resolution than the crop actually consumes.
- * Both windows widen by SAMPLE_REACH so the nearest-sample fallback below can
- * never land on a sample the median never saw. Keep in sync with
- * faceCropHeight() in render-service/src/source-proxy.ts.
+ * Scoped to the clip, and ONLY the clip: FaceTrackRecorder matches faces
+ * across scene cuts, so one track can span a wide shot and a close-up. Letting
+ * a neighbouring shot into the median mis-frames this clip for its whole
+ * duration — and for a clip shorter than 2*SAMPLE_REACH the neighbours would
+ * actually outvote it. Samples outside the clip are used only when the clip
+ * has none of its own, so a panel still draws instead of vanishing.
+ *
+ * This stays safe for render-service, which sizes the source proxy from the
+ * SMALLEST sample in the WIDER [start-SAMPLE_REACH, end+SAMPLE_REACH) window:
+ * that window is a superset of this one, so its min is <= this median and the
+ * proxy can never be fed less resolution than the crop consumes. Keep in sync
+ * with faceCropHeight() in render-service/src/source-proxy.ts.
  *
  * ponytail: one size per clip means a genuine dolly-in inside a single shot
  * won't be followed. Interpolate between windowed medians if that shows up.
@@ -98,10 +99,16 @@ const medianFaceSize = (
 
   let scoped = track.samples;
   if (range) {
-    const from = range.from - SAMPLE_REACH;
-    const to = range.to + SAMPLE_REACH;
-    scoped = track.samples.filter((s) => s.frame >= from && s.frame < to);
-    // A clip with no samples of its own still needs a size to draw with.
+    scoped = track.samples.filter(
+      (s) => s.frame >= range.from && s.frame < range.to
+    );
+    // A clip with no samples of its own still needs a size to draw with:
+    // widen to the gap-fallback reach, then give up and use the whole track.
+    if (scoped.length === 0) {
+      scoped = track.samples.filter(
+        (s) => s.frame >= range.from - SAMPLE_REACH && s.frame < range.to + SAMPLE_REACH
+      );
+    }
     if (scoped.length === 0) scoped = track.samples;
   }
   const mid = (xs: number[]) => xs.sort((a, b) => a - b)[xs.length >> 1];
