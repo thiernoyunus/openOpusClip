@@ -45,7 +45,7 @@ module.exports = {
   appId: 'com.openopusclip.desktop',
   productName: 'openOpusClip',
   asar: true,
-  files: ['main.js', 'preload.js', 'telemetry.js', 'package.json'],
+  files: ['main.js', 'preload.js', 'telemetry.js', 'updater-categories.js', 'package.json'],
 
   // Resolved per-platform/arch in the beforePack hook below.
   extraResources: [
