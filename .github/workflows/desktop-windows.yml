@@ -99,6 +99,10 @@ jobs:
         working-directory: electron
         run: npm ci
 
+      - name: Check desktop shell self-tests
+        working-directory: electron
+        run: npm run test:telemetry
+
       - name: Package the installer
         working-directory: electron
         env:
