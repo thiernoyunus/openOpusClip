@@ -125,7 +125,7 @@ const faceCropHeight = (
   // No track: the renderer falls back to a full-height center crop.
   if (!track?.samples?.length) return 1;
 
-  // smoothedFaceRect() averages samples within ±12 frames of the rendered
+  // smoothedFaceRect() averages samples within ±36 frames of the rendered
   // frame and, in a tracking gap, falls back to the nearest sample within 45.
   // So a clip that starts or ends mid-gap can be framed by a sample outside its
   // own range — scanning only [start, end) would miss a small face there and
@@ -141,7 +141,9 @@ const faceCropHeight = (
   }
   if (!Number.isFinite(smallest)) return 1;
 
-  // cropForFace: clamp(faceH / 0.35, 0.3, 1)
+  // cropForFace: clamp(faceH / 0.35, 0.3, 1). The renderer uses the track's
+  // MEDIAN face height, which is >= this smallest one, so the proxy stays
+  // conservative (never under-fed).
   return Math.max(0.3, Math.min(1, smallest / 0.35));
 };
 

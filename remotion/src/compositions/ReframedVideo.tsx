@@ -23,136 +23,21 @@ import { placedRanges, type PlacedRange } from "../lib/edl";
  *   run at a different fps, so we convert via sourceFrame()
  */
 
-// --- pure helpers (deterministic per frame: required for server rendering) ---
-
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-
-const clamp = (v: number, lo: number, hi: number) =>
-  Math.max(lo, Math.min(hi, v));
-
-/**
- * First index i where items[i].frame >= target (or items.length if none).
- * items must be sorted ascending by .frame — both cameraKeyframes and face
- * track samples are recorded in frame order. Runs every playback frame, so
- * this replaces the old full-array scans with a binary search.
- */
-const lowerBoundByFrame = (items: { frame: number }[], target: number): number => {
-  let lo = 0;
-  let hi = items.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (items[mid].frame < target) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo;
-};
-
-/** Linear interpolation between sampled keyframes, clamped at both ends. */
-export const interpolateCrop = (
-  keyframes: CameraKeyframe[],
-  frame: number
-): CropRect | null => {
-  if (keyframes.length === 0) return null;
-  if (frame <= keyframes[0].frame) return keyframes[0];
-  const last = keyframes[keyframes.length - 1];
-  if (frame >= last.frame) return last;
-  // keyframes are sorted by frame; binary-search the surrounding pair
-  const i = lowerBoundByFrame(keyframes, frame);
-  const a = keyframes[i - 1];
-  const b = keyframes[i];
-  const t = b.frame === a.frame ? 0 : (frame - a.frame) / (b.frame - a.frame);
-  return {
-    x: lerp(a.x, b.x, t),
-    y: lerp(a.y, b.y, t),
-    w: lerp(a.w, b.w, t),
-    h: lerp(a.h, b.h, t),
-  };
-};
-
-/**
- * Smoothed face rect at a frame: average of samples in a ±12 source-frame
- * window (kills detection jitter). Falls back to the nearest sample within
- * 45 frames so brief detection gaps don't drop the panel.
- */
-export const smoothedFaceRect = (
-  track: FaceTrack | undefined,
-  frame: number
-): CropRect | null => {
-  const samples = track?.samples;
-  if (!samples || samples.length === 0) return null;
-  // samples are sorted by frame; binary-search the ±12 window instead of
-  // filtering the whole track every playback frame.
-  let sx = 0, sy = 0, sw = 0, sh = 0, n = 0;
-  for (let i = lowerBoundByFrame(samples, frame - 12); i < samples.length; i++) {
-    if (samples[i].frame > frame + 12) break;
-    sx += samples[i].x; sy += samples[i].y; sw += samples[i].w; sh += samples[i].h;
-    n++;
-  }
-  if (n > 0) {
-    return { x: sx / n, y: sy / n, w: sw / n, h: sh / n };
-  }
-  // No sample in window: nearest sample is one of the two straddling `frame`.
-  const j = lowerBoundByFrame(samples, frame);
-  let nearest = samples[Math.min(j, samples.length - 1)];
-  let nearestDist = Math.abs(nearest.frame - frame);
-  if (j > 0 && Math.abs(samples[j - 1].frame - frame) < nearestDist) {
-    nearest = samples[j - 1];
-    nearestDist = Math.abs(nearest.frame - frame);
-  }
-  return nearestDist <= 45 ? nearest : null;
-};
-
-/**
- * Build a crop window (normalized) around a face for a panel of the given
- * pixel aspect ratio. The face fills ~35% of the panel height, with headroom:
- * face center sits at 42% from the crop top.
- */
-export const cropForFace = (
-  face: CropRect,
-  panelAspect: number, // panel width / height in px
-  srcW: number,
-  srcH: number
-): CropRect => {
-  const faceHpx = face.h * srcH;
-  let cropHpx = clamp(faceHpx / 0.35, srcH * 0.3, srcH);
-  let cropWpx = cropHpx * panelAspect;
-  if (cropWpx > srcW) {
-    cropWpx = srcW;
-    cropHpx = cropWpx / panelAspect;
-  }
-  const centerXpx = (face.x + face.w / 2) * srcW;
-  const faceCenterYpx = (face.y + face.h / 2) * srcH;
-  let topPx = faceCenterYpx - cropHpx * 0.42;
-  let leftPx = centerXpx - cropWpx / 2;
-  leftPx = clamp(leftPx, 0, srcW - cropWpx);
-  topPx = clamp(topPx, 0, srcH - cropHpx);
-  return {
-    x: leftPx / srcW,
-    y: topPx / srcH,
-    w: cropWpx / srcW,
-    h: cropHpx / srcH,
-  };
-};
-
-/** Center crop matching the panel aspect — fallback when nothing is tracked. */
-export const centerCrop = (
-  panelAspect: number,
-  srcW: number,
-  srcH: number
-): CropRect => {
-  let cropHpx = srcH;
-  let cropWpx = cropHpx * panelAspect;
-  if (cropWpx > srcW) {
-    cropWpx = srcW;
-    cropHpx = cropWpx / panelAspect;
-  }
-  return {
-    x: (srcW - cropWpx) / 2 / srcW,
-    y: (srcH - cropHpx) / 2 / srcH,
-    w: cropWpx / srcW,
-    h: cropHpx / srcH,
-  };
-};
+// Pure crop math lives in lib/reframe.ts (no React/remotion imports) so it can
+// be self-checked with plain node. Re-exported here: the dashboard editor
+// imports these from this module.
+export {
+  interpolateCrop,
+  smoothedFaceRect,
+  cropForFace,
+  centerCrop,
+} from "../lib/reframe";
+import {
+  interpolateCrop,
+  smoothedFaceRect,
+  cropForFace,
+  centerCrop,
+} from "../lib/reframe";
 
 interface PanelRect {
   left: number;

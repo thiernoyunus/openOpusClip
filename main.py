@@ -630,10 +630,15 @@ class SplitCameraman:
             if slot is None or force_snap:
                 self.slots[i] = target
             else:
-                a = 0.12  # smoothing factor per processed frame
+                # Zoom is fixed at the scene's first face size (force_snap
+                # re-frames at every cut). Detected face height wobbles a few
+                # percent per frame and tracking it read as constant zoom
+                # in/out. Mirrors medianFaceSize() in remotion/src/lib/reframe.ts.
+                # ponytail: a real dolly-in won't be followed. Track size again
+                # only if that actually shows up in footage.
+                a = 0.04  # slow pan (~1s to close a gap) - a talking head sways
                 slot['cx'] += (target['cx'] - slot['cx']) * a
                 slot['cy'] += (target['cy'] - slot['cy']) * a
-                slot['ch'] += (target['ch'] - slot['ch']) * a
 
     def get_crops(self):
         """Pixel rects [(x1, y1, x2, y2), ...] for both panels."""

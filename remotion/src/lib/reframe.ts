@@ -1,0 +1,176 @@
+import type { CropRect, CameraKeyframe, FaceTrack } from "./types";
+
+// --- pure helpers (deterministic per frame: required for server rendering) ---
+
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+const clamp = (v: number, lo: number, hi: number) =>
+  Math.max(lo, Math.min(hi, v));
+
+/**
+ * First index i where items[i].frame >= target (or items.length if none).
+ * items must be sorted ascending by .frame — both cameraKeyframes and face
+ * track samples are recorded in frame order. Runs every playback frame, so
+ * this replaces the old full-array scans with a binary search.
+ */
+const lowerBoundByFrame = (items: { frame: number }[], target: number): number => {
+  let lo = 0;
+  let hi = items.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (items[mid].frame < target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+};
+
+/** Linear interpolation between sampled keyframes, clamped at both ends. */
+export const interpolateCrop = (
+  keyframes: CameraKeyframe[],
+  frame: number
+): CropRect | null => {
+  if (keyframes.length === 0) return null;
+  if (frame <= keyframes[0].frame) return keyframes[0];
+  const last = keyframes[keyframes.length - 1];
+  if (frame >= last.frame) return last;
+  // keyframes are sorted by frame; binary-search the surrounding pair
+  const i = lowerBoundByFrame(keyframes, frame);
+  const a = keyframes[i - 1];
+  const b = keyframes[i];
+  const t = b.frame === a.frame ? 0 : (frame - a.frame) / (b.frame - a.frame);
+  return {
+    x: lerp(a.x, b.x, t),
+    y: lerp(a.y, b.y, t),
+    w: lerp(a.w, b.w, t),
+    h: lerp(a.h, b.h, t),
+  };
+};
+
+/**
+ * How many source frames each side of the rendered frame get averaged into the
+ * face position. Wide on purpose: the crop should sit still while someone talks
+ * and only drift when they actually change place.
+ * ponytail: a box average is the whole tripod. If a real camera move ever needs
+ * to be followed tightly, add a dead-zone hold keyed off track history instead.
+ */
+const SMOOTH_WINDOW = 36;
+
+/** Sample gap (frames) we'll still reach across before dropping the panel. */
+const SAMPLE_REACH = 45;
+
+/**
+ * One face size per track, used as the crop's zoom level for the track's whole
+ * life. Detected face height wobbles a few percent every frame and cropForFace
+ * turns that straight into a zoom, so the shot breathes in and out even when
+ * nobody moves. Holding the median kills it.
+ * ponytail: one size per track means a genuine dolly-in won't be followed.
+ * Split the track (or interpolate between per-scene medians) if that shows up.
+ */
+const trackSize = new WeakMap<FaceTrack, { w: number; h: number }>();
+
+const medianFaceSize = (track: FaceTrack): { w: number; h: number } => {
+  const hit = trackSize.get(track);
+  if (hit) return hit;
+  const mid = (xs: number[]) => xs.sort((a, b) => a - b)[xs.length >> 1];
+  const size = {
+    w: mid(track.samples.map((s) => s.w)),
+    h: mid(track.samples.map((s) => s.h)),
+  };
+  trackSize.set(track, size);
+  return size;
+};
+
+/** Face box of the given size centred on (cx, cy). */
+const atCenter = (
+  cx: number,
+  cy: number,
+  size: { w: number; h: number }
+): CropRect => ({ x: cx - size.w / 2, y: cy - size.h / 2, w: size.w, h: size.h });
+
+/**
+ * Smoothed face rect at a frame: the face CENTER averaged over a
+ * +/-SMOOTH_WINDOW source-frame window, at the track's median SIZE. Falls back
+ * to the nearest sample within SAMPLE_REACH frames so brief detection gaps
+ * don't drop the panel.
+ */
+export const smoothedFaceRect = (
+  track: FaceTrack | undefined,
+  frame: number
+): CropRect | null => {
+  const samples = track?.samples;
+  if (!track || !samples || samples.length === 0) return null;
+  const size = medianFaceSize(track);
+  // samples are sorted by frame; binary-search the window instead of filtering
+  // the whole track every playback frame.
+  let cx = 0, cy = 0, n = 0;
+  for (let i = lowerBoundByFrame(samples, frame - SMOOTH_WINDOW); i < samples.length; i++) {
+    const s = samples[i];
+    if (s.frame > frame + SMOOTH_WINDOW) break;
+    cx += s.x + s.w / 2; cy += s.y + s.h / 2;
+    n++;
+  }
+  if (n > 0) return atCenter(cx / n, cy / n, size);
+  // No sample in window: nearest sample is one of the two straddling `frame`.
+  const j = lowerBoundByFrame(samples, frame);
+  let nearest = samples[Math.min(j, samples.length - 1)];
+  let nearestDist = Math.abs(nearest.frame - frame);
+  if (j > 0 && Math.abs(samples[j - 1].frame - frame) < nearestDist) {
+    nearest = samples[j - 1];
+    nearestDist = Math.abs(nearest.frame - frame);
+  }
+  return nearestDist <= SAMPLE_REACH
+    ? atCenter(nearest.x + nearest.w / 2, nearest.y + nearest.h / 2, size)
+    : null;
+};
+
+/**
+ * Build a crop window (normalized) around a face for a panel of the given
+ * pixel aspect ratio. The face fills ~35% of the panel height, with headroom:
+ * face center sits at 42% from the crop top.
+ */
+export const cropForFace = (
+  face: CropRect,
+  panelAspect: number, // panel width / height in px
+  srcW: number,
+  srcH: number
+): CropRect => {
+  const faceHpx = face.h * srcH;
+  let cropHpx = clamp(faceHpx / 0.35, srcH * 0.3, srcH);
+  let cropWpx = cropHpx * panelAspect;
+  if (cropWpx > srcW) {
+    cropWpx = srcW;
+    cropHpx = cropWpx / panelAspect;
+  }
+  const centerXpx = (face.x + face.w / 2) * srcW;
+  const faceCenterYpx = (face.y + face.h / 2) * srcH;
+  let topPx = faceCenterYpx - cropHpx * 0.42;
+  let leftPx = centerXpx - cropWpx / 2;
+  leftPx = clamp(leftPx, 0, srcW - cropWpx);
+  topPx = clamp(topPx, 0, srcH - cropHpx);
+  return {
+    x: leftPx / srcW,
+    y: topPx / srcH,
+    w: cropWpx / srcW,
+    h: cropHpx / srcH,
+  };
+};
+
+/** Center crop matching the panel aspect — fallback when nothing is tracked. */
+export const centerCrop = (
+  panelAspect: number,
+  srcW: number,
+  srcH: number
+): CropRect => {
+  let cropHpx = srcH;
+  let cropWpx = cropHpx * panelAspect;
+  if (cropWpx > srcW) {
+    cropWpx = srcW;
+    cropHpx = cropWpx / panelAspect;
+  }
+  return {
+    x: (srcW - cropWpx) / 2 / srcW,
+    y: (srcH - cropHpx) / 2 / srcH,
+    w: cropWpx / srcW,
+    h: cropHpx / srcH,
+  };
+};
