@@ -72,6 +72,76 @@ def test_kill_is_a_noop_for_jobs_with_nothing_running():
         app.jobs.pop("t-done", None)
 
 
+def test_a_descendant_that_ignores_sigterm_is_still_killed():
+    """main.py can exit on SIGTERM while an ffmpeg child ignores it. Waiting on
+    the direct child alone would report success with the descendant alive."""
+    parent = subprocess.Popen(
+        [sys.executable, "-c",
+         "import subprocess,sys,time;"
+         # The grandchild installs SIG_IGN for SIGTERM, so only SIGKILL stops it.
+         "c=subprocess.Popen([sys.executable,'-c',"
+         "'import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+         "print(1,flush=True);time.sleep(300)'],stdout=subprocess.PIPE);"
+         "print(c.pid, flush=True); time.sleep(300)"],
+        stdout=subprocess.PIPE,
+        start_new_session=True,
+    )
+    child_pid = int(parent.stdout.readline().strip())
+    # Let the grandchild install its handler before we signal the group.
+    time.sleep(0.5)
+    try:
+        assert app.kill_process_tree(parent, grace_seconds=2.0) is True
+        assert parent.poll() is not None, "job subprocess survived cancel"
+        for _ in range(50):
+            if not _alive(child_pid):
+                break
+            time.sleep(0.1)
+        assert not _alive(child_pid), "SIGTERM-ignoring descendant survived cancel"
+    finally:
+        for pid in (parent.pid, child_pid):
+            try:
+                os.kill(pid, 9)
+            except OSError:
+                pass
+
+
+def test_a_cancel_during_launch_does_not_orphan_the_process():
+    """delete_job can run between Popen and process registration: it finds no
+    handle to kill, so run_job must stop its own subprocess."""
+    import asyncio
+
+    app.jobs["t-launch"] = {
+        "status": "processing", "logs": [], "created_at": time.time(),
+        "cmd": [sys.executable, "-c", "import time; time.sleep(300)"],
+        "env": dict(os.environ), "output_dir": "/tmp/openshorts-cancel-check",
+    }
+    launched = {}
+    real_popen = subprocess.Popen
+
+    def popen_then_cancel(*a, **kw):
+        p = real_popen(*a, **kw)
+        launched["process"] = p
+        # Simulate the cancel winning the race: the job is gone before the
+        # handle is registered, exactly as kill_job_process would have left it.
+        app.jobs.pop("t-launch", None)
+        return p
+
+    app.subprocess.Popen = popen_then_cancel
+    try:
+        asyncio.run(app.run_job("t-launch", app.jobs["t-launch"]))
+        p = launched["process"]
+        assert p.poll() is not None, "subprocess was orphaned by a cancel mid-launch"
+    finally:
+        app.subprocess.Popen = real_popen
+        app.jobs.pop("t-launch", None)
+        p = launched.get("process")
+        if p is not None:
+            try:
+                os.kill(p.pid, 9)
+            except OSError:
+                pass
+
+
 def test_run_job_records_nothing_after_a_cancel():
     """run_job must not resurrect a job that delete_job already removed."""
     import asyncio

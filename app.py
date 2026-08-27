@@ -569,7 +569,16 @@ async def run_job(job_id, job_data):
             # CPU, still writing into a directory we just deleted).
             start_new_session=True,
         )
-        jobs[job_id]['process'] = process  # so delete_job can cancel this run
+        # Register the process so delete_job can cancel this run. If the job
+        # is already gone, a cancel landed between Popen and here and found
+        # nothing to kill — stop our own subprocess rather than orphan it.
+        # (Both this and delete_job's jobs.pop run on the event loop with no
+        # await between, so no cancel can slip in mid-registration.)
+        job = jobs.get(job_id)
+        if job is None:
+            kill_process_tree(process)
+            return
+        job['process'] = process
 
         # The subprocess now has its own copy of env; scrub the BYO request keys
         # from the retained in-memory job object (jobs live ~1h) so they aren't
@@ -937,15 +946,33 @@ async def get_status(job_id: str):
         "duration_seconds": duration_seconds,
     }
 
-def kill_job_process(job_id: str) -> bool:
-    """Stop a running job's subprocess tree. Returns True if something was killed.
+def _group_alive(pgid: int) -> bool:
+    """Is anything still in this process group? (Signal 0 = liveness probe.)"""
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, just not ours to signal
+    except OSError:
+        return False
 
-    main.py runs in its own process group (see run_job), so one signal to the
-    group stops it and every ffmpeg/yt-dlp it spawned. SIGTERM first, then
-    SIGKILL a moment later for anything that ignored it. Safe to call on a job
-    that never started or already exited.
+
+def kill_process_tree(process, grace_seconds: float = 5.0) -> bool:
+    """Stop a job subprocess and everything it spawned. True if it was running.
+
+    The job runs in its own process group (see run_job), so one signal to the
+    group reaches main.py AND its ffmpeg/yt-dlp children — which stay in the
+    group even after main.py dies and they are reparented.
+
+    Escalation is driven by the GROUP, not by our direct child: main.py can
+    exit on SIGTERM while a descendant ignores it, and waiting only on the
+    child would return success with that descendant still writing into a
+    directory we are about to delete. We reap the child (a zombie is still a
+    group member) and keep probing until the group is empty or the grace
+    period runs out, then SIGKILL.
     """
-    process = (jobs.get(job_id) or {}).get('process')
     if process is None or process.poll() is not None:
         return False
     try:
@@ -957,12 +984,20 @@ def kill_job_process(job_id: str) -> bool:
             os.killpg(pgid, sig)
         except (ProcessLookupError, PermissionError, OSError):
             return True  # already gone
-        try:
-            process.wait(timeout=5)
-            return True
-        except subprocess.TimeoutExpired:
-            continue  # ignored SIGTERM: escalate
+        deadline = time.monotonic() + grace_seconds
+        while time.monotonic() < deadline:
+            try:
+                process.wait(timeout=0.1)  # reap, so it leaves the group
+            except subprocess.TimeoutExpired:
+                pass
+            if not _group_alive(pgid):
+                return True
     return True
+
+
+def kill_job_process(job_id: str) -> bool:
+    """kill_process_tree for a job id. Safe on a job that never started."""
+    return kill_process_tree((jobs.get(job_id) or {}).get('process'))
 
 
 @app.delete("/api/jobs/{job_id}")
