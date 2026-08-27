@@ -610,6 +610,12 @@ class SplitCameraman:
         self.vh = video_height
         self.panel_aspect = panel_aspect  # panel pixel width / height
         self.slots = [None, None]  # {cx, cy, ch} in source pixels
+        # Per-slot "still owes a re-frame" flag. A scene cut sets both, and each
+        # slot clears its own on the first frame a face is actually detected for
+        # it — a panel whose face is missing at the cut must NOT keep the
+        # previous scene's zoom for the whole shot (zoom is locked below, so a
+        # stale one would never converge away).
+        self.pending_snap = [False, False]
 
     def _target_for_face(self, box):
         x, y, w, h = box
@@ -620,20 +626,45 @@ class SplitCameraman:
             ch = cw / self.panel_aspect
         return {'cx': x + w / 2, 'cy': y + h / 2, 'ch': ch}
 
+    def _assign(self, ordered_faces):
+        """Map detections to panels: [left_face_or_None, right_face_or_None].
+
+        Two faces keep reading order. A LONE detection is placed by which half
+        of the frame it is in — indexing it as face 0 would let the RIGHT
+        participant define the LEFT panel's zoom, which (zoom being locked)
+        then sticks for the rest of the scene.
+        """
+        if len(ordered_faces) >= 2:
+            return [ordered_faces[0], ordered_faces[1]]
+        if len(ordered_faces) == 1:
+            x, _, w, _ = ordered_faces[0]['box']
+            slot = 0 if (x + w / 2) < self.vw / 2 else 1
+            return [ordered_faces[0], None] if slot == 0 else [None, ordered_faces[0]]
+        return [None, None]
+
     def update(self, ordered_faces, force_snap=False):
         """ordered_faces: up to 2 face boxes sorted left-to-right."""
+        if force_snap:
+            self.pending_snap = [True, True]
+        assigned = self._assign(ordered_faces)
         for i in range(2):
-            if i >= len(ordered_faces):
+            if assigned[i] is None:
                 continue  # face missing this frame: keep last crop (sticky)
-            target = self._target_for_face(ordered_faces[i]['box'])
+            target = self._target_for_face(assigned[i]['box'])
             slot = self.slots[i]
-            if slot is None or force_snap:
+            if slot is None or self.pending_snap[i]:
                 self.slots[i] = target
+                self.pending_snap[i] = False
             else:
-                a = 0.12  # smoothing factor per processed frame
+                # Zoom is fixed at the scene's first face size (force_snap
+                # re-frames at every cut). Detected face height wobbles a few
+                # percent per frame and tracking it read as constant zoom
+                # in/out. Mirrors medianFaceSize() in remotion/src/lib/reframe.ts.
+                # ponytail: a real dolly-in won't be followed. Track size again
+                # only if that actually shows up in footage.
+                a = 0.04  # slow pan (~1s to close a gap) - a talking head sways
                 slot['cx'] += (target['cx'] - slot['cx']) * a
                 slot['cy'] += (target['cy'] - slot['cy']) * a
-                slot['ch'] += (target['ch'] - slot['ch']) * a
 
     def get_crops(self):
         """Pixel rects [(x1, y1, x2, y2), ...] for both panels."""

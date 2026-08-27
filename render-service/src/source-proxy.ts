@@ -125,11 +125,20 @@ const faceCropHeight = (
   // No track: the renderer falls back to a full-height center crop.
   if (!track?.samples?.length) return 1;
 
-  // smoothedFaceRect() averages samples within ±12 frames of the rendered
+  // smoothedFaceRect() averages samples within ±36 frames of the rendered
   // frame and, in a tracking gap, falls back to the nearest sample within 45.
   // So a clip that starts or ends mid-gap can be framed by a sample outside its
   // own range — scanning only [start, end) would miss a small face there and
   // under-size the proxy. Widen by the larger of the two windows.
+  //
+  // This window must stay a SUPERSET of medianFaceSize()'s in
+  // remotion/src/lib/reframe.ts, which the renderer's crop height comes from.
+  // The two are deliberately different sizes: the median takes the clip's own
+  // samples only (neighbouring shots must not vote on this clip's zoom), while
+  // this scan reaches SAMPLE_REACH further out. Superset => this minimum is
+  // <= that median => the proxy is never under-fed. A median taken over a
+  // WIDER set than this scan is the thing that would break it, by letting an
+  // unseen smaller face drive a tighter crop than the proxy budgeted for.
   const SAMPLE_REACH = 45;
   const from = (clip.sourceStart ?? clip.startFrame ?? -Infinity) - SAMPLE_REACH;
   const to = (clip.sourceEnd ?? clip.endFrame ?? Infinity) + SAMPLE_REACH;
@@ -141,7 +150,9 @@ const faceCropHeight = (
   }
   if (!Number.isFinite(smallest)) return 1;
 
-  // cropForFace: clamp(faceH / 0.35, 0.3, 1)
+  // cropForFace: clamp(faceH / 0.35, 0.3, 1). The renderer crops from a median
+  // over a subset of the samples scanned above, so that median is >= this
+  // smallest one and the proxy stays conservative (never under-fed).
   return Math.max(0.3, Math.min(1, smallest / 0.35));
 };
 

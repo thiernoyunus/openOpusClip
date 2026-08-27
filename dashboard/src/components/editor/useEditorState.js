@@ -557,8 +557,12 @@ export function buildFillKeyframes(framing, clip, trackId, aspect) {
         aspect ??
         (framing.outputWidth ?? 1080) / (framing.outputHeight ?? 1920);
     const keyframes = [];
+    // Fill rendering uses these baked keyframes instead of calling
+    // smoothedFaceRect at draw time, so the clip range has to be applied HERE
+    // or this path keeps the old whole-track zoom.
+    const range = { from: clip.sourceStart, to: clip.sourceEnd };
     for (let frame = clip.sourceStart; frame < clip.sourceEnd; frame += 3) {
-        const face = smoothedFaceRect(track, frame);
+        const face = smoothedFaceRect(track, frame, range);
         if (!face) continue;
         const crop = cropForFace(face, ar, srcW, srcH);
         keyframes.push({
