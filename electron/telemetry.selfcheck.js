@@ -5,6 +5,11 @@ const path = require('node:path');
 const Module = require('node:module');
 const vm = require('node:vm');
 const { UPDATER_ERROR_CATEGORIES, categorizeUpdaterError } = require('./updater-categories');
+const { files: packagedShellFiles } = require('./electron-builder');
+
+for (const file of ['main.js', 'preload.js', 'telemetry.js', 'updater-categories.js']) {
+  assert.ok(packagedShellFiles.includes(file), `${file} must be included in the packaged desktop shell`);
+}
 
 const captured = [];
 let flushes = 0;
