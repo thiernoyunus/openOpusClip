@@ -130,6 +130,13 @@ const faceCropHeight = (
   // So a clip that starts or ends mid-gap can be framed by a sample outside its
   // own range — scanning only [start, end) would miss a small face there and
   // under-size the proxy. Widen by the larger of the two windows.
+  //
+  // This window MUST match medianFaceSize()'s in remotion/src/lib/reframe.ts:
+  // the renderer's crop height comes from the median over that window, and the
+  // smallest sample in it is only a safe lower bound if both look at the same
+  // samples. (Scoping the median per-clip is what makes this true — a
+  // track-wide median could sit below this clip's smallest face and quietly
+  // under-size the proxy.)
   const SAMPLE_REACH = 45;
   const from = (clip.sourceStart ?? clip.startFrame ?? -Infinity) - SAMPLE_REACH;
   const to = (clip.sourceEnd ?? clip.endFrame ?? Infinity) + SAMPLE_REACH;
@@ -141,9 +148,9 @@ const faceCropHeight = (
   }
   if (!Number.isFinite(smallest)) return 1;
 
-  // cropForFace: clamp(faceH / 0.35, 0.3, 1). The renderer uses the track's
-  // MEDIAN face height, which is >= this smallest one, so the proxy stays
-  // conservative (never under-fed).
+  // cropForFace: clamp(faceH / 0.35, 0.3, 1). The renderer crops from the
+  // MEDIAN height over the window above, which is >= this smallest one, so the
+  // proxy stays conservative (never under-fed).
   return Math.max(0.3, Math.min(1, smallest / 0.35));
 };
 

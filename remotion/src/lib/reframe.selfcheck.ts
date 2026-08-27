@@ -1,6 +1,6 @@
 /**
  * Tiny assert-based self-check for the face-tracking crop math. No framework.
- * Run: `node remotion/src/lib/reframe.selfcheck.ts` (Node >= 22 strips the types).
+ * Run: `node remotion/src/lib/reframe.selfcheck.ts` (Node >= 22.18 strips the types; 22.6-22.17 need --experimental-strip-types).
  *
  * The thing being guarded: a person who sits still must get a still crop.
  * Detection noise used to leak into both the crop size (read as zoom in/out)
@@ -63,7 +63,54 @@ const end = cropAt(walking, 295);
 assert.ok(end.x - start.x > 0.3, "crop did not follow a real move");
 assert.strictEqual(end.w, start.w, "a lateral move should not change zoom");
 
-// 4. Gaps and misses behave: no samples in reach -> null -> caller center-crops.
+// 4. A track that spans a scene cut must not blend the two shots' zoom.
+//    Wide shot (small face) for the first half, close-up (big face) after.
+//    Each clip gets its OWN zoom, and each matches a track holding only its
+//    own shot — i.e. the other scene contributes nothing.
+const acrossACut: FaceTrack = {
+  id: 2,
+  samples: Array.from({ length: 80 }, (_, i) => {
+    const h = i < 60 ? 0.08 : 0.30; // 60 wide samples, then 20 close-up ones
+    return { frame: i * 5, x: 0.5 - 0.05, y: 0.3, w: h * 0.55, h };
+  }),
+};
+const wideOnly: FaceTrack = { id: 3, samples: acrossACut.samples.slice(0, 60) };
+const closeOnly: FaceTrack = { id: 4, samples: acrossACut.samples.slice(60) };
+
+const wideClip = { from: 0, to: 300 };
+const closeClip = { from: 300, to: 400 };
+const cropIn = (t: FaceTrack, frame: number, range?: { from: number; to: number }) => {
+  const face = smoothedFaceRect(t, frame, range);
+  assert.ok(face, `no face at frame ${frame}`);
+  return cropForFace(face, PANEL_ASPECT, SRC_W, SRC_H);
+};
+
+const wideCrop = cropIn(acrossACut, 100, wideClip);
+const closeCrop = cropIn(acrossACut, 350, closeClip);
+assert.notStrictEqual(wideCrop.h, closeCrop.h, "both shots got the same zoom");
+// The far edges of each clip are outside the other shot's reach, so the
+// per-clip median there must equal a track containing only that shot.
+assert.strictEqual(wideCrop.h, cropIn(wideOnly, 100).h, "wide shot pulled in the close-up");
+assert.strictEqual(closeCrop.h, cropIn(closeOnly, 390).h, "close-up pulled in the wide shot");
+
+// 5. The proxy sizer's guarantee: render-service picks the SMALLEST sample in
+//    [from-45, to+45) and assumes the renderer never crops tighter than that.
+//    Only holds if the median looks at the same samples.
+for (const range of [wideClip, closeClip, { from: 0, to: 400 }]) {
+  const inWindow = acrossACut.samples.filter(
+    (s) => s.frame >= range.from - 45 && s.frame < range.to + 45
+  );
+  const smallest = Math.min(...inWindow.map((s) => s.h));
+  const midFrame = Math.floor((range.from + range.to) / 2);
+  const used = smoothedFaceRect(acrossACut, midFrame, range);
+  assert.ok(used, "no face mid-clip");
+  assert.ok(
+    used.h >= smallest,
+    `median height ${used.h} is below the proxy's assumed floor ${smallest}`
+  );
+}
+
+// 6. Gaps and misses behave: no samples in reach -> null -> caller center-crops.
 assert.strictEqual(smoothedFaceRect(jittery, 100_000), null);
 assert.strictEqual(smoothedFaceRect(undefined, 0), null);
 const center = centerCrop(PANEL_ASPECT, SRC_W, SRC_H);

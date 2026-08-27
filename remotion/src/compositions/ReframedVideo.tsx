@@ -281,6 +281,9 @@ const RangeContent: React.FC<{
   // The placed range carries its clip's framing decision (layout/crop/faces);
   // a v3 clip is internally single-layout, so no per-frame segment lookup.
   const segment = range.clip;
+  // Zoom is held per clip (see medianFaceSize): a face track can span a scene
+  // cut, and the two shots must not average into one wrong crop size.
+  const faceRange = { from: range.startFrame, to: range.endFrame };
 
   // Manual crop always wins, regardless of layout
   if (segment.manualCrop) {
@@ -315,7 +318,7 @@ const RangeContent: React.FC<{
     } else {
       const trackId = segment.trackedFaceIds?.[0];
       const track = trackId != null ? faceTrackById.get(trackId) : undefined;
-      const face = track ? smoothedFaceRect(track, sourceFrame) : null;
+      const face = track ? smoothedFaceRect(track, sourceFrame, faceRange) : null;
       crop = face
         ? cropForFace(face, outAspect, source.width, source.height)
         : centerCrop(outAspect, source.width, source.height);
@@ -392,7 +395,7 @@ const RangeContent: React.FC<{
         } else {
           const trackId = segment.trackedFaceIds[i];
           const track = trackId != null ? faceTrackById.get(trackId) : undefined;
-          const face = smoothedFaceRect(track, sourceFrame);
+          const face = smoothedFaceRect(track, sourceFrame, faceRange);
           const panelAspect = panel.width / panel.height;
           crop = face
             ? cropForFace(face, panelAspect, source.width, source.height)

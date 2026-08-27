@@ -34,11 +34,20 @@ function panelGeometry(layout, framing) {
     }));
 }
 
+/** Source frame bounds of a clip (v3) or segment (v2) — the zoom-lock window. */
+function faceRange(segment) {
+    const from = segment.sourceStart ?? segment.startFrame;
+    const to = segment.sourceEnd ?? segment.endFrame;
+    return typeof from === 'number' && typeof to === 'number' ? { from, to } : undefined;
+}
+
 function cropForPanel(framing, segment, panelIdx, panel, srcFrame) {
     const { width: srcW, height: srcH } = framing.source;
     const trackId = segment.trackedFaceIds?.[panelIdx];
     const track = framing.faceTracks.find((t) => t.id === trackId);
-    const face = smoothedFaceRect(track, srcFrame);
+    // Same window the renderer uses, or the editor preview would show a
+    // different zoom than the export.
+    const face = smoothedFaceRect(track, srcFrame, faceRange(segment));
     return face
         ? cropForFace(face, panel.aspectPx, srcW, srcH)
         : centerCrop(panel.aspectPx, srcW, srcH);

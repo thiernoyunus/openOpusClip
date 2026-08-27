@@ -59,24 +59,57 @@ const SMOOTH_WINDOW = 36;
 const SAMPLE_REACH = 45;
 
 /**
- * One face size per track, used as the crop's zoom level for the track's whole
- * life. Detected face height wobbles a few percent every frame and cropForFace
- * turns that straight into a zoom, so the shot breathes in and out even when
- * nobody moves. Holding the median kills it.
- * ponytail: one size per track means a genuine dolly-in won't be followed.
- * Split the track (or interpolate between per-scene medians) if that shows up.
+ * One face size per CLIP, used as that clip's zoom level throughout. Detected
+ * face height wobbles a few percent every frame and cropForFace turns that
+ * straight into a zoom, so the shot breathes in and out even when nobody
+ * moves. Holding the median kills it.
+ *
+ * Scoped to the clip, not the whole track, for two reasons:
+ * - FaceTrackRecorder matches faces across scene cuts, so one track can span a
+ *   wide shot and a close-up. A track-wide median would blend the two and
+ *   mis-frame whichever scene is shorter, for its whole duration.
+ * - render-service sizes the source proxy from the SMALLEST face sample in
+ *   this same window. Sharing the window keeps that a true lower bound
+ *   (min <= median over the same set), so the proxy can never be fed less
+ *   resolution than the crop actually consumes.
+ * Both windows widen by SAMPLE_REACH so the nearest-sample fallback below can
+ * never land on a sample the median never saw. Keep in sync with
+ * faceCropHeight() in render-service/src/source-proxy.ts.
+ *
+ * ponytail: one size per clip means a genuine dolly-in inside a single shot
+ * won't be followed. Interpolate between windowed medians if that shows up.
  */
-const trackSize = new WeakMap<FaceTrack, { w: number; h: number }>();
+export interface FrameRange {
+  from: number;
+  to: number; // exclusive
+}
 
-const medianFaceSize = (track: FaceTrack): { w: number; h: number } => {
-  const hit = trackSize.get(track);
+const trackSizes = new WeakMap<FaceTrack, Map<string, { w: number; h: number }>>();
+
+const medianFaceSize = (
+  track: FaceTrack,
+  range?: FrameRange
+): { w: number; h: number } => {
+  const key = range ? `${range.from}:${range.to}` : "*";
+  let byRange = trackSizes.get(track);
+  if (!byRange) trackSizes.set(track, (byRange = new Map()));
+  const hit = byRange.get(key);
   if (hit) return hit;
+
+  let scoped = track.samples;
+  if (range) {
+    const from = range.from - SAMPLE_REACH;
+    const to = range.to + SAMPLE_REACH;
+    scoped = track.samples.filter((s) => s.frame >= from && s.frame < to);
+    // A clip with no samples of its own still needs a size to draw with.
+    if (scoped.length === 0) scoped = track.samples;
+  }
   const mid = (xs: number[]) => xs.sort((a, b) => a - b)[xs.length >> 1];
   const size = {
-    w: mid(track.samples.map((s) => s.w)),
-    h: mid(track.samples.map((s) => s.h)),
+    w: mid(scoped.map((s) => s.w)),
+    h: mid(scoped.map((s) => s.h)),
   };
-  trackSize.set(track, size);
+  byRange.set(key, size);
   return size;
 };
 
@@ -89,17 +122,19 @@ const atCenter = (
 
 /**
  * Smoothed face rect at a frame: the face CENTER averaged over a
- * +/-SMOOTH_WINDOW source-frame window, at the track's median SIZE. Falls back
- * to the nearest sample within SAMPLE_REACH frames so brief detection gaps
- * don't drop the panel.
+ * +/-SMOOTH_WINDOW source-frame window, at the median SIZE for `range` (the
+ * clip being rendered; omitted = the whole track). Falls back to the nearest
+ * sample within SAMPLE_REACH frames so brief detection gaps don't drop the
+ * panel.
  */
 export const smoothedFaceRect = (
   track: FaceTrack | undefined,
-  frame: number
+  frame: number,
+  range?: FrameRange
 ): CropRect | null => {
   const samples = track?.samples;
   if (!track || !samples || samples.length === 0) return null;
-  const size = medianFaceSize(track);
+  const size = medianFaceSize(track, range);
   // samples are sorted by frame; binary-search the window instead of filtering
   // the whole track every playback frame.
   let cx = 0, cy = 0, n = 0;
