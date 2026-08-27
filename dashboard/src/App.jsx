@@ -1028,7 +1028,10 @@ function App() {
     const cover = p.thumb || coverFromString(p.src || p.title);
     const handleDelete = async (e) => {
       e.stopPropagation();
-      if (!window.confirm(`Delete "${p.title}"? This permanently deletes the project and its files.`)) return;
+      const confirmMessage = proc
+        ? `"${p.title}" is still processing. Cancel it and delete the project? This cannot be undone.`
+        : `Delete "${p.title}"? This permanently deletes the project and its files.`;
+      if (!window.confirm(confirmMessage)) return;
       let res;
       try {
         res = await fetch(getApiUrl(`/api/jobs/${p.id}`), { method: 'DELETE' });
@@ -1037,10 +1040,6 @@ function App() {
         window.alert('Could not delete this project. Check your connection and try again.');
         return;
       }
-      if (res.status === 409) {
-        window.alert("This project is still processing — you can delete it once it finishes.");
-        return; // keep the card; server refused to delete a running job
-      }
       if (!res.ok && res.status !== 404) {
         const error = new Error(`Project deletion failed with status ${res.status}`);
         captureError(error, { area: 'project_delete' });
@@ -1048,7 +1047,7 @@ function App() {
         return;
       }
       setProjects(removeProject(p.id));
-      track('project_deleted', { result_category: 'deleted' });
+      track('project_deleted', { result_category: proc ? 'cancelled' : 'deleted' });
     };
     return (
       <div className="text-left group relative">
@@ -1093,8 +1092,8 @@ function App() {
         </button>
         <button
           onClick={handleDelete}
-          title="Delete project"
-          aria-label="Delete project"
+          title={proc ? 'Cancel and delete project' : 'Delete project'}
+          aria-label={proc ? 'Cancel and delete project' : 'Delete project'}
           className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 border border-edge text-muted opacity-0 group-hover:opacity-100 hover:text-red-400 hover:border-red-400/50 transition-all"
         >
           <Trash2 size={14} />
