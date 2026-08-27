@@ -5,6 +5,7 @@ import threading
 import json
 import shutil
 import glob
+import signal
 import time
 import asyncio
 import sys
@@ -500,6 +501,11 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # Running jobs are in their own process group (run_job), so a Ctrl-C on
+        # the server no longer reaches them. Stop them here instead of leaving
+        # orphaned ffmpeg/yt-dlp behind.
+        for running_id in list(jobs):
+            kill_job_process(running_id)
         _stop_whisper_worker()
         watchdog_task.cancel()
 
@@ -557,8 +563,22 @@ async def run_job(job_id, job_data):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, # Merge stderr to stdout
             env=env,
-            cwd=os.getcwd()
+            cwd=os.getcwd(),
+            # Own process group: main.py spawns ffmpeg/yt-dlp, and signalling
+            # only the direct child would leave those running (still burning
+            # CPU, still writing into a directory we just deleted).
+            start_new_session=True,
         )
+        # Register the process so delete_job can cancel this run. If the job
+        # is already gone, a cancel landed between Popen and here and found
+        # nothing to kill — stop our own subprocess rather than orphan it.
+        # (Both this and delete_job's jobs.pop run on the event loop with no
+        # await between, so no cancel can slip in mid-registration.)
+        job = jobs.get(job_id)
+        if job is None:
+            kill_process_tree(process)
+            return
+        job['process'] = process
 
         # The subprocess now has its own copy of env; scrub the BYO request keys
         # from the retained in-memory job object (jobs live ~1h) so they aren't
@@ -612,7 +632,12 @@ async def run_job(job_id, job_data):
                 pass
 
         returncode = process.returncode
-        
+
+        # Cancelled: delete_job already killed the process and removed the job
+        # and its files. There is nothing left to record.
+        if job_id not in jobs:
+            return
+
         if returncode == 0:
             jobs[job_id]['status'] = 'completed'
             jobs[job_id]['completed_at'] = time.time()
@@ -658,6 +683,8 @@ async def run_job(job_id, job_data):
             jobs[job_id]['logs'].append(f"Process failed with exit code {returncode}")
 
     except Exception as e:
+        if job_id not in jobs:
+            return  # cancelled mid-run
         jobs[job_id]['status'] = 'failed'
         jobs[job_id]['completed_at'] = time.time()
         jobs[job_id]['duration_seconds'] = jobs[job_id]['completed_at'] - jobs[job_id].get('started_at', jobs[job_id].get('created_at', jobs[job_id]['completed_at']))
@@ -919,6 +946,60 @@ async def get_status(job_id: str):
         "duration_seconds": duration_seconds,
     }
 
+def _group_alive(pgid: int) -> bool:
+    """Is anything still in this process group? (Signal 0 = liveness probe.)"""
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, just not ours to signal
+    except OSError:
+        return False
+
+
+def kill_process_tree(process, grace_seconds: float = 5.0) -> bool:
+    """Stop a job subprocess and everything it spawned. True if it was running.
+
+    The job runs in its own process group (see run_job), so one signal to the
+    group reaches main.py AND its ffmpeg/yt-dlp children — which stay in the
+    group even after main.py dies and they are reparented.
+
+    Escalation is driven by the GROUP, not by our direct child: main.py can
+    exit on SIGTERM while a descendant ignores it, and waiting only on the
+    child would return success with that descendant still writing into a
+    directory we are about to delete. We reap the child (a zombie is still a
+    group member) and keep probing until the group is empty or the grace
+    period runs out, then SIGKILL.
+    """
+    if process is None or process.poll() is not None:
+        return False
+    try:
+        pgid = os.getpgid(process.pid)
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pgid, sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            return True  # already gone
+        deadline = time.monotonic() + grace_seconds
+        while time.monotonic() < deadline:
+            try:
+                process.wait(timeout=0.1)  # reap, so it leaves the group
+            except subprocess.TimeoutExpired:
+                pass
+            if not _group_alive(pgid):
+                return True
+    return True
+
+
+def kill_job_process(job_id: str) -> bool:
+    """kill_process_tree for a job id. Safe on a job that never started."""
+    return kill_process_tree((jobs.get(job_id) or {}).get('process'))
+
+
 @app.delete("/api/jobs/{job_id}")
 async def delete_job(job_id: str):
     """Permanently delete a project: its output files + in-memory state. Projects
@@ -931,10 +1012,13 @@ async def delete_job(job_id: str):
     job_path = os.path.abspath(os.path.join(OUTPUT_DIR, job_id))
     if os.path.commonpath([out_root, job_path]) != out_root or job_path == out_root:
         raise HTTPException(status_code=400, detail="Invalid job id")
-    # Don't delete a job that's still running — its worker would keep writing
-    # (re-creating the dir / crashing on jobs[job_id]). Let it finish first.
-    if jobs.get(job_id, {}).get('status') in ('queued', 'processing'):
-        raise HTTPException(status_code=409, detail="Project is still processing; try again once it finishes.")
+    # Deleting a running job cancels it. Kill the worker FIRST, then remove
+    # the job from `jobs` — otherwise it keeps writing into the directory we
+    # are about to delete. A job still sitting in the queue needs no kill:
+    # run_job_wrapper looks it up in `jobs` and skips it once it is gone.
+    # Blocking waits (up to ~10s worst case) go to a thread so the event loop
+    # keeps serving other requests.
+    cancelled = await asyncio.to_thread(kill_job_process, job_id)
     removed = os.path.isdir(job_path)
     if removed:
         shutil.rmtree(job_path, ignore_errors=True)
@@ -943,7 +1027,7 @@ async def delete_job(job_id: str):
         saas_jobs.pop(job_id, None)
     except NameError:
         pass
-    return {"success": True, "removed": removed}
+    return {"success": True, "removed": removed, "cancelled": cancelled}
 
 # --- Generate more clips (post-hoc, on a COMPLETED job) ---------------------
 def _recover_aspect_ratio(output_dir: str) -> str:
