@@ -159,6 +159,17 @@ Write-Log "Staging into: $Stage"
 Write-Log 'a. Building dashboard (Vite)'
 Push-Location (Join-Path $RepoRoot 'dashboard')
 if (-not (Test-Path 'node_modules')) { Write-Info 'installing dashboard deps...'; Invoke-Native { npm install } 'npm install (dashboard)' }
+# The dashboard bundles remotion source through the @remotion-src alias in
+# dashboard/vite.config.js, so remotion's own deps must be installed BEFORE the
+# Vite build, not later in step b. Without this a fresh clone fails with
+# "Rollup failed to resolve import @remotion/lottie"; a machine that happened to
+# have remotion/node_modules from earlier work built fine and hid the bug.
+if (-not (Test-Path (Join-Path $RepoRoot 'remotion\node_modules'))) {
+    Write-Info 'installing remotion deps...'
+    Push-Location (Join-Path $RepoRoot 'remotion')
+    Invoke-Native { npm install } 'npm install (remotion)'
+    Pop-Location
+}
 # The desktop app always talks to the backend it starts itself on
 # 127.0.0.1:8000 - force a relative API base so a VITE_API_URL left over in
 # the shell or dashboard/.env can't get baked into the packaged dashboard.
@@ -173,12 +184,6 @@ Write-Info "dashboard -> $Stage\dashboard"
 Write-Log 'b. Building renderer (tsc) + prebuilding Remotion bundle'
 Push-Location (Join-Path $RepoRoot 'render-service')
 if (-not (Test-Path 'node_modules')) { Write-Info 'installing render-service deps...'; Invoke-Native { npm install } 'npm install (render-service)' }
-if (-not (Test-Path (Join-Path $RepoRoot 'remotion\node_modules'))) {
-    Write-Info 'installing remotion deps...'
-    Push-Location (Join-Path $RepoRoot 'remotion')
-    Invoke-Native { npm install } 'npm install (remotion)'
-    Pop-Location
-}
 Invoke-Native { npm run build } 'render-service build'
 Copy-Tree (Join-Path $RepoRoot 'render-service\dist') (Join-Path $Stage 'render-service\dist')
 Write-Info "renderer dist -> $Stage\render-service\dist"
