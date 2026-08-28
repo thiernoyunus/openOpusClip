@@ -19,7 +19,7 @@
 //   a terminal), this shell notices and just opens a window pointed at it
 //   instead of starting a second copy.
 
-const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -625,6 +625,14 @@ function createWindow() {
       exitCode: details.exitCode,
     });
   });
+  // OAuth (Zernio -> Google/TikTok/...) refuses to run in an embedded browser,
+  // and the user is already signed in in their real one. Hand every window.open
+  // to the system default browser instead of a chrome-less child window.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:$/.test(new URL(url).protocol)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
   win.loadURL(BACKEND_URL);
 
   // An update found during startup (before any window existed) is held until
