@@ -10,7 +10,7 @@ import TrailerPage from './TrailerPage';
 import ProcessingModal from './components/ProcessingModal';
 import EditorView from './components/editor/EditorView';
 import { getProjects, addProject, updateProject, removeProject, phaseFromLogs, titleFromPayload, thumbFromPayload, coverFromString, fetchVideoTitle, captureVideoFrame, isTrailerProject } from './lib/projectHistory';
-import { getScheduledClips, markClipsScheduled } from './lib/scheduledClips';
+import { getClipList, setClipList, addToClipList } from './lib/clipState';
 import { getApiUrl } from './config';
 import { captureError, track, trackPageview } from './analytics';
 import { getPhase, setPhase, armNext, runTourPhase, stopTour, startTourFromHome, APP_SUPPORT_INDEX } from './lib/platformTour.js';
@@ -166,9 +166,33 @@ function App() {
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, processing, complete, error
   const [results, setResults] = useState(null);
-  // Clip indexes of the open project already sent to the scheduler.
+  // Per-clip notes for the open project: already sent to the scheduler,
+  // removed from the list, and ticked ready for the scheduler.
   const [scheduledClips, setScheduledClips] = useState([]);
-  useEffect(() => { setScheduledClips(getScheduledClips(jobId)); }, [jobId]);
+  const [hiddenClips, setHiddenClips] = useState([]);
+  const [pickedClips, setPickedClips] = useState([]);
+  useEffect(() => {
+    setScheduledClips(getClipList(jobId, 'scheduled'));
+    setHiddenClips(getClipList(jobId, 'hidden'));
+    setPickedClips(getClipList(jobId, 'picked'));
+  }, [jobId]);
+
+  const togglePickedClip = (i) => setPickedClips((cur) =>
+    setClipList(jobId, 'picked', cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]));
+
+  // Once a clip is booked it stops being a pick, so the toolbar count and the
+  // scheduler agree on what is still waiting to go out.
+  const markScheduled = (indexes) => {
+    setScheduledClips(addToClipList(jobId, 'scheduled', indexes));
+    setPickedClips(setClipList(jobId, 'picked', getClipList(jobId, 'picked').filter((x) => !indexes.includes(x))));
+  };
+
+  // Removing a clip only takes it out of your list — nothing is deleted on the
+  // server, and "Undo" brings them all back.
+  const hideClip = (i) => {
+    setHiddenClips(addToClipList(jobId, 'hidden', [i]));
+    setPickedClips(setClipList(jobId, 'picked', getClipList(jobId, 'picked').filter((x) => x !== i)));
+  };
   const [sortBy, setSortBy] = useState('score'); // 'score' | 'order'
   const [logs, setLogs] = useState([]);
   const [processingMedia, setProcessingMedia] = useState(null);
@@ -1428,6 +1452,17 @@ function App() {
                     {generatingMore ? 'Finding more clips…' : 'Still processing…'}
                   </span>
                 )}
+                {hiddenClips.length > 0 && (
+                  <span className="flex items-center gap-1.5 text-xs bg-surface2 border border-edge text-muted px-2 py-0.5 rounded-full">
+                    {hiddenClips.length} removed
+                    <button
+                      onClick={() => setHiddenClips(setClipList(jobId, 'hidden', []))}
+                      className="text-fg hover:text-viral underline underline-offset-2"
+                    >
+                      Undo
+                    </button>
+                  </span>
+                )}
                 {moreClipsNotice && (
                   <span className="text-xs bg-amber-500/10 border border-amber-500/30 text-amber-300 px-2 py-0.5 rounded-full">
                     {moreClipsNotice}
@@ -1468,9 +1503,10 @@ function App() {
                   {results?.clips?.length > 1 && (
                     <button
                       onClick={() => setShowScheduleWeek(true)}
-                      className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface2 hover:bg-white/10 border border-edge text-fg rounded-lg text-xs font-medium transition-colors"
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 bg-viral/15 hover:bg-viral/25 border border-viral/40 text-viral rounded-lg text-xs font-medium transition-colors"
                     >
-                      <Calendar size={14} /> Schedule week
+                      <Calendar size={14} />
+                      {pickedClips.length > 0 ? `Schedule ${pickedClips.length} picked` : 'Schedule week'}
                     </button>
                   )}
                 </div>
@@ -1481,6 +1517,7 @@ function App() {
                   <div className="grid gap-x-4 gap-y-6 pb-10 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
                     {results.clips
                       .map((clip, i) => ({ clip, i }))
+                      .filter(({ i }) => !hiddenClips.includes(i))
                       .sort((a, b) => sortBy === 'score'
                         ? (Number(b.clip.virality_score) || 0) - (Number(a.clip.virality_score) || 0)
                         : a.i - b.i)
@@ -1496,7 +1533,10 @@ function App() {
                         socialAccounts={socialAccounts}
                         geminiApiKey={apiKey}
                         scheduled={scheduledClips.includes(i)}
-                        onScheduled={() => setScheduledClips(markClipsScheduled(jobId, [i]))}
+                        onScheduled={() => markScheduled([i])}
+                        picked={pickedClips.includes(i)}
+                        onTogglePick={() => togglePickedClip(i)}
+                        onHide={() => hideClip(i)}
                         onPlay={(time) => handleClipPlay(time)}
                         onPause={handleClipPause}
                         openIndex={openClip}
@@ -1633,7 +1673,9 @@ function App() {
         socialAccounts={socialAccounts}
         onViewCalendar={() => setActiveTab('calendar')}
         scheduledIndexes={scheduledClips}
-        onScheduled={(indexes) => setScheduledClips(markClipsScheduled(jobId, indexes))}
+        hiddenIndexes={hiddenClips}
+        preselected={pickedClips}
+        onScheduled={markScheduled}
       />
 
       {showProcessingModal && (

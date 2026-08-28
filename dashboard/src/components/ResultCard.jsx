@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Calendar, Clock, Play, ArrowUp, ArrowDown, FileText, Crop, Flame } from 'lucide-react';
+import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Calendar, Clock, Play, ArrowUp, ArrowDown, FileText, Crop, Flame, Check, Trash2 } from 'lucide-react';
 import { getApiUrl } from '../config';
 import { captureError, track } from '../analytics';
 import RemotionPreview from './RemotionPreview';
@@ -46,7 +46,7 @@ const YT_VISIBILITIES = [
     { value: 'private', label: 'Private' },
 ];
 
-export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], onPlay, onPause, openIndex, setOpenIndex, totalClips: _totalClips, onEdit, framingVersion = 0, scheduled = false, onScheduled }) {
+export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], onPlay, onPause, openIndex, setOpenIndex, totalClips: _totalClips, onEdit, framingVersion = 0, scheduled = false, onScheduled, picked = false, onTogglePick, onHide }) {
     const isOpen = openIndex === index;
     const [showModal, setShowModal] = useState(false);
     const [playing, setPlaying] = useState(false);
@@ -463,7 +463,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             {/* Compact grid card */}
             <div data-tour="clip-card" className="group flex flex-col animate-[fadeIn_0.4s_ease-out]">
                 <div
-                    className={`relative aspect-[9/16] rounded-xl overflow-hidden bg-black border cursor-pointer ${scheduled ? 'border-emerald-500/50' : 'border-edge'}`}
+                    className={`relative aspect-[9/16] rounded-xl overflow-hidden bg-black border cursor-pointer ${picked ? 'border-viral' : scheduled ? 'border-emerald-500/50' : 'border-edge'}`}
                     onClick={() => { if (!playing) setOpenIndex(index); }}
                 >
                     {playing && useFramingPreview ? (
@@ -492,7 +492,19 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                         onEnded={() => { setPlaying(false); if (videoRef.current) videoRef.current.currentTime = 0; }}
                     />
                     )}
-                    <span className="absolute top-2 left-2 bg-black/65 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">Clip {index + 1}</span>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onTogglePick && onTogglePick(); }}
+                        disabled={!onTogglePick}
+                        aria-pressed={picked}
+                        aria-label={`${picked ? 'Unpick' : 'Pick'} clip ${index + 1} for scheduling`}
+                        title={picked ? 'Picked for scheduling' : 'Pick for scheduling'}
+                        className={`absolute top-2 left-2 flex items-center gap-1.5 text-[10px] font-medium pl-1 pr-1.5 py-0.5 rounded transition-colors ${picked ? 'bg-viral text-black' : 'bg-black/65 text-white hover:bg-black/85'}`}
+                    >
+                        <span className={`size-3.5 rounded-[3px] border flex items-center justify-center ${picked ? 'bg-black/20 border-black/30' : 'border-white/50'}`}>
+                            <Check size={9} className={picked ? 'opacity-100' : 'opacity-0'} />
+                        </span>
+                        Clip {index + 1}
+                    </button>
                     <span className="absolute top-2 right-2 bg-black/65 text-white text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums">{fmtTime(durSec)}</span>
 
                     {!playing && (
@@ -532,6 +544,16 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     >
                         {isRendering ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
                     </button>
+                    {onHide && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onHide(); }}
+                            title="Remove this clip from the list"
+                            aria-label={`Remove clip ${index + 1} from the list`}
+                            className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-red-300 hover:bg-white/5 transition-colors"
+                        >
+                            <Trash2 size={15} />
+                        </button>
+                    )}
                 </div>
             </div>
 

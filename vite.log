@@ -1,0 +1,39 @@
+
+  VITE v4.5.14  ready in 576 ms
+
+  ➜  Local:   http://localhost:5180/
+  ➜  Network: use --host to expose
+Browserslist: browsers data (caniuse-lite) is 8 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+(node:33723) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+8:05:30 PM [vite] hmr update /src/components/ScheduleWeekModal.jsx, /src/index.css
+8:35:31 PM [vite] hmr update /src/App.jsx, /src/index.css
+8:35:32 PM [vite] Internal server error: Failed to resolve import "./lib/scheduledClips" from "src/App.jsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /private/tmp/oo-select-clips/dashboard/src/App.jsx:13:54
+  28 |  import EditorView from "./components/editor/EditorView";
+  29 |  import { getProjects, addProject, updateProject, removeProject, phaseFromLogs, titleFromPayload, thumbFromPayload, coverFromString, fetchVideoTitle, captureVideoFrame, isTrailerProject } from "./lib/projectHistory";
+  30 |  import { getScheduledClips, markClipsScheduled } from "./lib/scheduledClips";
+     |                                                         ^
+  31 |  import { getApiUrl } from "./config";
+  32 |  import { captureError, track, trackPageview } from "./analytics";
+      at formatError (file:///Users/thiernodiallo/Coding/OpenOpusClips/dashboard/node_modules/vite/dist/node/chunks/dep-827b23df.js:44066:46)
+      at TransformContext.error (file:///Users/thiernodiallo/Coding/OpenOpusClips/dashboard/node_modules/vite/dist/node/chunks/dep-827b23df.js:44062:19)
+      at normalizeUrl (file:///Users/thiernodiallo/Coding/OpenOpusClips/dashboard/node_modules/vite/dist/node/chunks/dep-827b23df.js:41845:33)
+      at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+      at async file:///Users/thiernodiallo/Coding/OpenOpusClips/dashboard/node_modules/vite/dist/node/chunks/dep-827b23df.js:41999:47
+      at async Promise.all (index 15)
+      at async TransformContext.transform (file:///Users/thiernodiallo/Coding/OpenOpusClips/dashboard/node_modules/vite/dist/node/chunks/dep-827b23df.js:41915:13)
+      at async Object.transform (file:///Users/thiernodiallo/Coding/OpenOpusClips/dashboard/node_modules/vite/dist/node/chunks/dep-827b23df.js:44356:30)
+      at async loadAndTransform (file:///Users/thiernodiallo/Coding/OpenOpusClips/dashboard/node_modules/vite/dist/node/chunks/dep-827b23df.js:55088:29)
+      at async viteTransformMiddleware (file:///Users/thiernodiallo/Coding/OpenOpusClips/dashboard/node_modules/vite/dist/node/chunks/dep-827b23df.js:64699:32)
+8:35:48 PM [vite] hmr update /src/components/ResultCard.jsx, /src/index.css
+8:36:07 PM [vite] hmr update /src/main.jsx, /src/index.css
+8:36:07 PM [vite] hmr invalidate /src/main.jsx Could not Fast Refresh ("true" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+8:36:07 PM [vite] hmr update /src/index.css
+8:36:16 PM [vite] hmr update /src/components/ScheduleWeekModal.jsx, /src/index.css
+8:36:31 PM [vite] hmr update /src/components/ScheduleWeekModal.jsx, /src/index.css
+8:43:24 PM [vite] page reload dist/index.html
+8:44:54 PM [vite] hmr update /src/App.jsx, /src/index.css

@@ -231,7 +231,7 @@ function PlatformIcon({ platform }) {
     return <Globe size={14} className="text-muted" />;
 }
 
-export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zernioKey, socialAccounts = [], onViewCalendar, scheduledIndexes = [], onScheduled }) {
+export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zernioKey, socialAccounts = [], onViewCalendar, scheduledIndexes = [], hiddenIndexes = [], preselected = [], onScheduled }) {
     const [timezone, setTimezone] = useState(detectTimezone);
     // One post a day to start with — "Add time" is how you ask for more.
     const [times, setTimes] = useState([DEFAULT_TIMES[0]]); // one clip goes out at each time, every day
@@ -256,7 +256,8 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
     // Clips already sent to the scheduler stay out of the list entirely —
     // seeing them again only invites double-posting.
     const doneSet = new Set(scheduledIndexes);
-    const openIndexes = (clips || []).map((_, i) => i).filter((i) => !doneSet.has(i));
+    const goneSet = new Set(hiddenIndexes);
+    const openIndexes = (clips || []).map((_, i) => i).filter((i) => !doneSet.has(i) && !goneSet.has(i));
     const clipIndexes = picked === null ? openIndexes : openIndexes.filter((i) => picked.includes(i));
     const clipCount = clipIndexes.length;
 
@@ -325,10 +326,13 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
             setOverrides({});
             setOpenRow(null);
             setWarning(null);
-            setPicked(null); // everything not already scheduled, ticked
+            // Clips ticked on the grid arrive ticked; otherwise everything
+            // that is still open is.
+            const fromGrid = preselected.filter((i) => !scheduledIndexes.includes(i) && !hiddenIndexes.includes(i));
+            setPicked(fromGrid.length > 0 ? fromGrid : null);
         }
         prevOpen.current = isOpen;
-    }, [isOpen]);
+    }, [isOpen, preselected, scheduledIndexes, hiddenIndexes]);
 
     if (!isOpen) return null;
 
