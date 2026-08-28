@@ -20,7 +20,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Hea
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from s3_uploader import upload_job_artifacts, delete_job_files
+from s3_uploader import upload_job_artifacts, delete_job_files, upload_job_file
 import transcription
 from transcription import WHISPER_MODELS
 
@@ -1122,8 +1122,15 @@ async def delete_clip(job_id: str, clip_index: int):
     _persist_result(job_id)
 
     # 4. Backup copies. Deleting means deleting everywhere, so a failure here
-    #    is reported rather than swallowed — the caller tells the user.
+    #    is reported rather than swallowed — the caller tells the user. The
+    #    project's metadata is backed up too, so push the tombstoned version up
+    #    as well — otherwise the backup still lists a clip that is gone.
     s3_deleted, s3_failed = await asyncio.to_thread(delete_job_files, job_id, names)
+    # upload_job_file is a no-op when no bucket is configured.
+    for path in filter(None, [meta_files[0] if meta_files else None,
+                              os.path.join(output_dir, "result.json")]):
+        if os.path.isfile(path):
+            await asyncio.to_thread(upload_job_file, job_id, path)
 
     return {"success": True, "removed_files": removed,
             "s3_deleted": s3_deleted, "s3_failed": s3_failed}
