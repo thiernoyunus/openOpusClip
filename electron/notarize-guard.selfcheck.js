@@ -67,7 +67,34 @@ const run = async (context) => {
   delete process.env.OPENSHORTS_SKIP_NOTARIZE;
   console.log('  ok  OPENSHORTS_SKIP_NOTARIZE opt-out works');
 
-  // 5. A genuinely stapled app passes. Only runs where one is available.
+  // 5. The backstop: electron-builder skips afterSign entirely when signing
+  //    did not happen, so macOS artifacts can be produced with the guard above
+  //    never running. afterAllArtifactBuild must catch that.
+  delete require.cache[require.resolve('./electron-builder.js')];
+  const fresh = require('./electron-builder.js');
+  const macBuild = {
+    platformToTargets: new Map([[{ name: 'mac' }, new Map()]]),
+    artifactPaths: [path.join(tmp, 'openOpusClip-9.9.9-arm64.dmg')],
+  };
+  const winBuild = {
+    platformToTargets: new Map([[{ name: 'windows' }, new Map()]]),
+    artifactPaths: [path.join(tmp, 'openOpusClip-9.9.9-x64.exe')],
+  };
+  const backstopErr = await fresh
+    .afterAllArtifactBuild(macBuild)
+    .then(() => null, (e) => e);
+  assert.ok(backstopErr, 'macOS artifacts shipped without the guard ever running');
+  assert.match(backstopErr.message, /guard never ran/);
+  console.log('  ok  unsigned macOS build fails even though afterSign never runs');
+
+  assert.strictEqual(
+    await fresh.afterAllArtifactBuild(winBuild).then(() => null, (e) => e),
+    null,
+    'the backstop fired on a Windows-only build'
+  );
+  console.log('  ok  windows-only build unaffected by the backstop');
+
+  // 6. A genuinely stapled app passes. Only runs where one is available.
   const stapled = path.join(__dirname, 'dist', 'mac-arm64');
   let isStapled = false;
   try {
@@ -76,8 +103,20 @@ const run = async (context) => {
   } catch { /* not built, or not stapled */ }
   if (isStapled) {
     delete require.cache[require.resolve('./electron-builder.js')];
-    assert.strictEqual(await run(ctx(stapled)), null, 'a stapled app was rejected');
+    const signed = require('./electron-builder.js');
+    assert.strictEqual(
+      await signed.afterSign(ctx(stapled)).then(() => null, (e) => e),
+      null,
+      'a stapled app was rejected'
+    );
     console.log('  ok  stapled app passes');
+    // ...and once an app is cleared, the backstop stays quiet.
+    assert.strictEqual(
+      await signed.afterAllArtifactBuild(macBuild).then(() => null, (e) => e),
+      null,
+      'the backstop fired after an app was cleared'
+    );
+    console.log('  ok  backstop quiet once an app is cleared');
   } else {
     console.log('  --  skipped stapled-app check (no stapled build in dist/)');
   }

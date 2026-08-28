@@ -75,6 +75,10 @@ loadNotarizeCredentials();
 // Opt out deliberately (local test builds): OPENSHORTS_SKIP_NOTARIZE=1.
 const notarizeSkipped = process.env.OPENSHORTS_SKIP_NOTARIZE === '1';
 
+// Apps the afterSign guard has cleared. Read by the afterAllArtifactBuild
+// backstop below — afterSign does NOT always run (see there).
+const verifiedApps = new Set();
+
 // electron-builder calls this for each target platform+arch, so both are
 // authoritative; the env var is only a fallback for direct/manual invocations.
 const stageFor = (platform, arch) => {
@@ -208,6 +212,7 @@ module.exports = {
   // warning.
   afterSign: async (context) => {
     if (context.electronPlatformName !== 'darwin') return;
+    verifiedApps.add(context.appOutDir);
     const appPath = path.join(
       context.appOutDir,
       `${context.packager.appInfo.productFilename}.app`
@@ -228,6 +233,36 @@ module.exports = {
       );
     }
     console.log(`  • notarization ticket stapled  app=${path.basename(appPath)}`);
+  },
+
+  // Backstop: afterSign is NOT guaranteed to run.
+  //
+  // electron-builder calls doSignAfterPack only `if (sign)`, and inside it
+  // calls the afterSign hook only `if (didSign)` — otherwise it logs
+  // `skipping "afterSign" hook as no signing occurred` and carries on
+  // (platformPackager.js). So with CSC_IDENTITY_AUTO_DISCOVERY=false, or no
+  // Developer ID cert in the login keychain, macOS artifacts are still
+  // produced and the guard above never fires. That is the same silent failure
+  // this change exists to remove, one level up.
+  //
+  // This hook always runs, so it fails the build when macOS artifacts were
+  // produced and no app was ever cleared.
+  afterAllArtifactBuild: async (buildResult) => {
+    const builtMac = [...buildResult.platformToTargets.keys()].some(
+      (platform) => platform.name === 'mac'
+    );
+    if (!builtMac || notarizeSkipped) return [];
+    if (verifiedApps.size === 0) {
+      throw new Error(
+        'macOS artifacts were built but the notarization guard never ran.\n' +
+          'electron-builder skips the afterSign hook when signing did not happen — ' +
+          'look for `skipping "afterSign" hook as no signing occurred` in the log.\n' +
+          'Usual causes: CSC_IDENTITY_AUTO_DISCOVERY=false, or no "Developer ID Application" ' +
+          'certificate in the login keychain.\n' +
+          'For a deliberately unsigned local build, set OPENSHORTS_SKIP_NOTARIZE=1.'
+      );
+    }
+    return [];
   },
 
   beforePack: async (context) => {
