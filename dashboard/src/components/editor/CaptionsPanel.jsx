@@ -609,7 +609,7 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
                         />
                         <div>
                             <span className="block text-[11px] text-muted mb-1.5">Punctuation</span>
-                            <Toggle value={st.punctuation !== false} onChange={(v) => setStyle({ punctuation: v })} />
+                            <Toggle value={st.punctuation === true} onChange={(v) => setStyle({ punctuation: v })} />
                         </div>
                         <div>
                             <span className="block text-[11px] text-muted mb-1.5">Word stacking</span>

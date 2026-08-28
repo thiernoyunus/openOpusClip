@@ -703,7 +703,9 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           const highlighted = word.highlight === true;
           const forceHighlight = highlighted && !isActive && frame >= wordStartFrame;
           const text =
-            style.punctuation === false
+            // Off by default: captions read cleaner without trailing periods and
+            // commas, and that is what people want the moment they turn them on.
+            style.punctuation !== true
               ? word.text.replace(/[.,!?;:…؟،؛۔]+$/u, "")
               : word.text;
           // Inline keeps the emoji baked into the word; above/below are rendered

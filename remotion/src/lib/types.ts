@@ -173,7 +173,7 @@ export interface SubtitleStyle {
   captionAnimation?: SubtitleEntrance;
   /** Per-word entrance/accent animation, separate from template highlighting. */
   wordAnimation?: SubtitleWordAnimation;
-  /** When false, trailing punctuation is stripped from displayed words. */
+  /** Trailing punctuation is stripped unless this is explicitly true. */
   punctuation?: boolean;
   /** Per-template tunables (e.g. typewriter/matrix speed), keyed by control. */
   effectParams?: Record<string, number>;
