@@ -33,6 +33,51 @@
 // assembled or smoke-tested from macOS. See .github/workflows/desktop-windows.yml.
 
 const path = require('node:path');
+const fs = require('node:fs');
+const { execFileSync } = require('node:child_process');
+
+// Feed electron-builder's BUILT-IN notarization from electron/.env.
+//
+// electron-builder notarizes and staples the .app during packing (macPackager
+// notarizeIfProvided -> @electron/notarize, which staples), i.e. BEFORE the
+// .dmg and .zip are built from it. That ordering is the whole point: every
+// artifact then carries the ticket, and latest-mac.yml is generated from the
+// final files.
+//
+// It reads process.env only, and its password variable is
+// APPLE_APP_SPECIFIC_PASSWORD. electron/.env uses the shorter
+// APP_SPECIFIC_PASSWORD (scripts/notarize.js reads that name), so without this
+// mapping electron-builder finds no credentials, logs "skipped macOS
+// notarization", and happily ships unstapled artifacts. 1.0.17 was built that
+// way and needed the DMGs notarized by hand afterwards.
+const DEFAULT_TEAM_ID = '257JN3YM2Y';
+
+const loadNotarizeCredentials = () => {
+  const envPath = path.join(__dirname, '.env');
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/);
+      if (!m) continue;
+      const [, key, rawValue] = m;
+      if (process.env[key]) continue; // a real env var always wins
+      process.env[key] = rawValue.trim().replace(/^["']|["']$/g, '');
+    }
+  }
+  // Map .env's name onto the one electron-builder actually reads.
+  if (!process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APP_SPECIFIC_PASSWORD) {
+    process.env.APPLE_APP_SPECIFIC_PASSWORD = process.env.APP_SPECIFIC_PASSWORD;
+  }
+  if (!process.env.APPLE_TEAM_ID) process.env.APPLE_TEAM_ID = DEFAULT_TEAM_ID;
+};
+
+loadNotarizeCredentials();
+
+// Opt out deliberately (local test builds): OPENSHORTS_SKIP_NOTARIZE=1.
+const notarizeSkipped = process.env.OPENSHORTS_SKIP_NOTARIZE === '1';
+
+// Apps the afterSign guard has cleared. Read by the afterAllArtifactBuild
+// backstop below — afterSign does NOT always run (see there).
+const verifiedApps = new Set();
 
 // electron-builder calls this for each target platform+arch, so both are
 // authoritative; the env var is only a fallback for direct/manual invocations.
@@ -157,6 +202,69 @@ module.exports = {
   // Swap in the correct stage before each target is packed. electron-builder
   // reads extraResources per-target, so mutating it here is what makes a single
   // `--arm64 --x64` invocation bundle the right runtime in each .app.
+  // Refuse to ship a macOS build that was not notarized.
+  //
+  // The failure this guards is SILENT: with no credentials electron-builder
+  // logs one "skipped macOS notarization" line among thousands and produces
+  // artifacts that look fine. Every Mac then shows "Apple cannot check it for
+  // malicious software" on first open. Asking the .app directly is the same
+  // question a user's Mac asks, so it cannot pass while users would see a
+  // warning.
+  afterSign: async (context) => {
+    if (context.electronPlatformName !== 'darwin') return;
+    verifiedApps.add(context.appOutDir);
+    const appPath = path.join(
+      context.appOutDir,
+      `${context.packager.appInfo.productFilename}.app`
+    );
+    if (notarizeSkipped) {
+      console.log(`  • notarization SKIPPED by OPENSHORTS_SKIP_NOTARIZE — do not release this build`);
+      return;
+    }
+    try {
+      execFileSync('xcrun', ['stapler', 'validate', appPath], { stdio: 'pipe' });
+    } catch {
+      throw new Error(
+        `${path.basename(appPath)} has no stapled notarization ticket.\n` +
+          'electron-builder logs this as a one-line "skipped macOS notarization" warning ' +
+          'and keeps going, so check the log for it.\n' +
+          'Usual cause: APPLE_ID / APP_SPECIFIC_PASSWORD missing from electron/.env.\n' +
+          'For a deliberately unnotarized local build, set OPENSHORTS_SKIP_NOTARIZE=1.'
+      );
+    }
+    console.log(`  • notarization ticket stapled  app=${path.basename(appPath)}`);
+  },
+
+  // Backstop: afterSign is NOT guaranteed to run.
+  //
+  // electron-builder calls doSignAfterPack only `if (sign)`, and inside it
+  // calls the afterSign hook only `if (didSign)` — otherwise it logs
+  // `skipping "afterSign" hook as no signing occurred` and carries on
+  // (platformPackager.js). So with CSC_IDENTITY_AUTO_DISCOVERY=false, or no
+  // Developer ID cert in the login keychain, macOS artifacts are still
+  // produced and the guard above never fires. That is the same silent failure
+  // this change exists to remove, one level up.
+  //
+  // This hook always runs, so it fails the build when macOS artifacts were
+  // produced and no app was ever cleared.
+  afterAllArtifactBuild: async (buildResult) => {
+    const builtMac = [...buildResult.platformToTargets.keys()].some(
+      (platform) => platform.name === 'mac'
+    );
+    if (!builtMac || notarizeSkipped) return [];
+    if (verifiedApps.size === 0) {
+      throw new Error(
+        'macOS artifacts were built but the notarization guard never ran.\n' +
+          'electron-builder skips the afterSign hook when signing did not happen — ' +
+          'look for `skipping "afterSign" hook as no signing occurred` in the log.\n' +
+          'Usual causes: CSC_IDENTITY_AUTO_DISCOVERY=false, or no "Developer ID Application" ' +
+          'certificate in the login keychain.\n' +
+          'For a deliberately unsigned local build, set OPENSHORTS_SKIP_NOTARIZE=1.'
+      );
+    }
+    return [];
+  },
+
   beforePack: async (context) => {
     // Use builder-util's own enum->name mapping rather than comparing the
     // numeric Arch value by hand (ia32=0, x64=1, armv7l=2, arm64=3).

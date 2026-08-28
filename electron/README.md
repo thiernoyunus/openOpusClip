@@ -196,10 +196,11 @@ accident, so they're worth knowing:
 If you add a Python dependency that ships a new kind of binary, check it still
 gets signed rather than skipped.
 
-To notarize as well — Apple's scan, which removes the "unidentified developer"
-warning entirely — create an app-specific password at
-[appleid.apple.com](https://appleid.apple.com/account/manage), put it in
-`electron/.env` (git-ignored), and run the notarize step on the built app:
+Notarization — Apple's scan, which removes the "unidentified developer"
+warning entirely — **runs automatically as part of packaging**. Create an
+app-specific password at
+[appleid.apple.com](https://appleid.apple.com/account/manage) and put it in
+`electron/.env` (git-ignored):
 
 ```bash
 # electron/.env
@@ -207,17 +208,24 @@ APPLE_ID="you@example.com"
 APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
 ```
 
+`electron-builder.js` loads that file and maps it onto the variable names
+electron-builder reads (`APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`), so
+`npm run package:both` notarizes and staples the `.app` **before** it builds
+the DMG and the zip. Order matters: every artifact then carries the ticket, and
+`latest-mac.yml` is generated from the final files.
+
+> Release 1.0.17 predates this. electron-builder found no credentials (the
+> `.env` name differs from the one it reads), logged a single
+> `skipped macOS notarization` line, and produced unstapled artifacts. The DMGs
+> had to be notarized by hand afterwards — which rewrites them, so the
+> `latest-mac.yml` checksums and DMG blockmaps had to be regenerated too.
+
+An `afterSign` hook now fails the build if the `.app` has no stapled ticket, so
+that cannot happen silently again. For a deliberately unnotarized local build:
+
 ```bash
-# Notarize the installer people actually download (recommended).
-node electron/scripts/notarize.js electron/dist/openOpusClip-<version>-<arch>.dmg
-
-# With no argument it picks the most recent .dmg in dist/.
-node electron/scripts/notarize.js
+OPENSHORTS_SKIP_NOTARIZE=1 npm run package:arm64
 ```
-
-Passing a `.app` also works — the script zips it first, because Apple's notary
-service only accepts `.zip`, `.pkg`, or `.dmg`. Notarizing the DMG is usually
-what you want, since that is the file being distributed.
 
 Confirm it worked (this is the check that reflects what a user's Mac does):
 
@@ -225,6 +233,17 @@ Confirm it worked (this is the check that reflects what a user's Mac does):
 spctl -a -vvv /Volumes/openOpusClip*/openOpusClip.app
 #   -> accepted
 #      source=Notarized Developer ID
+```
+
+`electron/scripts/notarize.js` still exists as a **rescue tool** for an
+already-built artifact — use it only to repair a build that shipped without
+notarization. It runs after packaging, so it can staple a DMG but never the
+zip the updater installs from; prefer the automatic path above.
+
+```bash
+# Rescue only. Regenerate latest-mac.yml checksums + the DMG blockmap after,
+# because stapling rewrites the file.
+node electron/scripts/notarize.js electron/dist/openOpusClip-<version>-<arch>.dmg
 ```
 
 Set `CSC_IDENTITY_AUTO_DISCOVERY=false` to deliberately build unsigned.
@@ -238,9 +257,10 @@ The app icon lives at `electron/build/icon.png`, `icon.icns` (macOS) and
 
 ### First launch notes
 
-- A signed but **not yet notarized** build still shows a warning on first open.
+- A signed but **not yet notarized** build shows a warning on first open.
   Right-click the app and choose **Open**, then confirm — once per machine.
-  Notarizing (above) removes this step for everyone who downloads it.
+  Packaging notarizes automatically, so this should only appear for builds made
+  with `OPENSHORTS_SKIP_NOTARIZE=1`.
 - Your videos, uploads, and settings live in
   `~/Library/Application Support/openOpusClip` (output/, uploads/, hf-cache/).
   Deleting the app does not delete these.
