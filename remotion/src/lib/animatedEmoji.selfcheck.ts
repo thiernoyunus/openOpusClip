@@ -1,6 +1,6 @@
 /**
  * Tiny assert-based self-check for the animated-emoji lookup. No framework.
- * Run: `node remotion/src/lib/animatedEmoji.selfcheck.ts` (Node >= 22 strips the types).
+ * Run: `node remotion/src/lib/animatedEmoji.selfcheck.ts` (Node >= 22.18 strips the types on its own; 22.6-22.17 need --experimental-strip-types).
  */
 import assert from "node:assert";
 import {

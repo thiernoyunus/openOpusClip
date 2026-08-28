@@ -836,7 +836,10 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
               const itemStyle = emojiItemStyle(style, emojiPlacement as "above-word" | "below-word", emojiAnimation, frame, fps);
               const slug = animated ? animatedSlug(char) : null;
               return slug ? (
-                <AnimatedEmojiItem key={k} char={char} slug={slug} itemStyle={itemStyle} />
+                // Keyed by slug as well as position: when the emoji in this
+                // slot changes, the item starts fresh instead of keeping the
+                // previous one's artwork (or its failure to load).
+                <AnimatedEmojiItem key={`${slug}:${k}`} char={char} slug={slug} itemStyle={itemStyle} />
               ) : (
                 <span key={k} style={itemStyle}>
                   {char}

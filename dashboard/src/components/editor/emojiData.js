@@ -70,11 +70,17 @@ function matchesEmoji(emoji, q) {
 export function filterEmojiCategories(query) {
     const q = query.trim().toLowerCase();
     if (!q) return EMOJI_CATEGORIES;
-    const byName = EMOJI_CATEGORIES
-        .map((category) => ({ ...category, emojis: category.emojis.filter((e) => matchesEmoji(e, q)) }))
+    // Two ways to match, and both count. Emoji whose own words match come
+    // first; then, if the category itself is what you asked for ("flag",
+    // "food"), the rest of that category follows. Most emoji have no words of
+    // their own — 262 of the 266 flags, for one — so matching on words alone
+    // would hide nearly every country flag from a search for "flag".
+    return EMOJI_CATEGORIES
+        .map((category) => {
+            const named = category.emojis.filter((e) => matchesEmoji(e, q));
+            if (!category.keywords.includes(q)) return { ...category, emojis: named };
+            const rest = category.emojis.filter((e) => !matchesEmoji(e, q));
+            return { ...category, emojis: [...named, ...rest] };
+        })
         .filter((category) => category.emojis.length > 0);
-    if (byName.length > 0) return byName;
-    // Nothing matched by name — fall back to whole categories whose keywords
-    // match, so emoji we have no words for (most flags) stay findable.
-    return EMOJI_CATEGORIES.filter((category) => category.keywords.includes(q));
 }
