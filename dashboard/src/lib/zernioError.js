@@ -1,12 +1,18 @@
 // The backend passes Zernio's error body through verbatim inside FastAPI's
 // `detail` string ("Zernio API error: {...}"), so the raw JSON has to be dug
 // back out here to say what actually went wrong.
-export function readZernioError(detail, platform) {
+export function parseZernioError(detail) {
   const start = typeof detail === 'string' ? detail.indexOf('{') : -1;
-  let body = null;
-  if (start !== -1) {
-    try { body = JSON.parse(detail.slice(start)); } catch { /* not JSON, fall through */ }
+  if (start === -1) return null;
+  try {
+    return JSON.parse(detail.slice(start));
+  } catch {
+    return null; // not JSON
   }
+}
+
+export function readZernioError(detail, platform) {
+  const body = parseZernioError(detail);
 
   if (body?.code === 'PAYMENT_REQUIRED') {
     const limit = body.details?.free_tier_account_limit ?? 2;
@@ -45,6 +51,13 @@ if (import.meta.url === `file://${globalThis.process?.argv?.[1]}`) {
 
   const missing = readZernioError(undefined, 'threads');
   assert(missing.message.includes('threads'), 'survives a missing detail');
+
+  const parsed = parseZernioError(
+    'Zernio API error: {"code":"PAYMENT_REQUIRED","reason":"free_tier_exceeded"}',
+  );
+  assert(parsed.code === 'PAYMENT_REQUIRED', 'parses the Zernio code');
+  assert(parsed.reason === 'free_tier_exceeded', 'parses the Zernio reason');
+  assert(parseZernioError('Service unavailable') === null, 'returns null for non-JSON');
 
   console.log('zernioError self-check passed');
 }

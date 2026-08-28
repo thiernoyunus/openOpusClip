@@ -308,7 +308,7 @@ export async function submitFeedback(properties = {}) {
   }));
 }
 
-export function captureError(error, { area = 'renderer' } = {}) {
+export function captureError(error, { area = 'renderer', ...context } = {}) {
   if (!initialized) return;
   if (error && typeof error === 'object') {
     if (capturedErrors.has(error)) return;
@@ -317,7 +317,15 @@ export function captureError(error, { area = 'renderer' } = {}) {
   const safeArea = safeContextValue(area);
   const fingerprint = `${safeArea}:${safeContextValue(error?.name || 'Error')}:${scrubText(error?.message || error || 'Error')}`;
   if (wasRecentlyCaptured(fingerprint)) return;
-  posthog.captureException(error, { area: safeArea });
+  // Forward any extra context (e.g. an upstream error `code`) so a captured
+  // exception carries its cause instead of collapsing into one fingerprint.
+  // beforeSend still scrubs every value before it leaves the app.
+  const properties = { area: safeArea };
+  for (const [key, value] of Object.entries(context)) {
+    if (value == null) continue;
+    properties[safeContextValue(key)] = safeContextValue(value);
+  }
+  posthog.captureException(error, properties);
 }
 
 export function analyticsEnabled() {
