@@ -90,3 +90,43 @@ def upload_job_artifacts(directory, job_id):
             s3_key = f"{job_id}/{filename}"
             upload_file_to_s3(file_path, bucket_name, s3_key)
 
+
+def delete_job_files(job_id, filenames):
+    """
+    Delete specific files of a job from the bucket (keys are "<job_id>/<name>",
+    the same layout upload_job_artifacts writes).
+
+    Returns (deleted, failed). Both are 0 when S3 is not configured — callers
+    use that to tell "nothing to do" apart from "the backup is still there".
+    """
+    if not job_id or not filenames:
+        return 0, 0
+    s3_client = _s3_client()
+    if s3_client is None:
+        return 0, 0
+
+    bucket_name = os.environ.get('AWS_S3_BUCKET', 'openshorts-clips')
+    deleted = failed = 0
+    for filename in filenames:
+        try:
+            s3_client.delete_object(Bucket=bucket_name, Key=f"{job_id}/{filename}")
+            deleted += 1
+        except Exception as e:
+            print(f"⚠️  S3 delete failed for {job_id}/{filename}: {e}")
+            failed += 1
+    return deleted, failed
+
+
+def upload_job_file(job_id, file_path):
+    """
+    Re-upload one file of a job, overwriting its backup copy. Used to keep the
+    backup honest after a change on disk (e.g. a clip was deleted, so the
+    project metadata no longer lists it).
+
+    Returns True when it went up, False when S3 is not configured or the
+    upload failed.
+    """
+    if not job_id or not file_path or not os.path.exists(file_path):
+        return False
+    bucket_name = os.environ.get('AWS_S3_BUCKET', 'openshorts-clips')
+    return bool(upload_file_to_s3(file_path, bucket_name, f"{job_id}/{os.path.basename(file_path)}"))

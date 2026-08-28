@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Calendar, Clock, Play, ArrowUp, ArrowDown, FileText, Crop, Flame } from 'lucide-react';
+import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Calendar, Clock, Play, ArrowUp, ArrowDown, FileText, Crop, Flame, Check, Trash2 } from 'lucide-react';
 import { getApiUrl } from '../config';
 import { captureError, track } from '../analytics';
 import RemotionPreview from './RemotionPreview';
@@ -46,9 +46,11 @@ const YT_VISIBILITIES = [
     { value: 'private', label: 'Private' },
 ];
 
-export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], onPlay, onPause, openIndex, setOpenIndex, totalClips: _totalClips, onEdit, framingVersion = 0 }) {
+export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], onPlay, onPause, openIndex, setOpenIndex, totalClips: _totalClips, onEdit, framingVersion = 0, scheduled = false, onScheduled, picked = false, onTogglePick, onDelete }) {
     const isOpen = openIndex === index;
     const [showModal, setShowModal] = useState(false);
+    const [confirmDelete, setConfirmDelete] = useState(false);
+    const [deleting, setDeleting] = useState(false);
     const [playing, setPlaying] = useState(false);
     const [captions, setCaptions] = useState([]);
     const videoRef = React.useRef(null);
@@ -393,6 +395,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             }
 
             setPostResult({ success: true, msg: isScheduling ? "Scheduled successfully!" : "Posted successfully!" });
+            if (onScheduled) onScheduled();
             track('social_post_completed', { mode: isScheduling ? 'schedule' : 'post', source: 'clip_card', platform_count: platformCount, platforms: _platforms });
             setTimeout(() => {
                 setShowModal(false);
@@ -462,7 +465,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             {/* Compact grid card */}
             <div data-tour="clip-card" className="group flex flex-col animate-[fadeIn_0.4s_ease-out]">
                 <div
-                    className="relative aspect-[9/16] rounded-xl overflow-hidden bg-black border border-edge cursor-pointer"
+                    className={`relative aspect-[9/16] rounded-xl overflow-hidden bg-black border cursor-pointer ${picked ? 'border-viral' : scheduled ? 'border-emerald-500/50' : 'border-edge'}`}
                     onClick={() => { if (!playing) setOpenIndex(index); }}
                 >
                     {playing && useFramingPreview ? (
@@ -491,9 +494,20 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                         onEnded={() => { setPlaying(false); if (videoRef.current) videoRef.current.currentTime = 0; }}
                     />
                     )}
-                    <span className="absolute top-2 left-2 bg-black/65 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">Clip {index + 1}</span>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onTogglePick && onTogglePick(); }}
+                        disabled={!onTogglePick}
+                        aria-pressed={picked}
+                        aria-label={`${picked ? 'Unpick' : 'Pick'} clip ${index + 1} for scheduling`}
+                        title={picked ? 'Picked for scheduling' : 'Pick for scheduling'}
+                        className={`absolute top-2 left-2 flex items-center gap-1.5 text-[10px] font-medium pl-1 pr-1.5 py-0.5 rounded transition-colors ${picked ? 'bg-viral text-black' : 'bg-black/65 text-white hover:bg-black/85'}`}
+                    >
+                        <span className={`size-3.5 rounded-[3px] border flex items-center justify-center ${picked ? 'bg-black/20 border-black/30' : 'border-white/50'}`}>
+                            <Check size={9} className={picked ? 'opacity-100' : 'opacity-0'} />
+                        </span>
+                        Clip {index + 1}
+                    </button>
                     <span className="absolute top-2 right-2 bg-black/65 text-white text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums">{fmtTime(durSec)}</span>
-                    {hasScore && <div className="absolute bottom-2 left-2"><ScoreBadge score={viralityScore} box /></div>}
 
                     {!playing && (
                         <div className="absolute inset-0 flex items-center justify-center bg-black/10 group-hover:bg-black/25 transition-colors pointer-events-none">
@@ -509,10 +523,44 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
                 </div>
 
+                {confirmDelete && (
+                    <div className="mt-2 p-2.5 rounded-lg border border-red-500/40 bg-red-500/10 animate-[fadeIn_0.15s_ease-out]">
+                        <p className="text-[11px] text-red-200 leading-snug">
+                            Delete clip {index + 1}? The video file goes too{scheduled ? ', though anything already scheduled still goes out' : ''}. This can't be undone.
+                        </p>
+                        <div className="flex items-center gap-1.5 mt-2">
+                            <button
+                                onClick={async (e) => {
+                                    e.stopPropagation();
+                                    setDeleting(true);
+                                    await onDelete();
+                                    setDeleting(false);
+                                    setConfirmDelete(false);
+                                }}
+                                disabled={deleting}
+                                className="flex items-center gap-1.5 text-[11px] text-red-200 border border-red-500/40 hover:bg-red-500/20 rounded-md px-2.5 py-1 transition-colors disabled:opacity-50"
+                            >
+                                {deleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />} Delete
+                            </button>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }}
+                                disabled={deleting}
+                                className="text-[11px] text-muted hover:text-fg border border-edge hover:bg-white/5 rounded-md px-2.5 py-1 transition-colors disabled:opacity-50"
+                            >
+                                Keep it
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 <h3 className="ph-mask mt-2.5 text-sm font-medium text-fg leading-snug line-clamp-2 cursor-pointer hover:text-white" onClick={() => setOpenIndex(index)} title="Open clip">
                     {title}
                 </h3>
                 <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    {hasScore && <ScoreBadge score={viralityScore} />}
+                    {scheduled && (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 rounded"><Calendar size={10} /> Scheduled</span>
+                    )}
                     {clip.viral_hook_text && (
                         <span className="inline-flex items-center gap-1 text-[10px] text-muted bg-surface2 border border-edge px-1.5 py-0.5 rounded"><Wand2 size={10} /> Hook</span>
                     )}
@@ -528,6 +576,16 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     >
                         {isRendering ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
                     </button>
+                    {onDelete && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
+                            title="Delete this clip"
+                            aria-label={`Delete clip ${index + 1}`}
+                            className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-red-300 hover:bg-white/5 transition-colors"
+                        >
+                            <Trash2 size={15} />
+                        </button>
+                    )}
                 </div>
             </div>
 

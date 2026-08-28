@@ -5,6 +5,7 @@ import threading
 import json
 import shutil
 import glob
+import re
 import signal
 import time
 import asyncio
@@ -19,7 +20,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Hea
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from s3_uploader import upload_job_artifacts
+from s3_uploader import upload_job_artifacts, delete_job_files, upload_job_file
 import transcription
 from transcription import WHISPER_MODELS
 
@@ -1029,6 +1030,112 @@ async def delete_job(job_id: str):
         pass
     return {"success": True, "removed": removed, "cancelled": cancelled}
 
+def _clip_file_names(output_dir: str, base_name: str, clip_number: int, clip: dict) -> list:
+    """Every file in a job folder that belongs to one clip: the clip itself, its
+    editor source, its framing, any rendered version, uploaded audio or assets.
+
+    Matching is on the "<base>_clip_<n>" stem followed by a non-digit (or the
+    end), so clip 1 never picks up clip 10's files. The clip's own URLs are
+    added on top, in case an edit renamed something off the pattern."""
+    names = set()
+    stem = f"{base_name}_clip_{clip_number}"
+    pattern = re.compile(rf"^{re.escape(stem)}(\D.*)?$")
+    try:
+        for name in os.listdir(output_dir):
+            if pattern.match(name):
+                names.add(name)
+    except OSError:
+        pass
+    for key in ("video_url", "source_url", "framing_url"):
+        url = clip.get(key)
+        if isinstance(url, str) and "/" in url:
+            names.add(unquote(url.rsplit("/", 1)[-1]))
+    # Never step outside the job folder, whatever a persisted URL claims.
+    return sorted(n for n in names if n and os.path.basename(n) == n)
+
+
+@app.delete("/api/jobs/{job_id}/clips/{clip_index}")
+async def delete_clip(job_id: str, clip_index: int):
+    """Permanently delete ONE clip: its files on disk, its backup copies in S3,
+    and its entry in the project.
+
+    The clip's SLOT is kept (as a tombstone) instead of closing the gap: the
+    posting service, the editor and the browser all refer to a clip by its
+    position, so renumbering the survivors would quietly point them at the
+    wrong video."""
+    if not _safe_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job id")
+
+    if job_id not in jobs:
+        snap = _load_persisted_result(job_id)
+        if snap is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        jobs[job_id] = {"status": snap.get("status", "completed"), "logs": [], "result": snap.get("result")}
+
+    result = jobs[job_id].get("result") or {}
+    clips = result.get("clips")
+    if not isinstance(clips, list) or not (0 <= clip_index < len(clips)):
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    clip = clips[clip_index] or {}
+    if clip.get("deleted"):
+        return {"success": True, "already_deleted": True, "removed_files": 0,
+                "s3_deleted": 0, "s3_failed": 0}
+
+    output_dir = os.path.join(OUTPUT_DIR, job_id)
+    meta_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
+    base_name = os.path.basename(meta_files[0]).replace("_metadata.json", "") if meta_files else None
+
+    names = _clip_file_names(output_dir, base_name, clip_index + 1, clip) if base_name else []
+
+    # 1. Files on disk.
+    out_root = os.path.abspath(output_dir)
+    removed = 0
+    for name in names:
+        path = os.path.abspath(os.path.join(output_dir, name))
+        if os.path.commonpath([out_root, path]) != out_root or not os.path.isfile(path):
+            continue
+        try:
+            os.remove(path)
+            removed += 1
+        except OSError:
+            pass
+
+    # 2. The metadata file is the durable record — a "more clips" run rebuilds
+    #    the project from it, so the tombstone has to live there too.
+    if meta_files:
+        try:
+            with open(meta_files[0]) as f:
+                data = json.load(f)
+            shorts = data.get("shorts") or []
+            if 0 <= clip_index < len(shorts) and isinstance(shorts[clip_index], dict):
+                shorts[clip_index]["deleted"] = True
+                tmp = meta_files[0] + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp, meta_files[0])
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+
+    # 3. In-memory + snapshot.
+    clips[clip_index] = {"deleted": True}
+    _persist_result(job_id)
+
+    # 4. Backup copies. Deleting means deleting everywhere, so a failure here
+    #    is reported rather than swallowed — the caller tells the user. The
+    #    project's metadata is backed up too, so push the tombstoned version up
+    #    as well — otherwise the backup still lists a clip that is gone.
+    s3_deleted, s3_failed = await asyncio.to_thread(delete_job_files, job_id, names)
+    # upload_job_file is a no-op when no bucket is configured.
+    for path in filter(None, [meta_files[0] if meta_files else None,
+                              os.path.join(output_dir, "result.json")]):
+        if os.path.isfile(path):
+            await asyncio.to_thread(upload_job_file, job_id, path)
+
+    return {"success": True, "removed_files": removed,
+            "s3_deleted": s3_deleted, "s3_failed": s3_failed}
+
+
 # --- Generate more clips (post-hoc, on a COMPLETED job) ---------------------
 def _recover_aspect_ratio(output_dir: str) -> str:
     """Recover the project's output aspect ratio from an existing clip's
@@ -1120,6 +1227,10 @@ def _merge_more_clips(job_id: str, output_dir: str, meta_path: str, scratch_dir:
     if job is not None:
         clips = []
         for i, clip in enumerate(data["shorts"]):
+            if clip.get("deleted"):
+                # A deleted clip keeps its slot so nothing after it is renumbered.
+                clips.append({"deleted": True})
+                continue
             clip_filename = f"{base_name}_clip_{i + 1}.mp4"
             clip["video_url"] = _video_url(job_id, clip_filename)
             _attach_editor_urls(clip, job_id, output_dir, base_name, i + 1)
