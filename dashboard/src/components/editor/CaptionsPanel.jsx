@@ -663,11 +663,13 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
                                 value={st.emojiStyle ?? 'native'}
                                 onChange={(v) => setStyle({ emojiStyle: v })}
                             />
-                            {st.emojiStyle === 'animated' && (
+                            {/* Only the hint you can act on. The rest (credit, the
+                                fallback for un-animated emoji) lives in the picker
+                                and the README so this panel stays scannable. */}
+                            {st.emojiStyle === 'animated' &&
+                                (st.emojiPlacement ?? 'above-word') === 'inline' && (
                                 <p className="mt-1.5 text-[11px] text-muted leading-snug">
-                                    {(st.emojiPlacement ?? 'above-word') === 'inline'
-                                        ? 'Inline emoji stay as plain characters — switch placement to Above or Below to see them move.'
-                                        : 'Emoji Google hasn\u2019t animated stay as plain characters. Artwork: Google Noto Emoji (CC BY 4.0).'}
+                                    Inline emoji don\u2019t move. Use Above or Below.
                                 </p>
                             )}
                         </div>

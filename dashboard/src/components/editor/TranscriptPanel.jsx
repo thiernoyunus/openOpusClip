@@ -4,7 +4,7 @@ import { EDITOR_FPS } from './EditorCanvas';
 import { wordSourceToOutput, sourceToOutputAll } from '@remotion-src/lib/edl';
 import { detectFillerCuts, detectPauseCuts, visibleTranscriptPauses } from './speechCleanup';
 import { filterEmojiCategories } from './emojiData';
-import { searchAnimatedEmoji } from '@remotion-src/lib/animatedEmoji';
+import { searchAnimatedEmoji, webpUrl } from '@remotion-src/lib/animatedEmoji';
 
 const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three', four: 'Four' };
 
@@ -322,9 +322,12 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         () => (emojiAnimated ? [] : filterEmojiCategories(emojiQuery)),
         [emojiQuery, emojiAnimated],
     );
-    // ponytail: buttons show the plain character, not the artwork — the only
-    // size Google serves is 512px (~190KB each), so a grid of 881 would pull
-    // ~170MB. The animation shows in the caption preview the moment you pick.
+    // Buttons show the real moving artwork, not the plain character: Google's
+    // design often differs from the system emoji, so a character preview would
+    // hand you something that looks nothing like what lands on the caption.
+    // ponytail: 512px is the only size Google serves (~190KB), so these load
+    // lazily — only what's on screen is fetched. Serve smaller copies ourselves
+    // if scrolling the full list ever feels heavy.
     const animatedEmojis = useMemo(
         () => (emojiAnimated ? searchAnimatedEmoji(emojiQuery) : []),
         [emojiQuery, emojiAnimated],
@@ -801,7 +804,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                         </div>
                         {emojiAnimated && (
                             <p className="mb-2 text-[11px] text-muted">
-                                Animated emoji only — {animatedEmojis.length} of these move. Google Noto Emoji (CC BY 4.0).
+                                Animated only · {animatedEmojis.length}
                             </p>
                         )}
                         <div className="overflow-y-auto custom-scrollbar pr-1 max-h-[46vh] space-y-3">
@@ -817,9 +820,17 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                                 e.preventDefault();
                                             }}
                                             onClick={() => insertEmoji(char)}
-                                            className="size-10 rounded-md text-2xl leading-none flex items-center justify-center hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300/60"
+                                            className="size-10 rounded-md flex items-center justify-center hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300/60"
                                         >
-                                            {char}
+                                            <img
+                                                src={webpUrl(slug)}
+                                                alt={char}
+                                                loading="lazy"
+                                                decoding="async"
+                                                width={32}
+                                                height={32}
+                                                className="size-8 object-contain"
+                                            />
                                         </button>
                                     ))}
                                 </div>

@@ -100,7 +100,9 @@ function emojiItemStyle(
   const size = style.emojiSize ?? 1;
   // Entrance is anchored to the block start (frame 0 of the block Sequence) so
   // every emoji is up for the whole time the caption line is on screen.
-  const introFrames = Math.max(1, Math.round(0.25 * fps));
+  // Half a second. The old 0.25s was over before the eye caught it, which made
+  // every motion preset read as "no animation at all".
+  const introFrames = Math.max(1, Math.round(0.5 * fps));
   const p = interpolate(frame, [0, introFrames], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
