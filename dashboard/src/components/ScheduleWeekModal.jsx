@@ -233,7 +233,8 @@ function PlatformIcon({ platform }) {
 
 export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zernioKey, socialAccounts = [], onViewCalendar, scheduledIndexes = [], onScheduled }) {
     const [timezone, setTimezone] = useState(detectTimezone);
-    const [times, setTimes] = useState(DEFAULT_TIMES); // one clip goes out at each time, every day
+    // One post a day to start with — "Add time" is how you ask for more.
+    const [times, setTimes] = useState([DEFAULT_TIMES[0]]); // one clip goes out at each time, every day
     const [startOffset, setStartOffset] = useState(1); // days from today
     const [overrides, setOverrides] = useState({});    // clipIndex -> { date, time }
     const [openRow, setOpenRow] = useState(null);      // clipIndex whose editor is expanded
