@@ -708,7 +708,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                 return (
                                     <div
                                         key={clipIndex}
-                                        className={`rounded-lg border transition-colors ${!slot ? 'border-edge bg-surface2/40' : slot.isPast ? 'border-red-500/30 bg-red-500/5' : isLate ? 'border-amber-500/30 bg-amber-500/5' : isOpen_ ? 'border-viral/40 bg-surface2' : 'border-edge bg-surface2 hover:border-white/20'}`}
+                                        className={`rounded-lg border transition-colors ${!slot ? 'border-edge bg-surface2' : slot.isPast ? 'border-red-500/30 bg-red-500/5' : isLate ? 'border-amber-500/30 bg-amber-500/5' : isOpen_ ? 'border-viral/40 bg-surface2' : 'border-edge bg-surface2 hover:border-white/20'}`}
                                     >
                                         <div className="flex items-stretch">
                                         <button
@@ -727,7 +727,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                             type="button"
                                             onClick={() => slot && setOpenRow(isOpen_ ? null : clipIndex)}
                                             disabled={scheduling || !slot}
-                                            className={`flex-1 min-w-0 flex items-center gap-3 p-3 text-left disabled:cursor-default ${slot ? '' : 'opacity-50'}`}
+                                            className="flex-1 min-w-0 flex items-center gap-3 p-3 text-left disabled:cursor-default"
                                         >
                                             <div className="w-14 shrink-0 text-center">
                                             {slot ? (<>
@@ -735,7 +735,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                                 <div className="text-lg font-semibold text-fg leading-tight tabular-nums">{parseDayKey(slot.date).getDate()}</div>
                                                 <div className="text-[10px] text-muted">{MONTHS[parseDayKey(slot.date).getMonth()]}</div>
                                             </>) : (
-                                                <div className="text-[10px] text-muted uppercase">Skipped</div>
+                                                <div className="text-sm text-zinc-600">&mdash;</div>
                                             )}
                                             </div>
 
@@ -760,9 +760,11 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                                 <div className="text-[11px] text-muted truncate">
                                                     <span className="ph-mask">{clip?.video_title_for_youtube_short || 'Viral Short'}</span>
                                                 </div>
-                                                <div className="text-[11px] text-muted mt-0.5 tabular-nums">
-                                                    {slot ? `${formatDayKey(slot.date, todayInTz)} · ${slot.time}` : 'Not in this batch'}
-                                                </div>
+                                                {slot && (
+                                                    <div className="text-[11px] text-muted mt-0.5 tabular-nums">
+                                                        {formatDayKey(slot.date, todayInTz)} &middot; {slot.time}
+                                                    </div>
+                                                )}
                                             </div>
 
                                             <div className="shrink-0">
