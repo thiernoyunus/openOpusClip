@@ -13,10 +13,12 @@ export type AnimatedEmoji = {
   char: string;
   /** Space-separated search words, e.g. "fire burn lit". */
   search: string;
+  /** Google's own grouping, e.g. "Smileys and emotions". */
+  category: string;
 };
 
 export const ANIMATED_EMOJI: AnimatedEmoji[] = rows.map(
-  ([slug, char, search]) => ({ slug, char, search })
+  ([slug, char, search, category]) => ({ slug, char, search, category })
 );
 
 // Some emoji are written with a trailing variation selector (U+FE0F) and some
@@ -47,4 +49,21 @@ export function searchAnimatedEmoji(query: string): AnimatedEmoji[] {
   const q = query.trim().toLowerCase();
   if (!q) return ANIMATED_EMOJI;
   return ANIMATED_EMOJI.filter((e) => e.char === q || e.search.includes(q));
+}
+
+/**
+ * Matching animated emoji grouped under Google's categories, in the order they
+ * first appear (Google sorts by popularity, so the useful ones lead). The emoji
+ * picker shows these alongside the plain-character categories.
+ */
+export function searchAnimatedEmojiByCategory(
+  query: string
+): { label: string; emojis: AnimatedEmoji[] }[] {
+  const groups = new Map<string, AnimatedEmoji[]>();
+  for (const e of searchAnimatedEmoji(query)) {
+    const bucket = groups.get(e.category);
+    if (bucket) bucket.push(e);
+    else groups.set(e.category, [e]);
+  }
+  return [...groups].map(([label, emojis]) => ({ label, emojis }));
 }

@@ -9,6 +9,7 @@ import {
   lottieUrl,
   webpUrl,
   searchAnimatedEmoji,
+  searchAnimatedEmojiByCategory,
 } from "./animatedEmoji.ts";
 
 // The generated snapshot is non-empty and every row is well formed.
@@ -16,6 +17,7 @@ assert.ok(ANIMATED_EMOJI.length > 800, "expected ~880 animated emoji");
 for (const e of ANIMATED_EMOJI) {
   assert.match(e.slug, /^[0-9a-f]+(_[0-9a-f]+)*$/, `bad slug: ${e.slug}`);
   assert.ok(e.char.length > 0 && e.search.length > 0, `bad row: ${e.slug}`);
+  assert.ok(e.category.length > 0, `missing category: ${e.slug}`);
 }
 
 // Known-animated emoji resolve to their CDN slug.
@@ -51,4 +53,19 @@ assert.strictEqual(searchAnimatedEmoji("zzzznope").length, 0);
 // Pasting the emoji itself into the search box finds it.
 assert.ok(searchAnimatedEmoji("🔥").some((e) => e.char === "🔥"), "pasted emoji should match");
 
-console.log(`animatedEmoji selfcheck OK (${ANIMATED_EMOJI.length} emoji)`);
+// Grouping keeps every emoji and never invents an empty category.
+const grouped = searchAnimatedEmojiByCategory("");
+assert.strictEqual(
+  grouped.reduce((n, g) => n + g.emojis.length, 0),
+  ANIMATED_EMOJI.length
+);
+assert.ok(grouped.every((g) => g.emojis.length > 0), "empty category group");
+assert.ok(grouped.length > 1, "expected several categories");
+// A narrow query still groups, and drops categories with no match.
+const fireGroups = searchAnimatedEmojiByCategory("fire");
+assert.ok(fireGroups.length >= 1 && fireGroups.every((g) => g.emojis.length > 0));
+assert.strictEqual(searchAnimatedEmojiByCategory("zzzznope").length, 0);
+
+console.log(
+  `animatedEmoji selfcheck OK (${ANIMATED_EMOJI.length} emoji, ${grouped.length} categories)`
+);

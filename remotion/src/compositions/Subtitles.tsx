@@ -690,13 +690,14 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   // word. Inline emojis stay baked into the word text below. "none" → no emojis.
   const emojiPlacement = style.emojiPlacement ?? "above-word";
   const emojiAnimation = style.emojiAnimation ?? "pop-in";
-  // "animated" swaps the character for Google's artwork where one exists;
-  // anything unanimated keeps rendering as the plain character.
-  const emojiAnimated = style.emojiStyle === "animated";
   const wordAnimation = style.wordAnimation ?? "none";
+  // Animated is chosen per emoji in the picker, so each one carries its own
+  // flag. Anything Google has no artwork for stays the plain character.
   const lineEmojis =
     emojiPlacement === "above-word" || emojiPlacement === "below-word"
-      ? block.words.filter((w) => w.emoji).map((w) => w.emoji as string)
+      ? block.words
+          .filter((w) => w.emoji)
+          .map((w) => ({ char: w.emoji as string, animated: w.emojiAnimated === true }))
       : [];
 
   // Block entrance animation (layers over the per-word template animation).
@@ -825,14 +826,14 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
         })}
         {lineEmojis.length > 0 && (
           <div style={emojiRowStyle(style, emojiPlacement as "above-word" | "below-word")}>
-            {lineEmojis.map((emoji, k) => {
+            {lineEmojis.map(({ char, animated }, k) => {
               const itemStyle = emojiItemStyle(style, emojiPlacement as "above-word" | "below-word", emojiAnimation, frame, fps);
-              const slug = emojiAnimated ? animatedSlug(emoji) : null;
+              const slug = animated ? animatedSlug(char) : null;
               return slug ? (
-                <AnimatedEmojiItem key={k} char={emoji} slug={slug} itemStyle={itemStyle} />
+                <AnimatedEmojiItem key={k} char={char} slug={slug} itemStyle={itemStyle} />
               ) : (
                 <span key={k} style={itemStyle}>
-                  {emoji}
+                  {char}
                 </span>
               );
             })}

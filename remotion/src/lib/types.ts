@@ -11,6 +11,12 @@ export interface CaptionWord {
    */
   emoji?: string;
   /**
+   * Draw this emoji as Google's animated artwork rather than the plain
+   * character. Chosen per emoji in the picker; ignored when Google has no
+   * animation for it.
+   */
+  emojiAnimated?: boolean;
+  /**
    * When true, this word is a highlighted keyword and gets the active-word
    * highlight treatment even when it isn't the word currently being spoken.
    * Optional → existing caption data is unaffected (back-compat).
@@ -60,8 +66,6 @@ export interface CaptionPlacement {
   maxWidthPct?: number;
 }
 export type SubtitleEmojiPlacement = "none" | "above-word" | "below-word" | "inline";
-/** Draw emoji as the plain character, or as Google's animated artwork. */
-export type SubtitleEmojiStyle = "native" | "animated";
 export type SubtitleEmojiAnimation =
   | "none"
   | "scale"
@@ -195,11 +199,6 @@ export interface SubtitleStyle {
   emojiPlacement?: SubtitleEmojiPlacement;
   /** Emoji motion preset. Defaults to pop-in. Applies to both emoji styles. */
   emojiAnimation?: SubtitleEmojiAnimation;
-  /**
-   * Plain character or Google's animated artwork. Defaults to native. Emoji
-   * with no animated version fall back to the plain character on their own.
-   */
-  emojiStyle?: SubtitleEmojiStyle;
   /** Emoji size multiplier relative to caption text. Defaults to 1. */
   emojiSize?: number;
   /**
@@ -495,6 +494,7 @@ export const captionWordSchema = z.object({
   startMs: z.number(),
   endMs: z.number(),
   emoji: z.string().optional(),
+  emojiAnimated: z.boolean().optional(),
   highlight: z.boolean().optional(),
   accentColor: z.string().optional(),
   language: z.string().optional(),
@@ -613,7 +613,6 @@ export const subtitleStyleSchema = z.object({
       "float",
     ])
     .optional(),
-  emojiStyle: z.enum(["native", "animated"]).optional(),
   emojiSize: z.number().min(0.5).max(4).optional(),
   emojiGap: z.number().min(0).max(1).optional(),
 });

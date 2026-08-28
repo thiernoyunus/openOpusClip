@@ -86,10 +86,6 @@ const EMOJI_PLACEMENTS = [
     { value: 'inline', label: 'Inline' },
     { value: 'none', label: 'Off' },
 ];
-const EMOJI_STYLES = [
-    { value: 'native', label: 'Regular' },
-    { value: 'animated', label: 'Animated' },
-];
 const EMOJI_ANIM_OPTIONS = [
     { v: 'none', l: 'None' },
     { v: 'scale', l: 'Scale' },
@@ -656,23 +652,9 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
 
                     {/* Emoji overlays */}
                     <div className="pt-2 border-t border-edge/60 space-y-3">
-                        <div>
-                            <span className="block text-[11px] text-muted mb-1.5">Emoji style</span>
-                            <Seg
-                                options={EMOJI_STYLES}
-                                value={st.emojiStyle ?? 'native'}
-                                onChange={(v) => setStyle({ emojiStyle: v })}
-                            />
-                            {/* Only the hint you can act on. The rest (credit, the
-                                fallback for un-animated emoji) lives in the picker
-                                and the README so this panel stays scannable. */}
-                            {st.emojiStyle === 'animated' &&
-                                (st.emojiPlacement ?? 'above-word') === 'inline' && (
-                                <p className="mt-1.5 text-[11px] text-muted leading-snug">
-                                    Inline emoji don\u2019t move. Use Above or Below.
-                                </p>
-                            )}
-                        </div>
+                        {/* Regular vs animated is chosen per emoji in the picker,
+                            not set here — one less place to go before you can see
+                            what you are picking. */}
                         <div>
                             <span className="block text-[11px] text-muted mb-1.5">Emoji placement</span>
                             <Seg

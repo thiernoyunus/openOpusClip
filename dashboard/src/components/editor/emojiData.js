@@ -1,3 +1,5 @@
+import { ANIMATED_EMOJI } from '@remotion-src/lib/animatedEmoji';
+
 export const EMOJI_CATEGORIES = [
     {
         label: 'Smileys & Emotion',
@@ -49,13 +51,30 @@ export const EMOJI_CATEGORIES = [
     emojis: category.emojis.split(/\s+/).filter(Boolean),
 }));
 
+// Google ships human search words for the ~880 emoji it animates ("fire burn
+// lit"). The same words describe the plain character, so we borrow them here
+// and get real per-emoji search on this side too.
+const WORDS_BY_CHAR = new Map();
+for (const { char, search } of ANIMATED_EMOJI) {
+    WORDS_BY_CHAR.set(char, search);
+    const bare = char.replace(/\uFE0F/g, '');
+    if (!WORDS_BY_CHAR.has(bare)) WORDS_BY_CHAR.set(bare, search);
+}
+
+function matchesEmoji(emoji, q) {
+    if (emoji === q) return true;
+    const words = WORDS_BY_CHAR.get(emoji) ?? WORDS_BY_CHAR.get(emoji.replace(/\uFE0F/g, ''));
+    return words ? words.includes(q) : false;
+}
+
 export function filterEmojiCategories(query) {
     const q = query.trim().toLowerCase();
     if (!q) return EMOJI_CATEGORIES;
-    return EMOJI_CATEGORIES
-        .map((category) => ({
-            ...category,
-            emojis: category.emojis.filter((emoji) => emoji.includes(q) || category.keywords.includes(q)),
-        }))
+    const byName = EMOJI_CATEGORIES
+        .map((category) => ({ ...category, emojis: category.emojis.filter((e) => matchesEmoji(e, q)) }))
         .filter((category) => category.emojis.length > 0);
+    if (byName.length > 0) return byName;
+    // Nothing matched by name — fall back to whole categories whose keywords
+    // match, so emoji we have no words for (most flags) stay findable.
+    return EMOJI_CATEGORIES.filter((category) => category.keywords.includes(q));
 }
