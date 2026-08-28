@@ -86,6 +86,10 @@ const EMOJI_PLACEMENTS = [
     { value: 'inline', label: 'Inline' },
     { value: 'none', label: 'Off' },
 ];
+const EMOJI_STYLES = [
+    { value: 'native', label: 'Regular' },
+    { value: 'animated', label: 'Animated' },
+];
 const EMOJI_ANIM_OPTIONS = [
     { v: 'none', l: 'None' },
     { v: 'scale', l: 'Scale' },
@@ -652,6 +656,21 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
 
                     {/* Emoji overlays */}
                     <div className="pt-2 border-t border-edge/60 space-y-3">
+                        <div>
+                            <span className="block text-[11px] text-muted mb-1.5">Emoji style</span>
+                            <Seg
+                                options={EMOJI_STYLES}
+                                value={st.emojiStyle ?? 'native'}
+                                onChange={(v) => setStyle({ emojiStyle: v })}
+                            />
+                            {st.emojiStyle === 'animated' && (
+                                <p className="mt-1.5 text-[11px] text-muted leading-snug">
+                                    {(st.emojiPlacement ?? 'above-word') === 'inline'
+                                        ? 'Inline emoji stay as plain characters — switch placement to Above or Below to see them move.'
+                                        : 'Emoji Google hasn\u2019t animated stay as plain characters. Artwork: Google Noto Emoji (CC BY 4.0).'}
+                                </p>
+                            )}
+                        </div>
                         <div>
                             <span className="block text-[11px] text-muted mb-1.5">Emoji placement</span>
                             <Seg

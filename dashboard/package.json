@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@posthog/react": "^1.10.3",
+    "@remotion/lottie": "^4.0.518",
     "@remotion/media": "^4.0.447",
     "@remotion/media-utils": "^4.0.447",
     "@remotion/player": "^4.0.447",

@@ -357,6 +357,12 @@ Docker also serves the dashboard at **`http://localhost:5175/#app`**.
 
 Contributions are welcome! Whether it's adding new AI models, improving the editor, or building new features — feel free to open a PR.
 
+## Credits
+
+Animated emoji artwork is [Google Noto Emoji](https://googlefonts.github.io/noto-emoji-animation/),
+used under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Regenerate the list of
+available animations with `node scripts/fetch-animated-emoji.mjs`.
+
 ## License
 
 MIT License. OpenShorts is yours to use, modify, and scale.

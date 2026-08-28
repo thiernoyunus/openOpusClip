@@ -4,6 +4,7 @@ import { EDITOR_FPS } from './EditorCanvas';
 import { wordSourceToOutput, sourceToOutputAll } from '@remotion-src/lib/edl';
 import { detectFillerCuts, detectPauseCuts, visibleTranscriptPauses } from './speechCleanup';
 import { filterEmojiCategories } from './emojiData';
+import { searchAnimatedEmoji } from '@remotion-src/lib/animatedEmoji';
 
 const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three', four: 'Four' };
 
@@ -314,7 +315,20 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         setEmojiOpen(false);
     }, [editingIndex, draft, onEditWord]);
 
-    const emojiCategories = useMemo(() => filterEmojiCategories(emojiQuery), [emojiQuery]);
+    // In animated mode the picker only offers emoji Google actually animates,
+    // so nobody picks one that silently falls back to the plain character.
+    const emojiAnimated = framing?.subtitles?.style?.emojiStyle === 'animated';
+    const emojiCategories = useMemo(
+        () => (emojiAnimated ? [] : filterEmojiCategories(emojiQuery)),
+        [emojiQuery, emojiAnimated],
+    );
+    // ponytail: buttons show the plain character, not the artwork — the only
+    // size Google serves is 512px (~190KB each), so a grid of 881 would pull
+    // ~170MB. The animation shows in the caption preview the moment you pick.
+    const animatedEmojis = useMemo(
+        () => (emojiAnimated ? searchAnimatedEmoji(emojiQuery) : []),
+        [emojiQuery, emojiAnimated],
+    );
 
     const insertEmoji = useCallback((emoji) => {
         if (editingIndex !== null) {
@@ -785,7 +799,31 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                 <X size={16} />
                             </button>
                         </div>
+                        {emojiAnimated && (
+                            <p className="mb-2 text-[11px] text-muted">
+                                Animated emoji only — {animatedEmojis.length} of these move. Google Noto Emoji (CC BY 4.0).
+                            </p>
+                        )}
                         <div className="overflow-y-auto custom-scrollbar pr-1 max-h-[46vh] space-y-3">
+                            {emojiAnimated && (
+                                <div className="grid grid-cols-9 gap-1.5">
+                                    {animatedEmojis.map(({ slug, char }) => (
+                                        <button
+                                            key={slug}
+                                            type="button"
+                                            data-emoji-choice={char}
+                                            onMouseDown={(e) => {
+                                                emojiInteractingRef.current = true;
+                                                e.preventDefault();
+                                            }}
+                                            onClick={() => insertEmoji(char)}
+                                            className="size-10 rounded-md text-2xl leading-none flex items-center justify-center hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300/60"
+                                        >
+                                            {char}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
                             {emojiCategories.map((category) => (
                                 <section key={category.label} data-emoji-category={category.label}>
                                     <div className="sticky top-0 z-10 inline-flex rounded-md bg-white px-3 py-1.5 text-sm font-medium text-zinc-950 shadow">
