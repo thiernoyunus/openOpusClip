@@ -13,6 +13,7 @@ import { getProjects, addProject, updateProject, removeProject, phaseFromLogs, t
 import { getApiUrl } from './config';
 import { captureError, track, trackPageview } from './analytics';
 import { getPhase, setPhase, armNext, runTourPhase, stopTour, startTourFromHome, APP_SUPPORT_INDEX } from './lib/platformTour.js';
+import { readZernioError } from './lib/zernioError';
 
 // Sidebar pieces live at module scope (not inside App) so React re-renders
 // don't remount them. A remount would orphan the tour's highlighted element
@@ -161,6 +162,9 @@ function App() {
   });
 
   const [socialAccounts, setSocialAccounts] = useState([]); // [{id, platform, username, displayName}]
+  const [socialError, setSocialError] = useState(null); // {message, link, linkLabel}
+  // Text size preference. `zoom` scales hardcoded px sizes too, which rem would miss.
+  const [uiScale, setUiScale] = useState(() => Number(localStorage.getItem('ui_scale_v1')) || 1);
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, processing, complete, error
@@ -519,6 +523,20 @@ function App() {
   }, [zernioKey]);
 
   useEffect(() => {
+    document.documentElement.style.zoom = uiScale === 1 ? '' : String(uiScale);
+    localStorage.setItem('ui_scale_v1', String(uiScale));
+  }, [uiScale]);
+
+  // Authorising happens in the system browser, so pick up the new account when
+  // the user comes back instead of making them hit Refresh.
+  useEffect(() => {
+    if (!zernioKey) return;
+    const onFocus = () => fetchSocialAccounts();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [zernioKey]);
+
+  useEffect(() => {
     if (sonioxKey) {
       localStorage.setItem('soniox_key_v1', encrypt(sonioxKey));
     } else {
@@ -702,16 +720,21 @@ function App() {
 
   const connectSocialAccount = async (platform) => {
     if (!zernioKey) return;
+    setSocialError(null);
     try {
       const res = await fetch(getApiUrl(`/api/social/connect/${platform}`), {
         headers: { 'X-Zernio-Key': zernioKey }
       });
       const data = await res.json();
-      if (!res.ok || !data.authUrl) throw new Error(data.detail || 'No auth URL returned');
+      if (!res.ok || !data.authUrl) {
+        setSocialError(readZernioError(data.detail, platform));
+        captureError(new Error(`social_connect_${platform}`), { area: 'social_connect', detail: data.detail });
+        return;
+      }
       window.open(data.authUrl, '_blank', 'noopener');
     } catch (e) {
       captureError(e, { area: 'social_connect' });
-      alert(`Could not start ${platform} connection: ${e.message}`);
+      setSocialError({ message: `Could not reach the server to start the ${platform} connection.`, link: null });
     }
   };
 
@@ -1190,13 +1213,33 @@ function App() {
 
           {/* View: Settings */}
           {activeTab === 'settings' && (
-            <div className="h-full overflow-y-auto p-8 max-w-2xl mx-auto animate-[fadeIn_0.3s_ease-out]">
+            <div className="h-full overflow-y-auto custom-scrollbar p-8 max-w-2xl mx-auto animate-[fadeIn_0.3s_ease-out]">
               <div className="flex items-center justify-between mb-8">
                 <h1 className="text-2xl font-bold">Settings</h1>
                 <div className="px-3 py-1 bg-green-500/10 border border-green-500/20 rounded-full text-[10px] text-green-400 font-medium flex items-center gap-2">
                   <Shield size={12} /> Privacy: keys only live in your browser (sent to backend just to process)
                 </div>
               </div>
+              <div className="glass-panel p-6 mb-8">
+                <h2 className="text-lg font-semibold mb-1">Text size</h2>
+                <p className="text-sm text-zinc-400 mb-4">Make everything in the app bigger if the default is hard to read.</p>
+                <div className="flex gap-2">
+                  {[['Default', 1], ['Large', 1.15], ['Extra large', 1.3]].map(([label, scale]) => (
+                    <button
+                      key={label}
+                      onClick={() => setUiScale(scale)}
+                      className={`px-4 py-2 rounded-lg border text-sm transition-colors ${
+                        uiScale === scale
+                          ? 'border-primary bg-primary/15 text-white'
+                          : 'border-white/10 text-zinc-400 hover:bg-white/5'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <KeyInput onKeySet={setApiKey} savedKey={apiKey} />
 
               <div data-tour="zernio-section" className="glass-panel p-6 mt-8">
@@ -1204,7 +1247,7 @@ function App() {
                   <h2 className="text-lg font-semibold">Social Integration</h2>
                   <span className="text-[10px] bg-zinc-500/10 border border-white/10 px-2 py-0.5 rounded text-zinc-400 uppercase tracking-wider">Optional</span>
                 </div>
-                <p className="text-xs text-zinc-500 mb-6 leading-relaxed">
+                <p className="text-sm text-zinc-400 mb-6 leading-relaxed">
                   Add a <strong>Zernio</strong> key only if you want to publish or schedule clips to TikTok, Instagram Reels, YouTube Shorts and more directly from OpenShorts.
                   Clip generation works without it.
                 </p>
@@ -1233,7 +1276,7 @@ function App() {
                         </button>
                       </div>
                       {socialAccounts.length === 0 ? (
-                        <p className="text-xs text-zinc-600">No accounts connected yet. Use the buttons below — a Zernio window opens to authorize the platform, then hit Refresh.</p>
+                        <p className="text-sm text-zinc-400">No accounts connected yet. Use the buttons below — your browser opens so you can authorize the platform, then come back here and the account shows up.</p>
                       ) : (
                         <div className="space-y-1.5">
                           {socialAccounts.map((acc) => (
@@ -1247,6 +1290,21 @@ function App() {
                               {acc.isActive && <Check size={12} className="text-green-400 ml-auto" />}
                             </div>
                           ))}
+                        </div>
+                      )}
+                      {socialError && (
+                        <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-sm text-amber-200">
+                          <p className="leading-relaxed">{socialError.message}</p>
+                          {socialError.link && (
+                            <a
+                              href={socialError.link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-block mt-2 underline text-amber-100"
+                            >
+                              {socialError.linkLabel || 'Open Zernio'} →
+                            </a>
+                          )}
                         </div>
                       )}
                       <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
@@ -1264,10 +1322,10 @@ function App() {
                     </div>
                   )}
 
-                  <p className="text-xs text-zinc-500 leading-relaxed">
+                  <p className="text-sm text-zinc-400 leading-relaxed">
                     Get your key at <a href="https://zernio.com" target="_blank" rel="noopener noreferrer" className="text-primary underline">zernio.com</a>.
                     <br />
-                    <span className="text-zinc-600 italic">
+                    <span className="text-zinc-400 italic">
                       Keys are only stored in your browser. They are sent to the backend only to process your request, never stored server-side.
                     </span>
                   </p>
@@ -1279,7 +1337,7 @@ function App() {
                   <h2 className="text-lg font-semibold">Transcription (Soniox)</h2>
                   <span className="text-[10px] bg-white/5 border border-white/5 px-2 py-0.5 rounded text-zinc-500 uppercase tracking-wider">Optional</span>
                 </div>
-                <p className="text-xs text-zinc-500 mb-6 leading-relaxed">
+                <p className="text-sm text-zinc-400 mb-6 leading-relaxed">
                   Use <strong>Soniox</strong> for transcription instead of the built-in Whisper.
                   It's especially good for <strong>mixed-language</strong> audio, when a speaker
                   switches between languages such as Arabic and English in the same video.
@@ -1308,7 +1366,7 @@ function App() {
                       Save
                     </button>
                   </div>
-                  <p className="text-xs text-zinc-500 leading-relaxed">
+                  <p className="text-sm text-zinc-400 leading-relaxed">
                     Get your API key from Soniox to enable multilingual transcription.
                     <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <a href="https://console.soniox.com/" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
@@ -1321,7 +1379,7 @@ function App() {
                       </a>
                     </div>
                     <br />
-                    <span className="text-zinc-600 italic">
+                    <span className="text-zinc-400 italic">
                       Keys are only stored in your browser. They are sent to the backend only to process your request, never stored server-side.
                     </span>
                   </p>

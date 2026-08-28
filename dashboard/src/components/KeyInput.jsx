@@ -25,7 +25,7 @@ export default function KeyInput({ onKeySet, savedKey }) {
                 </div>
                 <h2 className="text-lg font-semibold">Gemini API Key</h2>
             </div>
-            <p className="text-xs text-zinc-500 mb-4 -mt-2">
+            <p className="text-sm text-zinc-400 mb-4 -mt-2">
                 The AI that watches your video and finds the best moments — required to make clips.
             </p>
 
@@ -61,7 +61,7 @@ export default function KeyInput({ onKeySet, savedKey }) {
                     {isSaved ? <><Check size={18} /> Ready</> : 'Set Key'}
                 </button>
             </div>
-            <p className="mt-3 text-xs text-zinc-500">
+            <p className="mt-3 text-sm text-zinc-400">
                 Your key stays local. The app stores it in the browser and syncs it to your OS keychain for the local MCP.
                 <br />
                 <a
