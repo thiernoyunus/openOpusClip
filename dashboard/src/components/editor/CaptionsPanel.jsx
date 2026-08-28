@@ -5,6 +5,7 @@ import { CAPTION_TEMPLATES, resolveTemplateId, getCaptionTemplate } from '@remot
 import { SUBTITLE_FONTS } from '@remotion-src/lib/fonts';
 import { getApiUrl } from '../../config';
 import CaptionPreview from './CaptionPreview';
+import { DEFAULT_EMOJI_SIZE } from '@remotion-src/compositions/Subtitles';
 
 const POSITIONS = ['top', 'middle', 'bottom'];
 const HIGHLIGHTS = ['#FFDD00', '#3dd68c', '#FF5C5C', '#5CA8FF', '#00E5FF', '#FFD700', '#FFFFFF'];
@@ -652,6 +653,9 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
 
                     {/* Emoji overlays */}
                     <div className="pt-2 border-t border-edge/60 space-y-3">
+                        {/* Regular vs animated is chosen per emoji in the picker,
+                            not set here — one less place to go before you can see
+                            what you are picking. */}
                         <div>
                             <span className="block text-[11px] text-muted mb-1.5">Emoji placement</span>
                             <Seg
@@ -675,7 +679,7 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
                             </div>
                             <RangeRow
                                 label="Emoji size"
-                                value={st.emojiSize ?? 1}
+                                value={st.emojiSize ?? DEFAULT_EMOJI_SIZE}
                                 min={0.5}
                                 max={4}
                                 step={0.1}

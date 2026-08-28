@@ -14,6 +14,8 @@ import { groupCaptionsIntoBlocks, getActiveWordIndex } from "../lib/captions";
 import { dominantDir } from "../lib/rtl";
 import { getFontStack, captionFontFaces, BUNDLED_CAPTION_FONTS } from "../lib/fonts";
 import { getCaptionTemplate, resolveTemplateId } from "../lib/captionTemplates";
+import { Lottie, type LottieAnimationData } from "@remotion/lottie";
+import { animatedSlug, lottieUrl } from "../lib/animatedEmoji.ts";
 
 interface SubtitlesProps {
   config: SubtitleConfig;
@@ -61,6 +63,12 @@ function blockFilter(style: SubtitleStyle): string | undefined {
   return parts.length ? parts.join(" ") : undefined;
 }
 
+/**
+ * Emoji default to 2.5x the caption text. At 1x they read as punctuation next
+ * to the words instead of as a beat of their own.
+ */
+export const DEFAULT_EMOJI_SIZE = 2.5;
+
 // Above/below emojis are tied to the caption LINE, not a single word: every
 // emoji in the on-screen block shows centered above (or below) the line for the
 // block's full duration, so the viewer actually has time to register it. The row
@@ -95,10 +103,12 @@ function emojiItemStyle(
   frame: number,
   fps: number
 ): React.CSSProperties {
-  const size = style.emojiSize ?? 1;
+  const size = style.emojiSize ?? DEFAULT_EMOJI_SIZE;
   // Entrance is anchored to the block start (frame 0 of the block Sequence) so
   // every emoji is up for the whole time the caption line is on screen.
-  const introFrames = Math.max(1, Math.round(0.25 * fps));
+  // Half a second. The old 0.25s was over before the eye caught it, which made
+  // every motion preset read as "no animation at all".
+  const introFrames = Math.max(1, Math.round(0.5 * fps));
   const p = interpolate(frame, [0, introFrames], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
@@ -159,6 +169,70 @@ function emojiItemStyle(
     filter: "drop-shadow(0 3px 8px rgba(0,0,0,0.5))",
   };
 }
+
+// Google's animated emoji are Lottie files fetched from their font CDN. One
+// caption line can repeat the same emoji many times and every caption block
+// mounts fresh, so cache the fetch per URL for the life of the render.
+const lottieCache = new Map<string, Promise<LottieAnimationData>>();
+
+function loadLottie(url: string): Promise<LottieAnimationData> {
+  let pending = lottieCache.get(url);
+  if (!pending) {
+    pending = fetch(url).then((r) => {
+      if (!r.ok) throw new Error(`${url} -> HTTP ${r.status}`);
+      return r.json() as Promise<LottieAnimationData>;
+    });
+    lottieCache.set(url, pending);
+  }
+  return pending;
+}
+
+/**
+ * One emoji in the above/below row, drawn as Google's animated artwork.
+ * The wrapper keeps the user's motion preset (slide, pop, bounce...) so the
+ * emoji still enters the way the plain character would -- the Lottie loop just
+ * plays inside it. Falls back to the plain character if the artwork can't load,
+ * so a flaky network never leaves a hole in the captions.
+ */
+const AnimatedEmojiItem: React.FC<{
+  char: string;
+  slug: string;
+  itemStyle: React.CSSProperties;
+}> = ({ char, slug, itemStyle }) => {
+  const [data, setData] = useState<LottieAnimationData | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [handle] = useState(() => delayRender("animated-emoji"));
+  const url = lottieUrl(slug);
+
+  useEffect(() => {
+    let live = true;
+    loadLottie(url)
+      .then((json) => {
+        if (live) setData(json);
+      })
+      .catch(() => {
+        if (live) setFailed(true);
+      })
+      .finally(() => continueRender(handle));
+    return () => {
+      live = false;
+    };
+  }, [url, handle]);
+
+  if (failed || !data) {
+    // Before the artwork arrives (and forever, if it never does) the plain
+    // character holds the same slot, so the row never jumps.
+    return <span style={itemStyle}>{char}</span>;
+  }
+
+  // emojiItemStyle sizes the character via fontSize; artwork needs real pixels.
+  const px = (itemStyle.fontSize as number) ?? 32;
+  return (
+    <span style={itemStyle}>
+      <Lottie animationData={data} loop style={{ width: px, height: px }} />
+    </span>
+  );
+};
 
 function easeProgress(frame: number, frames: number): number {
   return interpolate(frame, [0, Math.max(1, frames)], [0, 1], {
@@ -623,9 +697,13 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   const emojiPlacement = style.emojiPlacement ?? "above-word";
   const emojiAnimation = style.emojiAnimation ?? "pop-in";
   const wordAnimation = style.wordAnimation ?? "none";
+  // Animated is chosen per emoji in the picker, so each one carries its own
+  // flag. Anything Google has no artwork for stays the plain character.
   const lineEmojis =
     emojiPlacement === "above-word" || emojiPlacement === "below-word"
-      ? block.words.filter((w) => w.emoji).map((w) => w.emoji as string)
+      ? block.words
+          .filter((w) => w.emoji)
+          .map((w) => ({ char: w.emoji as string, animated: w.emojiAnimated === true }))
       : [];
 
   // Block entrance animation (layers over the per-word template animation).
@@ -756,11 +834,20 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
         })}
         {lineEmojis.length > 0 && (
           <div style={emojiRowStyle(style, emojiPlacement as "above-word" | "below-word")}>
-            {lineEmojis.map((emoji, k) => (
-              <span key={k} style={emojiItemStyle(style, emojiPlacement as "above-word" | "below-word", emojiAnimation, frame, fps)}>
-                {emoji}
-              </span>
-            ))}
+            {lineEmojis.map(({ char, animated }, k) => {
+              const itemStyle = emojiItemStyle(style, emojiPlacement as "above-word" | "below-word", emojiAnimation, frame, fps);
+              const slug = animated ? animatedSlug(char) : null;
+              return slug ? (
+                // Keyed by slug as well as position: when the emoji in this
+                // slot changes, the item starts fresh instead of keeping the
+                // previous one's artwork (or its failure to load).
+                <AnimatedEmojiItem key={`${slug}:${k}`} char={char} slug={slug} itemStyle={itemStyle} />
+              ) : (
+                <span key={k} style={itemStyle}>
+                  {char}
+                </span>
+              );
+            })}
           </div>
         )}
       </div>

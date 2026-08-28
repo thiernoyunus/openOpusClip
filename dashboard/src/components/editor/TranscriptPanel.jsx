@@ -4,6 +4,7 @@ import { EDITOR_FPS } from './EditorCanvas';
 import { wordSourceToOutput, sourceToOutputAll } from '@remotion-src/lib/edl';
 import { detectFillerCuts, detectPauseCuts, visibleTranscriptPauses } from './speechCleanup';
 import { filterEmojiCategories } from './emojiData';
+import { searchAnimatedEmojiByCategory, webpUrl } from '@remotion-src/lib/animatedEmoji';
 
 const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three', four: 'Four' };
 
@@ -93,6 +94,9 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     const [selectedPause, setSelectedPause] = useState(null);
     const [emojiOpen, setEmojiOpen] = useState(false);
     const [emojiQuery, setEmojiQuery] = useState('');
+    // Caption index the picker writes to when it was opened from the toolbar
+    // rather than from an in-progress word edit.
+    const [emojiTarget, setEmojiTarget] = useState(null);
     const [cleanupOpen, setCleanupOpen] = useState(false);
     const [removeFillers, setRemoveFillers] = useState(true);
     const [removePauses, setRemovePauses] = useState(true);
@@ -311,22 +315,50 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         }
         emojiInteractingRef.current = false;
         setEditingIndex(null);
+        setEmojiTarget(null);
         setEmojiOpen(false);
     }, [editingIndex, draft, onEditWord]);
 
+    // Animated and regular live in the same picker, each under its own
+    // categories, so one search covers both and you can see which is which
+    // before you pick. Animated buttons show the real moving artwork — Google's
+    // design often differs from the system emoji, so a character preview would
+    // hand you something that looks nothing like what lands on the caption.
+    // ponytail: 512px is the only size Google serves (~190KB), so these load
+    // lazily — only what's on screen is fetched. Serve smaller copies ourselves
+    // if scrolling the full list ever feels heavy.
+    const animatedCategories = useMemo(
+        () => searchAnimatedEmojiByCategory(emojiQuery),
+        [emojiQuery],
+    );
     const emojiCategories = useMemo(() => filterEmojiCategories(emojiQuery), [emojiQuery]);
 
-    const insertEmoji = useCallback((emoji) => {
+    const insertEmoji = useCallback((emoji, animated) => {
+        const patch = { emoji, emojiAnimated: animated === true };
         if (editingIndex !== null) {
+            // Mid-edit: keep whatever text is in the box alongside the emoji.
             const text = draft.trim();
-            if (text) onEditWord(editingIndex, { text, emoji });
+            if (text) onEditWord(editingIndex, { ...patch, text });
+        } else if (emojiTarget !== null) {
+            // Opened straight from a selected word — no Edit step needed.
+            onEditWord(emojiTarget, patch);
         }
         setEditingIndex(null);
+        setEmojiTarget(null);
         setSel(null);
         setEmojiOpen(false);
         setEmojiQuery('');
         emojiInteractingRef.current = false;
-    }, [draft, editingIndex, onEditWord]);
+    }, [draft, editingIndex, emojiTarget, onEditWord]);
+
+    /** Open the picker for a word that is only selected, skipping edit mode. */
+    const openEmojiFor = useCallback((index) => {
+        setEmojiTarget(index);
+        setEditingIndex(null);
+        setEmojiQuery('');
+        setEmojiOpen(true);
+        emojiInteractingRef.current = true;
+    }, []);
 
     // Stable identity so memoized <Word> children don't re-render on every
     // frame just because the parent re-rendered. Reads sel via the functional
@@ -712,6 +744,18 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                             <Pencil size={13} /> Edit
                         </button>
                     )}
+                    {/* Emoji sits right next to Edit so adding one is a single
+                        click on the word, not click-word then Edit then emoji. */}
+                    {selCount === 1 && (
+                        <button
+                            data-toolbar-emoji=""
+                            onClick={() => openEmojiFor(selCaptionIndices[0])}
+                            title="Add an emoji to this word"
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-zinc-200 hover:bg-white/10 transition-colors"
+                        >
+                            <Smile size={13} /> Emoji
+                        </button>
+                    )}
                     <button
                         onClick={handleToggleCaption}
                         title={allHidden ? 'Show this caption again' : 'Hide the caption but keep the video'}
@@ -786,30 +830,81 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                             </button>
                         </div>
                         <div className="overflow-y-auto custom-scrollbar pr-1 max-h-[46vh] space-y-3">
-                            {emojiCategories.map((category) => (
-                                <section key={category.label} data-emoji-category={category.label}>
-                                    <div className="sticky top-0 z-10 inline-flex rounded-md bg-white px-3 py-1.5 text-sm font-medium text-zinc-950 shadow">
-                                        {category.label}
+                            {animatedCategories.length > 0 && (
+                                <>
+                                    <div className="sticky top-0 z-20 -mx-1 bg-[#0b0b0d] px-1 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-lime-300/80">
+                                        Animated
                                     </div>
-                                    <div className="mt-2 grid grid-cols-9 gap-1.5">
-                                        {category.emojis.map((emoji, index) => (
-                                            <button
-                                                key={`${category.label}-${emoji}-${index}`}
-                                                type="button"
-                                                data-emoji-choice={emoji}
-                                                onMouseDown={(e) => {
-                                                    emojiInteractingRef.current = true;
-                                                    e.preventDefault();
-                                                }}
-                                                onClick={() => insertEmoji(emoji)}
-                                                className="size-10 rounded-md text-2xl leading-none flex items-center justify-center hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300/60"
-                                            >
-                                                {emoji}
-                                            </button>
-                                        ))}
+                                    {animatedCategories.map((category) => (
+                                        <section key={`anim-${category.label}`} data-emoji-category={`Animated · ${category.label}`}>
+                                            <div className="inline-flex rounded-md bg-white px-3 py-1.5 text-sm font-medium text-zinc-950 shadow">
+                                                {category.label}
+                                            </div>
+                                            <div className="mt-2 grid grid-cols-9 gap-1.5">
+                                                {category.emojis.map(({ slug, char }) => (
+                                                    <button
+                                                        key={slug}
+                                                        type="button"
+                                                        data-emoji-choice={char}
+                                                        data-emoji-animated=""
+                                                        title={`${char} (animated)`}
+                                                        onMouseDown={(e) => {
+                                                            emojiInteractingRef.current = true;
+                                                            e.preventDefault();
+                                                        }}
+                                                        onClick={() => insertEmoji(char, true)}
+                                                        className="size-10 rounded-md flex items-center justify-center hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300/60"
+                                                    >
+                                                        <img
+                                                            src={webpUrl(slug)}
+                                                            alt={char}
+                                                            loading="lazy"
+                                                            decoding="async"
+                                                            width={32}
+                                                            height={32}
+                                                            className="size-8 object-contain"
+                                                        />
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </section>
+                                    ))}
+                                </>
+                            )}
+                            {emojiCategories.length > 0 && (
+                                <>
+                                    <div className="sticky top-0 z-20 -mx-1 bg-[#0b0b0d] px-1 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                                        Regular
                                     </div>
-                                </section>
-                            ))}
+                                    {emojiCategories.map((category) => (
+                                        <section key={`plain-${category.label}`} data-emoji-category={category.label}>
+                                            <div className="inline-flex rounded-md bg-white px-3 py-1.5 text-sm font-medium text-zinc-950 shadow">
+                                                {category.label}
+                                            </div>
+                                            <div className="mt-2 grid grid-cols-9 gap-1.5">
+                                                {category.emojis.map((emoji, index) => (
+                                                    <button
+                                                        key={`${category.label}-${emoji}-${index}`}
+                                                        type="button"
+                                                        data-emoji-choice={emoji}
+                                                        onMouseDown={(e) => {
+                                                            emojiInteractingRef.current = true;
+                                                            e.preventDefault();
+                                                        }}
+                                                        onClick={() => insertEmoji(emoji, false)}
+                                                        className="size-10 rounded-md text-2xl leading-none flex items-center justify-center hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300/60"
+                                                    >
+                                                        {emoji}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </section>
+                                    ))}
+                                </>
+                            )}
+                            {animatedCategories.length === 0 && emojiCategories.length === 0 && (
+                                <p className="py-6 text-center text-[12px] text-muted">No emoji match “{emojiQuery}”.</p>
+                            )}
                         </div>
                     </div>
                 </div>

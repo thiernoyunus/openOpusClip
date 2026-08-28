@@ -11,6 +11,12 @@ export interface CaptionWord {
    */
   emoji?: string;
   /**
+   * Draw this emoji as Google's animated artwork rather than the plain
+   * character. Chosen per emoji in the picker; ignored when Google has no
+   * animation for it.
+   */
+  emojiAnimated?: boolean;
+  /**
    * When true, this word is a highlighted keyword and gets the active-word
    * highlight treatment even when it isn't the word currently being spoken.
    * Optional → existing caption data is unaffected (back-compat).
@@ -191,9 +197,9 @@ export interface SubtitleStyle {
   glowIntensity?: number;
   /** Where word-attached emojis render. Defaults to above-word. */
   emojiPlacement?: SubtitleEmojiPlacement;
-  /** Native emoji motion preset. Defaults to pop-in. */
+  /** Emoji motion preset. Defaults to pop-in. Applies to both emoji styles. */
   emojiAnimation?: SubtitleEmojiAnimation;
-  /** Emoji size multiplier relative to caption text. Defaults to 1. */
+  /** Emoji size multiplier relative to caption text. Defaults to 2.5. */
   emojiSize?: number;
   /**
    * Gap between an above/below emoji and the caption word, as a fraction of the
@@ -488,6 +494,7 @@ export const captionWordSchema = z.object({
   startMs: z.number(),
   endMs: z.number(),
   emoji: z.string().optional(),
+  emojiAnimated: z.boolean().optional(),
   highlight: z.boolean().optional(),
   accentColor: z.string().optional(),
   language: z.string().optional(),

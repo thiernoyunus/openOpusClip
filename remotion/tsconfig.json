@@ -3,6 +3,9 @@
     "target": "ES2022",
     "module": "ES2022",
     "moduleResolution": "bundler",
+    // Generated data modules are imported with an explicit .ts extension so
+    // plain `node` can run the lib self-checks without a build step.
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "strict": true,
     "esModuleInterop": true,
