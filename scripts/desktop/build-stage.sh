@@ -174,6 +174,12 @@ log "Staging into: ${STAGE}"
 log "a. Building dashboard (Vite)"
 cd "${REPO_ROOT}/dashboard"
 [[ -d node_modules ]] || { info "installing dashboard deps..."; npm install; }
+# The dashboard bundles remotion source through the @remotion-src alias in
+# dashboard/vite.config.js, so remotion's own deps must be installed BEFORE the
+# Vite build, not later in step b. Without this a fresh clone fails with
+# "Rollup failed to resolve import @remotion/lottie"; a machine that happened to
+# have remotion/node_modules from earlier work built fine and hid the bug.
+[[ -d "${REPO_ROOT}/remotion/node_modules" ]] || { info "installing remotion deps..."; (cd "${REPO_ROOT}/remotion" && npm install); }
 # The desktop app always talks to the backend it starts itself on
 # 127.0.0.1:8000 — force a relative API base so a VITE_API_URL left over in
 # the shell or dashboard/.env can't get baked into the packaged dashboard.
@@ -186,8 +192,6 @@ info "dashboard -> ${STAGE}/dashboard"
 log "b. Building renderer (tsc) + prebuilding Remotion bundle"
 cd "${REPO_ROOT}/render-service"
 [[ -d node_modules ]] || { info "installing render-service deps..."; npm install; }
-# The remotion project needs its own deps installed for bundling.
-[[ -d "${REPO_ROOT}/remotion/node_modules" ]] || { info "installing remotion deps..."; (cd "${REPO_ROOT}/remotion" && npm install); }
 npm run build
 rm -rf "${STAGE}/render-service/dist"
 mkdir -p "${STAGE}/render-service"
