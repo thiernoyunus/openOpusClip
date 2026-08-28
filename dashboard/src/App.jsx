@@ -169,12 +169,12 @@ function App() {
   // Per-clip notes for the open project: already sent to the scheduler,
   // removed from the list, and ticked ready for the scheduler.
   const [scheduledClips, setScheduledClips] = useState([]);
-  const [hiddenClips, setHiddenClips] = useState([]);
   const [pickedClips, setPickedClips] = useState([]);
+  const [clipNotice, setClipNotice] = useState(null);
   useEffect(() => {
     setScheduledClips(getClipList(jobId, 'scheduled'));
-    setHiddenClips(getClipList(jobId, 'hidden'));
     setPickedClips(getClipList(jobId, 'picked'));
+    setClipNotice(null);
   }, [jobId]);
 
   const togglePickedClip = (i) => setPickedClips((cur) =>
@@ -187,11 +187,24 @@ function App() {
     setPickedClips(setClipList(jobId, 'picked', getClipList(jobId, 'picked').filter((x) => !indexes.includes(x))));
   };
 
-  // Removing a clip only takes it out of your list — nothing is deleted on the
-  // server, and "Undo" brings them all back.
-  const hideClip = (i) => {
-    setHiddenClips(addToClipList(jobId, 'hidden', [i]));
-    setPickedClips(setClipList(jobId, 'picked', getClipList(jobId, 'picked').filter((x) => x !== i)));
+  // Deleting is real: the clip's files go from the server (and from the S3
+  // backup when one is configured). The clip keeps its slot, so the clips
+  // after it are not renumbered.
+  const deleteClip = async (i) => {
+    try {
+      const res = await fetch(getApiUrl(`/api/jobs/${jobId}/clips/${i}`), { method: 'DELETE' });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setResults((r) => ({ ...r, clips: r.clips.map((c, idx) => (idx === i ? { deleted: true } : c)) }));
+      setPickedClips(setClipList(jobId, 'picked', getClipList(jobId, 'picked').filter((x) => x !== i)));
+      // The backup copy is part of "deleted" — say so when it did not go.
+      setClipNotice(data.s3_failed > 0
+        ? `Clip ${i + 1} deleted here, but ${data.s3_failed} backup file${data.s3_failed === 1 ? '' : 's'} could not be removed from S3.`
+        : null);
+    } catch (e) {
+      setClipNotice(`Could not delete clip ${i + 1}: ${e.message}`);
+      captureError(e, { area: 'clip_delete' });
+    }
   };
   const [sortBy, setSortBy] = useState('score'); // 'score' | 'order'
   const [logs, setLogs] = useState([]);
@@ -1132,6 +1145,10 @@ function App() {
     );
   };
 
+  // Deleted clips keep their slot in results.clips, so "how many are left"
+  // is a count of the living ones.
+  const liveClipCount = (results?.clips || []).filter((c) => !c.deleted).length;
+
   const activeProject = projects.find((p) => p.id === jobId);
   const activeDuration = formatJobDuration(
     activeProject?.durationSeconds ??
@@ -1438,8 +1455,8 @@ function App() {
                 <h2 data-tour="results-header" className="text-sm font-medium text-fg flex items-center gap-2">
                   <Sparkles size={16} className="text-viral" /> Generated shorts
                 </h2>
-                {results?.clips?.length > 0 && (
-                  <span className="text-xs bg-surface2 text-muted px-2 py-0.5 rounded-full">{results.clips.length}</span>
+                {liveClipCount > 0 && (
+                  <span className="text-xs bg-surface2 text-muted px-2 py-0.5 rounded-full">{liveClipCount}</span>
                 )}
                 {results?.cost_analysis && (
                   <span className="text-xs bg-viral/10 border border-viral/20 text-viral px-2 py-0.5 rounded-full" title={`Input: ${results.cost_analysis.input_tokens} | Output: ${results.cost_analysis.output_tokens}`}>
@@ -1452,14 +1469,11 @@ function App() {
                     {generatingMore ? 'Finding more clips…' : 'Still processing…'}
                   </span>
                 )}
-                {hiddenClips.length > 0 && (
-                  <span className="flex items-center gap-1.5 text-xs bg-surface2 border border-edge text-muted px-2 py-0.5 rounded-full">
-                    {hiddenClips.length} removed
-                    <button
-                      onClick={() => setHiddenClips(setClipList(jobId, 'hidden', []))}
-                      className="text-fg hover:text-viral underline underline-offset-2"
-                    >
-                      Undo
+                {clipNotice && (
+                  <span className="flex items-center gap-1.5 text-xs bg-amber-500/10 border border-amber-500/30 text-amber-300 px-2 py-0.5 rounded-full">
+                    {clipNotice}
+                    <button onClick={() => setClipNotice(null)} className="text-amber-200 hover:text-fg" aria-label="Dismiss">
+                      <X size={11} />
                     </button>
                   </span>
                 )}
@@ -1469,7 +1483,7 @@ function App() {
                   </span>
                 )}
                 <div className="ml-auto flex items-center gap-2">
-                  {results?.clips?.length > 1 && (
+                  {liveClipCount > 1 && (
                     <div className="flex items-center rounded-lg border border-edge overflow-hidden text-xs">
                       <button
                         onClick={() => setSortBy('score')}
@@ -1500,7 +1514,7 @@ function App() {
                   >
                     <Terminal size={14} /> Logs
                   </button>
-                  {results?.clips?.length > 1 && (
+                  {liveClipCount > 1 && (
                     <button
                       onClick={() => setShowScheduleWeek(true)}
                       className="flex items-center gap-1.5 px-2.5 py-1.5 bg-viral/15 hover:bg-viral/25 border border-viral/40 text-viral rounded-lg text-xs font-medium transition-colors"
@@ -1517,7 +1531,7 @@ function App() {
                   <div className="grid gap-x-4 gap-y-6 pb-10 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
                     {results.clips
                       .map((clip, i) => ({ clip, i }))
-                      .filter(({ i }) => !hiddenClips.includes(i))
+                      .filter(({ clip }) => !clip.deleted)
                       .sort((a, b) => sortBy === 'score'
                         ? (Number(b.clip.virality_score) || 0) - (Number(a.clip.virality_score) || 0)
                         : a.i - b.i)
@@ -1536,7 +1550,7 @@ function App() {
                         onScheduled={() => markScheduled([i])}
                         picked={pickedClips.includes(i)}
                         onTogglePick={() => togglePickedClip(i)}
-                        onHide={() => hideClip(i)}
+                        onDelete={() => deleteClip(i)}
                         onPlay={(time) => handleClipPlay(time)}
                         onPause={handleClipPause}
                         openIndex={openClip}
@@ -1673,7 +1687,6 @@ function App() {
         socialAccounts={socialAccounts}
         onViewCalendar={() => setActiveTab('calendar')}
         scheduledIndexes={scheduledClips}
-        hiddenIndexes={hiddenClips}
         preselected={pickedClips}
         onScheduled={markScheduled}
       />

@@ -1,7 +1,6 @@
 // Per-project notes about individual clips, kept in the browser:
 //   scheduled — already posted or booked, so the grid can mark them and the
 //               week scheduler can leave them out of the next batch
-//   hidden    — clips you removed from the grid because you don't want them
 //   picked    — clips you ticked, ready to carry into the scheduler
 // Clips are referenced by their position in the project's clip list, which is
 // also what the server expects, so nothing is ever renumbered.
@@ -30,7 +29,7 @@ function write(all) {
   }
 }
 
-/** Clip indexes on one of a job's lists ('scheduled' | 'hidden' | 'picked'), ascending. */
+/** Clip indexes on one of a job's lists ('scheduled' | 'picked'), ascending. */
 export function getClipList(jobId, kind) {
   if (!jobId) return [];
   const list = readAll()[jobId]?.[kind];

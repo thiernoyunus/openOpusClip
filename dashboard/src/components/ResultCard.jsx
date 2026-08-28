@@ -46,9 +46,11 @@ const YT_VISIBILITIES = [
     { value: 'private', label: 'Private' },
 ];
 
-export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], onPlay, onPause, openIndex, setOpenIndex, totalClips: _totalClips, onEdit, framingVersion = 0, scheduled = false, onScheduled, picked = false, onTogglePick, onHide }) {
+export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], onPlay, onPause, openIndex, setOpenIndex, totalClips: _totalClips, onEdit, framingVersion = 0, scheduled = false, onScheduled, picked = false, onTogglePick, onDelete }) {
     const isOpen = openIndex === index;
     const [showModal, setShowModal] = useState(false);
+    const [confirmDelete, setConfirmDelete] = useState(false);
+    const [deleting, setDeleting] = useState(false);
     const [playing, setPlaying] = useState(false);
     const [captions, setCaptions] = useState([]);
     const videoRef = React.useRef(null);
@@ -521,6 +523,36 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
 
                 </div>
 
+                {confirmDelete && (
+                    <div className="mt-2 p-2.5 rounded-lg border border-red-500/40 bg-red-500/10 animate-[fadeIn_0.15s_ease-out]">
+                        <p className="text-[11px] text-red-200 leading-snug">
+                            Delete clip {index + 1}? The video file goes too{scheduled ? ', though anything already scheduled still goes out' : ''}. This can't be undone.
+                        </p>
+                        <div className="flex items-center gap-1.5 mt-2">
+                            <button
+                                onClick={async (e) => {
+                                    e.stopPropagation();
+                                    setDeleting(true);
+                                    await onDelete();
+                                    setDeleting(false);
+                                    setConfirmDelete(false);
+                                }}
+                                disabled={deleting}
+                                className="flex items-center gap-1.5 text-[11px] text-red-200 border border-red-500/40 hover:bg-red-500/20 rounded-md px-2.5 py-1 transition-colors disabled:opacity-50"
+                            >
+                                {deleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />} Delete
+                            </button>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }}
+                                disabled={deleting}
+                                className="text-[11px] text-muted hover:text-fg border border-edge hover:bg-white/5 rounded-md px-2.5 py-1 transition-colors disabled:opacity-50"
+                            >
+                                Keep it
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 <h3 className="ph-mask mt-2.5 text-sm font-medium text-fg leading-snug line-clamp-2 cursor-pointer hover:text-white" onClick={() => setOpenIndex(index)} title="Open clip">
                     {title}
                 </h3>
@@ -544,11 +576,11 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     >
                         {isRendering ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
                     </button>
-                    {onHide && (
+                    {onDelete && (
                         <button
-                            onClick={(e) => { e.stopPropagation(); onHide(); }}
-                            title="Remove this clip from the list"
-                            aria-label={`Remove clip ${index + 1} from the list`}
+                            onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
+                            title="Delete this clip"
+                            aria-label={`Delete clip ${index + 1}`}
                             className="w-7 h-7 rounded-md flex items-center justify-center text-muted hover:text-red-300 hover:bg-white/5 transition-colors"
                         >
                             <Trash2 size={15} />
