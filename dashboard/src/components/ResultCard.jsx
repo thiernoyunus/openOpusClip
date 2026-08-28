@@ -817,9 +817,18 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                                         <div className="text-[11px] font-bold text-muted uppercase tracking-wide mb-1.5">Reel cover</div>
                                                         <p className="text-[11px] text-muted leading-snug">
                                                             Your edit hasn&rsquo;t been exported yet, so we can&rsquo;t show you which frame
-                                                            would land where. Instagram will use the first frame. Export the edit to pick
-                                                            a cover.
+                                                            would land where. Export it now to pick a cover &mdash; otherwise we export it
+                                                            when you publish and Instagram uses the first frame.
                                                         </p>
+                                                        {/* ponytail: publishing exports anyway; this just does it early so the picker can appear. */}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => { ensureRenderedFile().catch(() => {}); }}
+                                                            disabled={isRendering}
+                                                            className="mt-2 text-[11px] text-muted hover:text-fg underline underline-offset-2 disabled:opacity-50"
+                                                        >
+                                                            {isRendering ? `Exporting…${renderPct ? ` ${renderPct}` : ''}` : 'Export now'}
+                                                        </button>
                                                     </div>
                                                 )}
 
