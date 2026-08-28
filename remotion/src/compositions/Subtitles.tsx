@@ -63,6 +63,12 @@ function blockFilter(style: SubtitleStyle): string | undefined {
   return parts.length ? parts.join(" ") : undefined;
 }
 
+/**
+ * Emoji default to 2.5x the caption text. At 1x they read as punctuation next
+ * to the words instead of as a beat of their own.
+ */
+export const DEFAULT_EMOJI_SIZE = 2.5;
+
 // Above/below emojis are tied to the caption LINE, not a single word: every
 // emoji in the on-screen block shows centered above (or below) the line for the
 // block's full duration, so the viewer actually has time to register it. The row
@@ -97,7 +103,7 @@ function emojiItemStyle(
   frame: number,
   fps: number
 ): React.CSSProperties {
-  const size = style.emojiSize ?? 1;
+  const size = style.emojiSize ?? DEFAULT_EMOJI_SIZE;
   // Entrance is anchored to the block start (frame 0 of the block Sequence) so
   // every emoji is up for the whole time the caption line is on screen.
   // Half a second. The old 0.25s was over before the eye caught it, which made

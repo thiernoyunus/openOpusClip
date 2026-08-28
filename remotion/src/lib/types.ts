@@ -199,7 +199,7 @@ export interface SubtitleStyle {
   emojiPlacement?: SubtitleEmojiPlacement;
   /** Emoji motion preset. Defaults to pop-in. Applies to both emoji styles. */
   emojiAnimation?: SubtitleEmojiAnimation;
-  /** Emoji size multiplier relative to caption text. Defaults to 1. */
+  /** Emoji size multiplier relative to caption text. Defaults to 2.5. */
   emojiSize?: number;
   /**
    * Gap between an above/below emoji and the caption word, as a fraction of the
