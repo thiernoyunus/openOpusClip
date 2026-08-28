@@ -10,6 +10,7 @@ import TrailerPage from './TrailerPage';
 import ProcessingModal from './components/ProcessingModal';
 import EditorView from './components/editor/EditorView';
 import { getProjects, addProject, updateProject, removeProject, phaseFromLogs, titleFromPayload, thumbFromPayload, coverFromString, fetchVideoTitle, captureVideoFrame, isTrailerProject } from './lib/projectHistory';
+import { getScheduledClips, markClipsScheduled } from './lib/scheduledClips';
 import { getApiUrl } from './config';
 import { captureError, track, trackPageview } from './analytics';
 import { getPhase, setPhase, armNext, runTourPhase, stopTour, startTourFromHome, APP_SUPPORT_INDEX } from './lib/platformTour.js';
@@ -165,6 +166,9 @@ function App() {
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, processing, complete, error
   const [results, setResults] = useState(null);
+  // Clip indexes of the open project already sent to the scheduler.
+  const [scheduledClips, setScheduledClips] = useState([]);
+  useEffect(() => { setScheduledClips(getScheduledClips(jobId)); }, [jobId]);
   const [sortBy, setSortBy] = useState('score'); // 'score' | 'order'
   const [logs, setLogs] = useState([]);
   const [processingMedia, setProcessingMedia] = useState(null);
@@ -1491,6 +1495,8 @@ function App() {
                         zernioKey={zernioKey}
                         socialAccounts={socialAccounts}
                         geminiApiKey={apiKey}
+                        scheduled={scheduledClips.includes(i)}
+                        onScheduled={() => setScheduledClips(markClipsScheduled(jobId, [i]))}
                         onPlay={(time) => handleClipPlay(time)}
                         onPause={handleClipPause}
                         openIndex={openClip}
@@ -1626,6 +1632,8 @@ function App() {
         zernioKey={zernioKey}
         socialAccounts={socialAccounts}
         onViewCalendar={() => setActiveTab('calendar')}
+        scheduledIndexes={scheduledClips}
+        onScheduled={(indexes) => setScheduledClips(markClipsScheduled(jobId, indexes))}
       />
 
       {showProcessingModal && (

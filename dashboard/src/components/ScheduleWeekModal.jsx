@@ -163,7 +163,7 @@ function todayInTimezone(timezone) {
 }
 
 /**
- * Turns the scheduling settings into one dated slot per clip.
+ * Turns the scheduling settings into one dated slot per picked clip.
  *
  * The post times are the schedule: one clip goes out at each time, then the
  * next day starts. Three times (09:00 / 13:00 / 18:00) means clips 1-3 land
@@ -175,19 +175,21 @@ function todayInTimezone(timezone) {
  *
  * @returns {Array<{index, date, time, autoDate, autoTime, edited, isPast}>}
  */
-function computeScheduleSlots({ clipCount, startDate, times, overrides = {}, now = null }) {
+function computeScheduleSlots({ clipIndexes, startDate, times, overrides = {}, now = null }) {
     const slotTimes = normalizeTimes(times);
     const perDay = slotTimes.length;
     const slots = [];
 
-    for (let i = 0; i < clipCount; i++) {
+    // Only the picked clips take up slots, so unticking a clip closes the gap
+    // instead of leaving a hole in the run.
+    clipIndexes.forEach((clipIndex, i) => {
         const autoDate = addDays(startDate, Math.floor(i / perDay));
         const autoTime = slotTimes[i % perDay];
-        const override = overrides[i];
+        const override = overrides[clipIndex];
         const date = override?.date || autoDate;
         const time = override?.time || autoTime;
         slots.push({
-            index: i,
+            index: clipIndex,
             date,
             time,
             autoDate,
@@ -195,7 +197,7 @@ function computeScheduleSlots({ clipCount, startDate, times, overrides = {}, now
             edited: Boolean(override) && (date !== autoDate || time !== autoTime),
             isPast: now ? `${date}T${time}` <= now : false,
         });
-    }
+    });
     return slots;
 }
 
@@ -229,12 +231,13 @@ function PlatformIcon({ platform }) {
     return <Globe size={14} className="text-muted" />;
 }
 
-export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zernioKey, socialAccounts = [], onViewCalendar }) {
+export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zernioKey, socialAccounts = [], onViewCalendar, scheduledIndexes = [], onScheduled }) {
     const [timezone, setTimezone] = useState(detectTimezone);
     const [times, setTimes] = useState(DEFAULT_TIMES); // one clip goes out at each time, every day
     const [startOffset, setStartOffset] = useState(1); // days from today
     const [overrides, setOverrides] = useState({});    // clipIndex -> { date, time }
     const [openRow, setOpenRow] = useState(null);      // clipIndex whose editor is expanded
+    const [picked, setPicked] = useState(null);        // clip indexes to schedule; null = all of them
 
     // Account selection: every connected account defaults to ON until unticked
     const [accountToggles, setAccountToggles] = useState({});
@@ -249,7 +252,12 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
     // of loops over a handful of clips and post times — cheaper than the memo
     // bookkeeping around it, and it keeps every value on one consistent clock
     // reading instead of a mix of cached and live ones.
-    const clipCount = clips?.length || 0;
+    // Clips already sent to the scheduler stay out of the list entirely —
+    // seeing them again only invites double-posting.
+    const doneSet = new Set(scheduledIndexes);
+    const openIndexes = (clips || []).map((_, i) => i).filter((i) => !doneSet.has(i));
+    const clipIndexes = picked === null ? openIndexes : openIndexes.filter((i) => picked.includes(i));
+    const clipCount = clipIndexes.length;
 
     // Dates hang off the SELECTED timezone's calendar day, not the browser's.
     // Schedule for Los Angeles from a laptop in Tokyo near midnight and the two
@@ -259,7 +267,8 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
     const startDate = addDays(todayInTz, startOffset);
     const now = nowInTimezone(timezone);
 
-    const slots = computeScheduleSlots({ clipCount, startDate, times, overrides, now });
+    const slots = computeScheduleSlots({ clipIndexes, startDate, times, overrides, now });
+    const slotByIndex = new Map(slots.map((s) => [s.index, s]));
 
     const pastSlots = slots.filter((s) => s.isPast);
 
@@ -315,6 +324,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
             setOverrides({});
             setOpenRow(null);
             setWarning(null);
+            setPicked(null); // everything not already scheduled, ticked
         }
         prevOpen.current = isOpen;
     }, [isOpen]);
@@ -338,6 +348,13 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
         }
         return 'Move the late ones to an earlier date.';
     })();
+
+    // Ticking a clip on or off. `picked === null` means "all of them", so the
+    // first toggle materialises the list before changing it.
+    const togglePick = (i) => setPicked((p) => {
+        const cur = p === null ? openIndexes : p;
+        return cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i];
+    });
 
     const setTimeAt = (i, value) => setTimes((t) => t.map((v, idx) => (idx === i ? value : v)));
 
@@ -395,7 +412,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
         // Re-check against the clock at submit time — the modal may have been
         // sitting open long enough for a slot to slip into the past.
         const freshNow = nowInTimezone(timezone);
-        const fresh = computeScheduleSlots({ clipCount, startDate, times, overrides, now: freshNow });
+        const fresh = computeScheduleSlots({ clipIndexes, startDate, times, overrides, now: freshNow });
         const stale = fresh.filter((s) => s.isPast);
         if (stale.length > 0) {
             setWarning(`${stale.length} clip${stale.length === 1 ? ' is' : 's are'} scheduled in the past. Move them forward before scheduling.`);
@@ -457,10 +474,10 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                     throw new Error(errText);
                 }
 
-                results.push({ index: i, success: true });
+                results.push({ index, success: true });
                 track('social_post_completed', { mode: 'schedule', source: 'week_scheduler', platform_count: platformCount, platforms: _platforms });
             } catch (e) {
-                results.push({ index: i, success: false, error: e.message });
+                results.push({ index, success: false, error: e.message });
                 track('social_post_failed', { mode: 'schedule', source: 'week_scheduler', platform_count: platformCount, platforms: _platforms, error_category: 'client' });
                 captureError(e, { area: 'social_schedule' });
             }
@@ -468,10 +485,16 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
             setProgress({ current: i + 1, total, results: [...results] });
         }
 
+        // Remember what actually landed, so these clips are marked in the grid
+        // and left out of the next run.
+        const scheduled = results.filter((r) => r.success).map((r) => r.index);
+        if (scheduled.length > 0 && onScheduled) onScheduled(scheduled);
+
         setDone(true);
         setScheduling(false);
     };
 
+    const resultByIndex = new Map(progress.results.map((r) => [r.index, r]));
     const successCount = progress.results.filter((r) => r.success).length;
     const failCount = progress.results.filter((r) => !r.success).length;
     const inputClass = 'bg-surface2 border border-edge rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:border-viral/40 disabled:opacity-50 [color-scheme:dark]';
@@ -489,7 +512,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                         <div className="min-w-0">
                             <h2 className="text-sm font-medium text-fg">Schedule clips</h2>
                             <p className="text-[11px] text-muted truncate">
-                                {clipCount} clip{clipCount === 1 ? '' : 's'} &middot; {perDay} per day &middot; {dayCount} day{dayCount === 1 ? '' : 's'}
+                                {clipCount} of {openIndexes.length} clip{openIndexes.length === 1 ? '' : 's'} &middot; {perDay} per day &middot; {dayCount} day{dayCount === 1 ? '' : 's'}
                             </p>
                         </div>
                     </div>
@@ -653,45 +676,83 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
 
                     {/* Schedule list — every row opens its own date + time */}
                     <div>
-                        <label className={labelClass}>Schedule &middot; tap a clip to change its date or time</label>
+                        <div className="flex items-center justify-between gap-3 mb-2">
+                            <label className={`${labelClass} mb-0`}>Schedule &middot; tick the clips you want, tap one to change its date or time</label>
+                            <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                    type="button"
+                                    onClick={() => setPicked(null)}
+                                    disabled={scheduling || clipCount === openIndexes.length}
+                                    className="text-[11px] text-muted hover:text-fg border border-edge rounded-md px-2 py-1 hover:bg-white/5 disabled:opacity-30 transition-colors"
+                                >
+                                    All
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setPicked([])}
+                                    disabled={scheduling || clipCount === 0}
+                                    className="text-[11px] text-muted hover:text-fg border border-edge rounded-md px-2 py-1 hover:bg-white/5 disabled:opacity-30 transition-colors"
+                                >
+                                    None
+                                </button>
+                            </div>
+                        </div>
                         <div className="space-y-1.5">
-                            {slots.map((slot) => {
-                                const clip = clips[slot.index];
-                                const result = progress.results[slot.index];
-                                const isOpen_ = openRow === slot.index;
-                                const isLate = `${slot.date}T${slot.time}` > windowEnd;
+                            {openIndexes.map((clipIndex) => {
+                                const slot = slotByIndex.get(clipIndex);
+                                const clip = clips[clipIndex];
+                                const result = resultByIndex.get(clipIndex);
+                                const isOpen_ = openRow === clipIndex;
+                                const isLate = slot ? `${slot.date}T${slot.time}` > windowEnd : false;
                                 return (
                                     <div
-                                        key={slot.index}
-                                        className={`rounded-lg border transition-colors ${slot.isPast ? 'border-red-500/30 bg-red-500/5' : isLate ? 'border-amber-500/30 bg-amber-500/5' : isOpen_ ? 'border-viral/40 bg-surface2' : 'border-edge bg-surface2 hover:border-white/20'}`}
+                                        key={clipIndex}
+                                        className={`rounded-lg border transition-colors ${!slot ? 'border-edge bg-surface2/40' : slot.isPast ? 'border-red-500/30 bg-red-500/5' : isLate ? 'border-amber-500/30 bg-amber-500/5' : isOpen_ ? 'border-viral/40 bg-surface2' : 'border-edge bg-surface2 hover:border-white/20'}`}
                                     >
+                                        <div className="flex items-stretch">
                                         <button
                                             type="button"
-                                            onClick={() => setOpenRow(isOpen_ ? null : slot.index)}
+                                            onClick={() => togglePick(clipIndex)}
                                             disabled={scheduling}
-                                            className="w-full flex items-center gap-3 p-3 text-left disabled:cursor-not-allowed"
+                                            aria-pressed={Boolean(slot)}
+                                            aria-label={`${slot ? 'Skip' : 'Schedule'} clip ${clipIndex + 1}`}
+                                            className="pl-3 pr-1 flex items-center disabled:opacity-40"
+                                        >
+                                            <span className={`size-4 rounded border flex items-center justify-center shrink-0 ${slot ? 'bg-viral/20 border-viral/50 text-viral' : 'border-edge text-transparent'}`}>
+                                                <Check size={10} />
+                                            </span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => slot && setOpenRow(isOpen_ ? null : clipIndex)}
+                                            disabled={scheduling || !slot}
+                                            className={`flex-1 min-w-0 flex items-center gap-3 p-3 text-left disabled:cursor-default ${slot ? '' : 'opacity-50'}`}
                                         >
                                             <div className="w-14 shrink-0 text-center">
+                                            {slot ? (<>
                                                 <div className="text-[10px] font-medium text-muted uppercase">{DAYS[parseDayKey(slot.date).getDay()]}</div>
                                                 <div className="text-lg font-semibold text-fg leading-tight tabular-nums">{parseDayKey(slot.date).getDate()}</div>
                                                 <div className="text-[10px] text-muted">{MONTHS[parseDayKey(slot.date).getMonth()]}</div>
+                                            </>) : (
+                                                <div className="text-[10px] text-muted uppercase">Skipped</div>
+                                            )}
                                             </div>
 
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-center gap-2">
-                                                    <span className="text-xs font-medium text-fg">Clip {slot.index + 1}</span>
-                                                    {slot.edited && (
+                                                    <span className="text-xs font-medium text-fg">Clip {clipIndex + 1}</span>
+                                                    {slot?.edited && (
                                                         <span className="inline-flex items-center gap-1 text-[10px] text-viral border border-viral/30 bg-viral/10 rounded px-1.5 py-0.5">
                                                             <Pencil size={9} /> Edited
                                                         </span>
                                                     )}
-                                                    {slot.isPast && (
+                                                    {slot?.isPast && (
                                                         <span className="text-[10px] text-red-300 border border-red-500/30 rounded px-1.5 py-0.5">In the past</span>
                                                     )}
-                                                    {!slot.isPast && isLate && (
+                                                    {slot && !slot.isPast && isLate && (
                                                         <span className="text-[10px] text-amber-300 border border-amber-500/30 rounded px-1.5 py-0.5">Too far out</span>
                                                     )}
-                                                    {clashingSlots.has(slot.index) && (
+                                                    {clashingSlots.has(clipIndex) && (
                                                         <span className="text-[10px] text-red-300 border border-red-500/30 rounded px-1.5 py-0.5">Same time as another clip</span>
                                                     )}
                                                 </div>
@@ -699,23 +760,24 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                                     <span className="ph-mask">{clip?.video_title_for_youtube_short || 'Viral Short'}</span>
                                                 </div>
                                                 <div className="text-[11px] text-muted mt-0.5 tabular-nums">
-                                                    {formatDayKey(slot.date, todayInTz)} &middot; {slot.time}
+                                                    {slot ? `${formatDayKey(slot.date, todayInTz)} · ${slot.time}` : 'Not in this batch'}
                                                 </div>
                                             </div>
 
                                             <div className="shrink-0">
                                                 {result?.success === true && <CheckCircle size={16} className="text-viral" />}
                                                 {result?.success === false && <AlertCircle size={16} className="text-red-400" />}
-                                                {scheduling && progress.current === slot.index && (
+                                                {scheduling && slot && result === undefined && (
                                                     <Loader2 size={16} className="text-viral animate-spin" />
                                                 )}
-                                                {!scheduling && result === undefined && (
+                                                {!scheduling && slot && result === undefined && (
                                                     <Pencil size={14} className={isOpen_ ? 'text-viral' : 'text-zinc-600'} />
                                                 )}
                                             </div>
                                         </button>
+                                        </div>
 
-                                        {isOpen_ && !scheduling && (
+                                        {isOpen_ && slot && !scheduling && (
                                             <div className="px-3 pb-3 pt-1 border-t border-edge flex flex-wrap items-end gap-3 animate-[fadeIn_0.15s_ease-out]">
                                                 <div>
                                                     <span className="block text-[10px] text-muted mb-1">Date</span>
@@ -761,10 +823,17 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, zerni
                                     </div>
                                 );
                             })}
-                            {clipCount === 0 && (
-                                <p className="text-xs text-muted p-3 bg-surface2 rounded-lg border border-edge">No clips to schedule yet.</p>
+                            {openIndexes.length === 0 && (
+                                <p className="text-xs text-muted p-3 bg-surface2 rounded-lg border border-edge">
+                                    {doneSet.size > 0 ? 'Every clip in this project is already scheduled.' : 'No clips to schedule yet.'}
+                                </p>
                             )}
                         </div>
+                        {doneSet.size > 0 && openIndexes.length > 0 && (
+                            <p className="text-[11px] text-muted mt-2">
+                                {doneSet.size} clip{doneSet.size === 1 ? '' : 's'} already scheduled &mdash; not listed here.
+                            </p>
+                        )}
                     </div>
 
                     {/* Accounts */}

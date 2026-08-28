@@ -46,7 +46,7 @@ const YT_VISIBILITIES = [
     { value: 'private', label: 'Private' },
 ];
 
-export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], onPlay, onPause, openIndex, setOpenIndex, totalClips: _totalClips, onEdit, framingVersion = 0 }) {
+export default function ResultCard({ clip, index, prevIndex = null, nextIndex = null, jobId, zernioKey, socialAccounts = [], onPlay, onPause, openIndex, setOpenIndex, totalClips: _totalClips, onEdit, framingVersion = 0, scheduled = false, onScheduled }) {
     const isOpen = openIndex === index;
     const [showModal, setShowModal] = useState(false);
     const [playing, setPlaying] = useState(false);
@@ -393,6 +393,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             }
 
             setPostResult({ success: true, msg: isScheduling ? "Scheduled successfully!" : "Posted successfully!" });
+            if (onScheduled) onScheduled();
             track('social_post_completed', { mode: isScheduling ? 'schedule' : 'post', source: 'clip_card', platform_count: platformCount, platforms: _platforms });
             setTimeout(() => {
                 setShowModal(false);
@@ -462,7 +463,7 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
             {/* Compact grid card */}
             <div data-tour="clip-card" className="group flex flex-col animate-[fadeIn_0.4s_ease-out]">
                 <div
-                    className="relative aspect-[9/16] rounded-xl overflow-hidden bg-black border border-edge cursor-pointer"
+                    className={`relative aspect-[9/16] rounded-xl overflow-hidden bg-black border cursor-pointer ${scheduled ? 'border-emerald-500/50' : 'border-edge'}`}
                     onClick={() => { if (!playing) setOpenIndex(index); }}
                 >
                     {playing && useFramingPreview ? (
@@ -493,7 +494,6 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     )}
                     <span className="absolute top-2 left-2 bg-black/65 text-white text-[10px] font-medium px-1.5 py-0.5 rounded">Clip {index + 1}</span>
                     <span className="absolute top-2 right-2 bg-black/65 text-white text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums">{fmtTime(durSec)}</span>
-                    {hasScore && <div className="absolute bottom-2 left-2"><ScoreBadge score={viralityScore} box /></div>}
 
                     {!playing && (
                         <div className="absolute inset-0 flex items-center justify-center bg-black/10 group-hover:bg-black/25 transition-colors pointer-events-none">
@@ -513,6 +513,10 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                     {title}
                 </h3>
                 <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    {hasScore && <ScoreBadge score={viralityScore} />}
+                    {scheduled && (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 rounded"><Calendar size={10} /> Scheduled</span>
+                    )}
                     {clip.viral_hook_text && (
                         <span className="inline-flex items-center gap-1 text-[10px] text-muted bg-surface2 border border-edge px-1.5 py-0.5 rounded"><Wand2 size={10} /> Hook</span>
                     )}
