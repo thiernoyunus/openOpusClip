@@ -823,7 +823,13 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                                         {/* ponytail: publishing exports anyway; this just does it early so the picker can appear. */}
                                                         <button
                                                             type="button"
-                                                            onClick={() => { ensureRenderedFile().catch(() => {}); }}
+                                                            onClick={() => {
+                                                                setPostResult(null);
+                                                                ensureRenderedFile().catch((err) => setPostResult({
+                                                                    success: false,
+                                                                    msg: `Export failed: ${err.message || err}`,
+                                                                }));
+                                                            }}
                                                             disabled={isRendering}
                                                             className="mt-2 text-[11px] text-muted hover:text-fg underline underline-offset-2 disabled:opacity-50"
                                                         >
