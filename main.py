@@ -2146,6 +2146,11 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
             last_failure_code = 'provider_invalid_json'
             print(f"❌ Gemini attempt {attempt}/{max_retries} returned invalid JSON: {e}")
             break
+        except ClipAnalysisError as e:
+            last_error = e
+            last_failure_code = e.code
+            print(f"❌ Gemini attempt {attempt}/{max_retries} returned an invalid response: {e}")
+            break
         except Exception as e:
             last_error = e
             last_failure_code = classify_provider_error(e)

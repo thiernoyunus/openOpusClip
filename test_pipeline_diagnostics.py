@@ -6,8 +6,11 @@ import asyncio
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import app
+import main
 
 
 def _run_job_with_output(job_id, output):
@@ -64,12 +67,15 @@ def test_explicit_failure_marker_survives_job_status():
         "sys.exit(2)",
     )
     assert job["status"] == "failed"
+    assert job["current_stage"] is None
+    assert job["last_stage"] == "analyze"
     assert job["failure_stage"] == "analyze"
     assert job["failure_code"] == "provider_invalid_json"
     assert job["failure_provider"] == "gemini"
     assert job["failure_model"] == "gemini-2.5-flash"
     assert job["failure_exit_code"] == 2
     assert status["failure_stage"] == "analyze"
+    assert status["current_stage"] is None
     assert status["failure_code"] == "provider_invalid_json"
     assert status["failure_provider"] == "gemini"
     assert status["failure_model"] == "gemini-2.5-flash"
@@ -84,11 +90,39 @@ def test_missing_failure_marker_uses_last_started_stage():
         "sys.exit(3)",
     )
     assert job["status"] == "failed"
+    assert job["current_stage"] is None
     assert job["failure_stage"] == "transcribe"
     assert job["failure_code"] == "process_exit"
     assert job["failure_exit_code"] == 3
     assert status["failure_stage"] == "transcribe"
+    assert status["current_stage"] is None
     assert status["failure_code"] == "process_exit"
+
+
+def test_model_shape_failure_keeps_invalid_response_code():
+    class FakeModels:
+        def generate_content(self, **_kwargs):
+            return SimpleNamespace(text="[]", usage_metadata=None)
+
+    class FakeClient:
+        def __init__(self, api_key):
+            assert api_key == "test-key"
+            self.models = FakeModels()
+
+    with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}):
+        with patch.object(main.genai, "Client", FakeClient):
+            try:
+                main.get_viral_clips(
+                    {"segments": [], "text": ""},
+                    10,
+                    max_retries=1,
+                )
+            except main.ClipAnalysisError as exc:
+                assert exc.code == "provider_invalid_response"
+                assert exc.provider == "gemini"
+                assert exc.model == "gemini-2.5-flash"
+            else:
+                raise AssertionError("Expected ClipAnalysisError")
 
 
 def test_failure_snapshot_survives_rehydration():

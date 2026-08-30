@@ -159,6 +159,9 @@ def _set_job_failure(job, stage=None, code=None, exit_code=None, provider=None, 
     resolved_code = code or job.get("failure_code") or "process_exit"
     resolved_code = PIPELINE_FAILURE_CODE_ALIASES.get(resolved_code, resolved_code)
     job["failure_code"] = resolved_code if resolved_code in PIPELINE_FAILURE_CODES else "unknown"
+    # A terminal failure must not leave the status looking active. Keep
+    # last_stage and failure_stage intact for the diagnostic summary.
+    job["current_stage"] = None
     if provider is not None:
         job["failure_provider"] = _safe_diagnostic_context(provider)
     if model is not None:
