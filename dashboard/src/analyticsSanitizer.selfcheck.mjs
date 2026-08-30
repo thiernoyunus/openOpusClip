@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { sanitizeExceptionList, sanitizeStacktrace, scrubText } from './analyticsSanitizer.js';
+import { buildExceptionFingerprint, sanitizeExceptionList, sanitizeStacktrace, scrubText } from './analyticsSanitizer.js';
 
 const [exception] = sanitizeExceptionList([{
   type: 'Error',
@@ -62,6 +62,14 @@ assert.equal(retainedFrames.at(-1).function, '39');
 assert.equal(
   scrubText('The export button froze. API key: AIza12345678901234567890123456789012345'),
   'The export button froze. [redacted-secret]'
+);
+assert.equal(
+  buildExceptionFingerprint(['social_connect', 'youtube', 'RATE_LIMITED', 'daily_limit']),
+  'social_connect:youtube:RATE_LIMITED:daily_limit',
+);
+assert.equal(
+  buildExceptionFingerprint(['social_connect', 'youtube', undefined, 'bad reason / path']),
+  'social_connect:youtube:unknown:badreasonpath',
 );
 
 console.log('analytics sanitizer self-check passed');

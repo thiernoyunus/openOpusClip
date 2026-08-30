@@ -14,7 +14,7 @@ import { getClipList, setClipList, addToClipList } from './lib/clipState';
 import { getApiUrl } from './config';
 import { captureError, track, trackPageview } from './analytics';
 import { getPhase, setPhase, armNext, runTourPhase, stopTour, startTourFromHome, APP_SUPPORT_INDEX } from './lib/platformTour.js';
-import { readZernioError } from './lib/zernioError';
+import { readZernioError, parseZernioError } from './lib/zernioError';
 
 // Sidebar pieces live at module scope (not inside App) so React re-renders
 // don't remount them. A remount would orphan the tour's highlighted element
@@ -774,7 +774,19 @@ function App() {
       const data = await res.json();
       if (!res.ok || !data.authUrl) {
         setSocialError(readZernioError(data.detail, platform));
-        captureError(new Error(`social_connect_${platform}`), { area: 'social_connect', detail: data.detail });
+        const zernio = parseZernioError(data.detail);
+        if (zernio?.code === 'PAYMENT_REQUIRED') {
+          // The free-plan account limit is an expected product state, not a
+          // fault: record it as analytics instead of an exception.
+          track('social_connect_blocked', { platform, code: zernio.code, reason: zernio.reason });
+        } else {
+          captureError(new Error(`social_connect_${platform}`), {
+            area: 'social_connect',
+            fingerprint: ['social_connect', platform, zernio?.code, zernio?.reason],
+            code: zernio?.code,
+            reason: zernio?.reason,
+          });
+        }
         return;
       }
       window.open(data.authUrl, '_blank', 'noopener');
