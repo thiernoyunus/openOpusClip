@@ -6,6 +6,13 @@ torchvision
 tqdm
 yt-dlp
 faster-whisper==1.2.1
+# faster-whisper enables its VAD filter by default in this app and declares
+# onnxruntime as the runtime that executes the bundled Silero VAD model.
+onnxruntime==1.19.2
+# Intel builds currently resolve to a Torch wheel built against NumPy 1.x.
+# Keep one known ABI-compatible NumPy version across Intel, Apple Silicon, and
+# Windows instead of letting each machine choose a different major version.
+numpy==1.26.4
 google-genai==1.75.0
 python-dotenv==1.2.2
 mediapipe==0.10.14

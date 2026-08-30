@@ -189,9 +189,11 @@ accident, so they're worth knowing:
    Apple's timestamp server — when only ~1,800 are actually executable code.
    The other files are still protected: the bundle seal hashes every one of
    them, and editing any file afterwards still fails verification.
-2. `build-stage.sh` drops Python packages the app never runs (jax, sympy,
-   onnxruntime, polars, networkx and friends — ~670 MB), so there is that much
-   less to copy, sign, and compress.
+2. The stage build keeps the complete pip-resolved Python environment. This is
+   intentional: packages such as `onnxruntime` are loaded lazily by the VAD
+   path, so removing them can make an installer launch successfully and then
+   fail when transcription starts. The build runs `pip check` and a native
+   runtime smoke test before packaging.
 
 If you add a Python dependency that ships a new kind of binary, check it still
 gets signed rather than skipped.

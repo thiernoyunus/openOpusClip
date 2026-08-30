@@ -25,6 +25,7 @@ NODE_BIN="$(command -v node || true)"
 RENDER_ENTRY="${STAGE}/render-service/dist/server.js"
 BUNDLE_DIR="${STAGE}/remotion-bundle"
 BACKEND_DIR="${STAGE}/backend"
+PYTHON_SMOKE="${SCRIPT_DIR}/smoke-python-runtime.py"
 
 pass=0; fail=0
 ok()   { printf '    \033[1;32mPASS\033[0m %s\n' "$*"; pass=$((pass+1)); }
@@ -36,6 +37,7 @@ log()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 [[ -x "${PYBIN}" ]]        || { echo "ERROR: staged python missing (${PYBIN}); run build-stage.sh first." >&2; exit 1; }
 [[ -f "${RENDER_ENTRY}" ]] || { echo "ERROR: staged renderer missing (${RENDER_ENTRY})." >&2; exit 1; }
 [[ -d "${BUNDLE_DIR}" ]]   || { echo "ERROR: prebuilt bundle missing (${BUNDLE_DIR})." >&2; exit 1; }
+[[ -f "${PYTHON_SMOKE}" ]] || { echo "ERROR: Python smoke test missing (${PYTHON_SMOKE})." >&2; exit 1; }
 [[ -n "${NODE_BIN}" ]]     || { echo "ERROR: system 'node' not found on PATH." >&2; exit 1; }
 
 CHROME_BIN="$(find "${STAGE}/chrome-headless-shell" -name chrome-headless-shell -type f 2>/dev/null | head -1)"
@@ -71,6 +73,29 @@ cleanup() {
   rm -rf "${TMP}"
 }
 trap cleanup EXIT
+
+# Validate the staged Python environment before starting the servers. This is
+# the same lazy native path the user's first transcription request exercises.
+log "Staged Python checks"
+if _pip_check_output="$("${PYBIN}" -m pip check 2>&1)"; then
+  _pip_check_ok=1
+else
+  _unexpected_pip_check="$(printf '%s\n' "${_pip_check_output}" \
+    | grep -vE '^mediapipe [^ ]+ is not supported on this platform$' || true)"
+  if [[ -n "${_unexpected_pip_check}" ]]; then
+    printf '%s\n' "${_pip_check_output}" | sed 's/^/        /'
+    _pip_check_ok=0
+  else
+    note "pip check: ignored the known universal2 MediaPipe wheel-label warning"
+    _pip_check_ok=1
+  fi
+fi
+if [[ "${_pip_check_ok}" -eq 1 ]] && \
+   PYTHONPATH="${BACKEND_DIR}:${SCRIPT_DIR}" "${PYBIN}" "${PYTHON_SMOKE}"; then
+  ok "Python dependencies and backend native paths are ready"
+else
+  bad "staged Python dependency/runtime check failed"
+fi
 
 wait_for_http() {
   # wait_for_http <url> <timeout_s>

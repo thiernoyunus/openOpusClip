@@ -272,7 +272,7 @@ _py_macho="x86_64"; [[ "${TARGET_ARCH}" == "arm64" ]] && _py_macho="arm64"
 file "${STAGE}/python/bin/python3.11" 2>/dev/null | grep -q "${_py_macho}" \
   || die "staged python is not ${_py_macho}: $(file "${STAGE}/python/bin/python3.11" 2>/dev/null)"
 
-info "pip install -r requirements.txt (torch CPU, mediapipe, etc. — may be slow) ..."
+info "pip install -r requirements.txt (all Python runtime dependencies; may be slow) ..."
 "${EMULATE[@]}" "${PYBIN}" -m pip install --upgrade pip >/dev/null
 # --only-binary=:all: is deliberate on the Intel stage: a source build here would
 # silently pull in a native toolchain (Rust + OpenSSL) and could produce an
@@ -284,67 +284,46 @@ if [[ "${TARGET_ARCH}" == "x64" ]]; then
 fi
 "${EMULATE[@]}" "${PYBIN}" -m pip install "${PIP_ARGS[@]}"
 
-# Prune packages that pip pulls in as declared dependencies but this app never
-# actually executes. Each one below was verified by removing it and re-running
-# the real code paths (see the smoke test right after): jax/jaxlib are only used
-# by mediapipe's unrelated LLM weight-conversion tools, onnxruntime only by a
-# faster-whisper VAD backend we don't select, polars/networkx/sympy only by
-# ultralytics training and torch compile paths the app never enters.
-#
-# This is a size/build-time win, not a correctness one: ~670 MB out of the stage
-# means that much less to copy, sign, and compress into the DMG.
-#
-# torchvision is deliberately NOT pruned: ultralytics reads its version metadata
-# at import time and raises PackageNotFoundError without it.
-#
-# functorch is deliberately NOT pruned either. On Apple Silicon it is an empty
-# compatibility shim, but the Intel build resolves to an older torch whose
-# libtorch_global_deps.dylib links @loader_path/../../functorch/.dylibs/
-# libiomp5.dylib — so removing it makes `import torch` fail outright with a
-# dlopen error. Same prune, harmless on one arch and fatal on the other.
-#
-# __pycache__ is also deliberately NOT pruned, even though it is ~310 MB and
-# 13k files. Inside a signed .app those files cannot be regenerated (the bundle
-# is read-only and writing into it would break the code signature), so removing
-# them makes every app launch recompile from source instead.
-log "d2. Pruning unused Python packages"
-SITE="${STAGE}/python/lib/python3.11/site-packages"
-_pruned_before="$(du -sk "${STAGE}/python" | awk '{print $1}')"
-for _pkg in jax jaxlib sympy mpmath onnxruntime polars _polars_runtime_32 \
-            polars_runtime_32 networkx isympy.py; do
-  for _match in "${SITE}/${_pkg}" "${SITE}/${_pkg}-"*.dist-info; do
-    [[ -e "${_match}" ]] && rm -rf "${_match}"
-  done
-  # The glob above often matches nothing, which would otherwise trip `set -e`.
-  true
-done
-_pruned_after="$(du -sk "${STAGE}/python" | awk '{print $1}')"
-info "python runtime: $(( _pruned_before / 1024 )) MB -> $(( _pruned_after / 1024 )) MB"
-
-info "smoke-testing imports ..."
-# Runs AFTER the prune on purpose: this is what catches an over-aggressive prune.
-# ultralytics + the faster-whisper VAD + a real mediapipe face detection pass are
-# included because those are the paths that actually broke when tested.
-#
-# The live mediapipe inference runs only on a native build: it initialises a GPU
-# context, which Rosetta cannot reach — same reason the videotoolbox encode above
-# is skipped when cross-building. On a cross build we still import everything,
-# which is what actually catches an over-aggressive prune.
-if [[ "${CROSS_BUILD}" -eq 0 ]]; then
-  _SMOKE_INFER="fd = mediapipe.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5); fd.process(np.zeros((480, 640, 3), dtype=np.uint8))"
+# Keep the complete pip-resolved runtime. These packages are not optional from
+# the installer's point of view: faster-whisper, mediapipe, ultralytics and
+# torch all declare dependencies that are loaded lazily on real code paths.
+# Removing them made `pip check` fail and let the installer ship an app that
+# launched successfully but crashed only when a feature was exercised.
+log "d2. Verifying Python dependency graph"
+if ! _pip_check_output="$("${EMULATE[@]}" "${PYBIN}" -m pip check 2>&1)"; then
+  # mediapipe 0.10.14 ships a universal2 binary but labels its wheel as
+  # x86_64. pip check reports that metadata mismatch on an arm64 interpreter;
+  # the import and inference smoke test below verifies the actual binary.
+  _unexpected_pip_check="$(printf '%s\n' "${_pip_check_output}" \
+    | grep -vE '^mediapipe [^ ]+ is not supported on this platform$' || true)"
+  if [[ -n "${_unexpected_pip_check}" ]]; then
+    printf '%s\n' "${_pip_check_output}" >&2
+    die "Python dependency check failed"
+  fi
+  info "pip check: ignored the known universal2 MediaPipe wheel-label warning"
 else
-  _SMOKE_INFER="pass  # skipped: GPU inference is unavailable under Rosetta"
+  info "pip check: all installed dependencies are satisfied"
+fi
+
+info "smoke-testing backend imports and native runtime paths ..."
+# The live MediaPipe inference runs only on a native build: it initialises a
+# GPU context, which Rosetta cannot reach. On a cross build we still import
+# everything and exercise the ONNX-backed VAD model, which is safe under Rosetta.
+if [[ "${CROSS_BUILD}" -eq 0 ]]; then
+  _SMOKE_SKIP_INFERENCE=0
+else
+  _SMOKE_SKIP_INFERENCE=1
   note_mp="mediapipe: imported but not run (cross build under Rosetta)"
 fi
-"${EMULATE[@]}" "${PYBIN}" - <<SMOKE || die "python import smoke test failed"
-import numpy as np
-import torch, mediapipe, faster_whisper, cv2, yt_dlp, fastapi, PIL
-import scenedetect, boto3
-from ultralytics import YOLO
-from faster_whisper.vad import get_speech_timestamps
-${_SMOKE_INFER}
-print('imports-ok')
-SMOKE
+if [[ "${_SMOKE_SKIP_INFERENCE}" -eq 1 ]]; then
+  PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
+    "${EMULATE[@]}" "${PYBIN}" "${SCRIPT_DIR}/smoke-python-runtime.py" \
+    --skip-mediapipe-inference || die "python runtime smoke test failed"
+else
+  PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
+    "${EMULATE[@]}" "${PYBIN}" "${SCRIPT_DIR}/smoke-python-runtime.py" \
+    || die "python runtime smoke test failed"
+fi
 [[ -n "${note_mp:-}" ]] && info "${note_mp}"
 
 # --- e. Backend source -------------------------------------------------------
