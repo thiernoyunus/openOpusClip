@@ -245,56 +245,47 @@ if (-not (Test-Path $PyExe)) {
 if (-not (Test-Path $PyExe)) { Die "portable python missing at $PyExe" }
 Write-Info "python: $(& $PyExe --version)"
 
-Write-Info 'pip install -r requirements.txt (torch CPU, mediapipe, etc. - may be slow) ...'
+Write-Info 'pip install -r requirements.txt (all Python runtime dependencies; may be slow) ...'
 Invoke-Native { & $PyExe -m pip install --upgrade pip --quiet } 'pip self-upgrade'
 Invoke-Native { & $PyExe -m pip install -r (Join-Path $RepoRoot 'requirements.txt') } 'pip install requirements'
 
-# Prune packages pip pulls in as declared dependencies that this app never
-# actually executes, plus the debug symbols the Windows CPython build ships.
-# See build-stage.sh for how each package on this list was verified (removed,
-# then the real code paths re-run); the smoke test below is what catches an
-# over-aggressive prune.
-#
-# functorch and torchvision are deliberately NOT pruned - ultralytics reads
-# torchvision's version metadata at import time. __pycache__ is NOT pruned
-# either; regenerating it on every launch is slower than shipping it.
-#
-# The .pdb files are Windows-only dead weight: python-build-standalone ships
-# debug symbols for every .pyd, which nothing in a released app can use.
-Write-Log 'd2. Pruning unused Python packages and debug symbols'
-$Site = Join-Path $Stage 'python\Lib\site-packages'
+# Keep the complete pip-resolved runtime. These packages are not optional from
+# the installer's point of view: faster-whisper, mediapipe, ultralytics and
+# torch all declare dependencies that are loaded lazily on real code paths.
+# Removing them made `pip check` fail and let the installer ship an app that
+# launched successfully but crashed only when a feature was exercised.
+Write-Log 'd2. Verifying Python dependency graph and removing only debug symbols'
 $PyDir = Join-Path $Stage 'python'
 $before = Get-FolderSizeMB $PyDir
-foreach ($pkg in @('jax', 'jaxlib', 'sympy', 'mpmath', 'onnxruntime', 'polars',
-                   '_polars_runtime_32', 'polars_runtime_32', 'networkx', 'isympy.py')) {
-    Get-ChildItem -Path $Site -Filter "$pkg" -ErrorAction SilentlyContinue |
-        ForEach-Object { Remove-Item -Recurse -Force $_.FullName }
-    Get-ChildItem -Path $Site -Filter "$pkg-*.dist-info" -ErrorAction SilentlyContinue |
-        ForEach-Object { Remove-Item -Recurse -Force $_.FullName }
+$PipCheckOutput = @(& $PyExe -m pip check 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    # Mirror the macOS check so both stage builders tolerate the same known
+    # MediaPipe wheel-label message; the native smoke test below verifies the
+    # runtime itself.
+    $UnexpectedPipCheck = @($PipCheckOutput | Where-Object {
+        $_ -notmatch '^mediapipe [^ ]+ is not supported on this platform$'
+    })
+    if ($UnexpectedPipCheck.Count -gt 0) {
+        $PipCheckOutput | ForEach-Object { Write-Host $_ }
+        Die 'Python dependency check failed'
+    }
+    Write-Info 'pip check: ignored the known universal2 MediaPipe wheel-label warning'
+} else {
+    Write-Info 'pip check: all installed dependencies are satisfied'
 }
+# The .pdb files are Windows-only dead weight: python-build-standalone ships
+# debug symbols for every .pyd, which nothing in a released app can use.
 Get-ChildItem -Path $PyDir -Recurse -File -Filter '*.pdb' -ErrorAction SilentlyContinue |
     Remove-Item -Force -ErrorAction SilentlyContinue
 $after = Get-FolderSizeMB $PyDir
 Write-Info "python runtime: $before MB -> $after MB"
 
-Write-Info 'smoke-testing imports ...'
-# Runs AFTER the prune on purpose: this is what catches an over-aggressive prune.
-# ultralytics + the faster-whisper VAD + a real mediapipe face detection pass are
-# included because those are the paths that actually broke when tested on macOS.
-# Unlike the macOS cross-build, this always runs for real - the runner is the
-# same architecture the stage targets, so there is nothing to skip.
+Write-Info 'smoke-testing backend imports and native runtime paths ...'
+# The helper exercises the ONNX-backed VAD model as well as the backend modules.
 $SmokeFile = Join-Path $env:TEMP 'openopusclip-smoke.py'
-@'
-import numpy as np
-import torch, mediapipe, faster_whisper, cv2, yt_dlp, fastapi, PIL
-import scenedetect, boto3
-from ultralytics import YOLO
-from faster_whisper.vad import get_speech_timestamps
-fd = mediapipe.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
-fd.process(np.zeros((480, 640, 3), dtype=np.uint8))
-print('imports-ok')
-'@ | Set-Content -Path $SmokeFile -Encoding UTF8
-Invoke-Native { & $PyExe $SmokeFile } 'python import smoke test'
+Copy-Item -Force (Join-Path $ScriptDir 'smoke-python-runtime.py') $SmokeFile
+$env:PYTHONPATH = "$RepoRoot" + $(if ($env:PYTHONPATH) { ";$($env:PYTHONPATH)" } else { '' })
+Invoke-Native { & $PyExe $SmokeFile } 'python runtime smoke test'
 Remove-Item -Force $SmokeFile -ErrorAction SilentlyContinue
 
 # --- e. Backend source -------------------------------------------------------
