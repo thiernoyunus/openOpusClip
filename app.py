@@ -57,6 +57,115 @@ DISABLE_YOUTUBE_URL = os.environ.get("DISABLE_YOUTUBE_URL", "false").lower() in 
 MCP_KEYRING_SERVICE = os.environ.get("OPENOPUSCLIPS_KEYRING_SERVICE", "openopusclips")
 MCP_KEYRING_USERNAME = "gemini"
 
+# The worker subprocess emits these markers on stdout. Keep the protocol small
+# and allowlisted: PostHog receives the stage/code/provider/model, while raw
+# stderr remains in the job log for local debugging and is never promoted to
+# analytics. Provider/model are optional so older workers remain compatible.
+PIPELINE_STAGES = frozenset({
+    "download", "transcribe", "analyze", "extract", "reframe", "finalize",
+})
+PIPELINE_FAILURE_CODES = frozenset({
+    "input_missing", "download_error", "transcription_error",
+    "provider_missing_credentials", "provider_request_error",
+    "provider_invalid_json", "provider_invalid_response",
+    "provider_rate_limited", "provider_timeout", "provider_error",
+    "clip_processing_error",
+    "source_unreadable", "reframe_error", "ffmpeg_cut_error",
+    "ffmpeg_reframe_error", "ffmpeg_concat_error", "ffmpeg_merge_error",
+    "metadata_missing", "process_exit", "backend_execution_error", "unknown",
+})
+PIPELINE_FAILURE_CODE_ALIASES = {
+    # Accept markers from a worker that was started just before an app update.
+    "gemini_missing_api_key": "provider_missing_credentials",
+    "gemini_request_error": "provider_request_error",
+    "gemini_invalid_json": "provider_invalid_json",
+    "gemini_invalid_response": "provider_invalid_response",
+    "gemini_error": "provider_error",
+}
+_PIPELINE_PROVIDER_VALUE = r"[A-Za-z0-9][A-Za-z0-9._/-]{0,63}"
+_PIPELINE_MODEL_VALUE = r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}"
+_PIPELINE_STAGE_RE = re.compile(
+    r"(?:📍\s*)?OPENSHORTS_STAGE:(download|transcribe|analyze|extract|reframe|finalize):(start|done)\s*$"
+)
+_PIPELINE_FAILURE_RE = re.compile(
+    rf"(?:📍\s*)?OPENSHORTS_FAILURE:(download|transcribe|analyze|extract|reframe|finalize):([a-z0-9_]+)"
+    rf"(?::({_PIPELINE_PROVIDER_VALUE})(?::({_PIPELINE_MODEL_VALUE}))?)?\s*$"
+)
+
+
+def _parse_pipeline_diagnostic(line):
+    """Return a structured stage/failure marker, ignoring ordinary log text."""
+    text = str(line or "").strip()
+    failure = _PIPELINE_FAILURE_RE.fullmatch(text)
+    if failure:
+        stage, code, provider, model = failure.groups()
+        code = PIPELINE_FAILURE_CODE_ALIASES.get(code, code)
+        if code in PIPELINE_FAILURE_CODES:
+            diagnostic = {"kind": "failure", "stage": stage, "code": code}
+            if provider:
+                diagnostic["provider"] = provider
+            if model:
+                diagnostic["model"] = model
+            return diagnostic
+        return None
+
+    stage = _PIPELINE_STAGE_RE.fullmatch(text)
+    if stage:
+        name, state = stage.groups()
+        return {"kind": "stage", "stage": name, "state": state}
+    return None
+
+
+def _record_pipeline_diagnostic(job, line):
+    """Update in-memory job diagnostics from one trusted marker line."""
+    diagnostic = _parse_pipeline_diagnostic(line)
+    if diagnostic is None:
+        return
+
+    if diagnostic["kind"] == "stage":
+        stage = diagnostic["stage"]
+        job["last_stage"] = stage
+        if diagnostic["state"] == "start":
+            job["current_stage"] = stage
+            job["last_started_stage"] = stage
+        elif job.get("current_stage") == stage:
+            job["current_stage"] = None
+        return
+
+    job["failure_stage"] = diagnostic["stage"]
+    job["failure_code"] = diagnostic["code"]
+    job["failure_provider"] = diagnostic.get("provider")
+    job["failure_model"] = diagnostic.get("model")
+
+
+def _safe_diagnostic_context(value):
+    """Keep provider/model values bounded even when set outside marker parsing."""
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value if re.fullmatch(_PIPELINE_MODEL_VALUE, value) else "unknown"
+
+
+def _set_job_failure(job, stage=None, code=None, exit_code=None, provider=None, model=None):
+    """Finalize a job's safe diagnostic fields without retaining raw errors."""
+    resolved_stage = (
+        stage
+        or job.get("failure_stage")
+        or job.get("current_stage")
+        or job.get("last_started_stage")
+        or "unknown"
+    )
+    job["failure_stage"] = resolved_stage if resolved_stage in PIPELINE_STAGES else "unknown"
+    resolved_code = code or job.get("failure_code") or "process_exit"
+    resolved_code = PIPELINE_FAILURE_CODE_ALIASES.get(resolved_code, resolved_code)
+    job["failure_code"] = resolved_code if resolved_code in PIPELINE_FAILURE_CODES else "unknown"
+    if provider is not None:
+        job["failure_provider"] = _safe_diagnostic_context(provider)
+    if model is not None:
+        job["failure_model"] = _safe_diagnostic_context(model)
+    if exit_code is not None:
+        job["failure_exit_code"] = exit_code
+
 # Application State
 job_queue = asyncio.Queue()
 jobs: Dict[str, Dict] = {}
@@ -165,19 +274,33 @@ def _safe_job_id(job_id: str) -> bool:
         and "/" not in job_id and "\\" not in job_id and os.path.basename(job_id) == job_id
 
 def _persist_result(job_id: str) -> None:
-    """Snapshot a job's result to output/<job_id>/result.json so completed (and
-    edited) projects survive a server restart — get_status rehydrates from it.
-    Best-effort; never raises into the request path."""
+    """Snapshot result or failure diagnostics so a restart does not erase them.
+
+    Best-effort; never raises into the request path.
+    """
     try:
         job = jobs.get(job_id)
-        if not job or 'result' not in job or not _safe_job_id(job_id):
+        if not job or not _safe_job_id(job_id):
             return
         out_dir = os.path.join(OUTPUT_DIR, job_id)
         if not os.path.isdir(out_dir):
             return
         tmp = os.path.join(out_dir, "result.json.tmp")
+        snapshot = {
+            "status": job.get("status", "completed"),
+            "result": job.get("result"),
+            "created_at": job.get("created_at"),
+            "started_at": job.get("started_at"),
+            "completed_at": job.get("completed_at"),
+            "duration_seconds": job.get("duration_seconds"),
+            "failure_stage": job.get("failure_stage"),
+            "failure_code": job.get("failure_code"),
+            "failure_provider": job.get("failure_provider"),
+            "failure_model": job.get("failure_model"),
+            "failure_exit_code": job.get("failure_exit_code"),
+        }
         with open(tmp, 'w') as f:
-            json.dump({"status": job.get('status', 'completed'), "result": job['result']}, f)
+            json.dump(snapshot, f)
         os.replace(tmp, os.path.join(out_dir, "result.json"))
     except Exception:
         pass
@@ -540,6 +663,7 @@ def enqueue_output(out, job_id):
             if decoded_line:
                 print(f"📝 [Job Output] {decoded_line}")
                 if job_id in jobs:
+                    _record_pipeline_diagnostic(jobs[job_id], decoded_line)
                     jobs[job_id]['logs'].append(decoded_line)
     except Exception as e:
         print(f"Error reading output for job {job_id}: {e}")
@@ -632,6 +756,9 @@ async def run_job(job_id, job_data):
                 # Ignore read errors during processing
                 pass
 
+        # The child can exit before the reader thread has consumed its final
+        # marker. Drain that tail before deciding which stage failed.
+        t_log.join(timeout=5)
         returncode = process.returncode
 
         # Cancelled: delete_job already killed the process and removed the job
@@ -676,12 +803,16 @@ async def run_job(job_id, job_data):
                  jobs[job_id]['status'] = 'failed'
                  jobs[job_id]['completed_at'] = time.time()
                  jobs[job_id]['duration_seconds'] = jobs[job_id]['completed_at'] - jobs[job_id].get('started_at', jobs[job_id]['completed_at'])
+                 _set_job_failure(jobs[job_id], stage='finalize', code='metadata_missing')
                  jobs[job_id]['logs'].append("No metadata file generated.")
+                 _persist_result(job_id)
         else:
             jobs[job_id]['status'] = 'failed'
             jobs[job_id]['completed_at'] = time.time()
             jobs[job_id]['duration_seconds'] = jobs[job_id]['completed_at'] - jobs[job_id].get('started_at', jobs[job_id]['completed_at'])
+            _set_job_failure(jobs[job_id], exit_code=returncode)
             jobs[job_id]['logs'].append(f"Process failed with exit code {returncode}")
+            _persist_result(job_id)
 
     except Exception as e:
         if job_id not in jobs:
@@ -689,7 +820,9 @@ async def run_job(job_id, job_data):
         jobs[job_id]['status'] = 'failed'
         jobs[job_id]['completed_at'] = time.time()
         jobs[job_id]['duration_seconds'] = jobs[job_id]['completed_at'] - jobs[job_id].get('started_at', jobs[job_id].get('created_at', jobs[job_id]['completed_at']))
+        _set_job_failure(jobs[job_id], code='backend_execution_error')
         jobs[job_id]['logs'].append(f"Execution error: {str(e)}")
+        _persist_result(job_id)
 
 @app.get("/api/config")
 async def get_config():
@@ -879,6 +1012,14 @@ async def process_endpoint(
     jobs[job_id] = {
         'status': 'queued',
         'logs': [f"Job {job_id} queued."],
+        'current_stage': None,
+        'last_stage': None,
+        'last_started_stage': None,
+        'failure_stage': None,
+        'failure_code': None,
+        'failure_provider': None,
+        'failure_model': None,
+        'failure_exit_code': None,
         'cmd': cmd,
         'env': env,
         'output_dir': job_output_dir,
@@ -901,6 +1042,18 @@ async def get_all_status():
             jobs[job_id] = {
                 "status": snap.get("status", "completed"),
                 "logs": [],
+                "current_stage": None,
+                "last_stage": None,
+                "last_started_stage": None,
+                "failure_stage": snap.get("failure_stage"),
+                "failure_code": snap.get("failure_code"),
+                "failure_provider": snap.get("failure_provider"),
+                "failure_model": snap.get("failure_model"),
+                "failure_exit_code": snap.get("failure_exit_code"),
+                "created_at": snap.get("created_at"),
+                "started_at": snap.get("started_at"),
+                "completed_at": snap.get("completed_at"),
+                "duration_seconds": snap.get("duration_seconds"),
                 "result": snap.get("result"),
             }
 
@@ -929,7 +1082,23 @@ async def get_status(job_id: str):
         snap = _load_persisted_result(job_id)
         if snap is None:
             raise HTTPException(status_code=404, detail="Job not found")
-        jobs[job_id] = {"status": snap.get("status", "completed"), "logs": [], "result": snap.get("result")}
+        jobs[job_id] = {
+            "status": snap.get("status", "completed"),
+            "logs": [],
+            "current_stage": None,
+            "last_stage": None,
+            "last_started_stage": None,
+            "failure_stage": snap.get("failure_stage"),
+            "failure_code": snap.get("failure_code"),
+            "failure_provider": snap.get("failure_provider"),
+            "failure_model": snap.get("failure_model"),
+            "failure_exit_code": snap.get("failure_exit_code"),
+            "created_at": snap.get("created_at"),
+            "started_at": snap.get("started_at"),
+            "completed_at": snap.get("completed_at"),
+            "duration_seconds": snap.get("duration_seconds"),
+            "result": snap.get("result"),
+        }
 
     job = jobs[job_id]
     now = time.time()
@@ -945,6 +1114,13 @@ async def get_status(job_id: str):
         "completed_at": completed_at,
         "elapsed_seconds": (completed_at or now) - started_at if started_at else None,
         "duration_seconds": duration_seconds,
+        "current_stage": job.get("current_stage"),
+        "last_stage": job.get("last_stage"),
+        "failure_stage": job.get("failure_stage"),
+        "failure_code": job.get("failure_code"),
+        "failure_provider": job.get("failure_provider"),
+        "failure_model": job.get("failure_model"),
+        "failure_exit_code": job.get("failure_exit_code"),
     }
 
 def _group_alive(pgid: int) -> bool:
@@ -1070,7 +1246,16 @@ async def delete_clip(job_id: str, clip_index: int):
         snap = _load_persisted_result(job_id)
         if snap is None:
             raise HTTPException(status_code=404, detail="Job not found")
-        jobs[job_id] = {"status": snap.get("status", "completed"), "logs": [], "result": snap.get("result")}
+        jobs[job_id] = {
+            "status": snap.get("status", "completed"),
+            "logs": [],
+            "failure_stage": snap.get("failure_stage"),
+            "failure_code": snap.get("failure_code"),
+            "failure_provider": snap.get("failure_provider"),
+            "failure_model": snap.get("failure_model"),
+            "failure_exit_code": snap.get("failure_exit_code"),
+            "result": snap.get("result"),
+        }
 
     result = jobs[job_id].get("result") or {}
     clips = result.get("clips")

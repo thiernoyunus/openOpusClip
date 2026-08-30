@@ -20,7 +20,7 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 import json
-from transcription import WHISPER_MODELS, transcribe
+from transcription import WHISPER_MODELS, SONIOX_MODEL, resolve_backend, transcribe
 from ffmpeg_utils import video_codec_args
 
 import warnings
@@ -31,10 +31,62 @@ load_dotenv()
 
 def report_stage(name, state):
     """Emit a machine-readable stage marker for the dashboard checklist."""
+    if name not in {'download', 'transcribe', 'analyze', 'extract', 'reframe', 'finalize'}:
+        name = 'unknown'
+    if state not in {'start', 'done'}:
+        state = 'start'
     print(f"📍 OPENSHORTS_STAGE:{name}:{state}", flush=True)
+
+
+PIPELINE_STAGES = frozenset({
+    'download', 'transcribe', 'analyze', 'extract', 'reframe', 'finalize',
+})
+PIPELINE_FAILURE_CODES = frozenset({
+    'input_missing', 'download_error', 'transcription_error',
+    'provider_missing_credentials', 'provider_request_error',
+    'provider_invalid_json', 'provider_invalid_response',
+    'provider_rate_limited', 'provider_timeout', 'provider_error',
+    'clip_processing_error', 'source_unreadable', 'reframe_error',
+    'ffmpeg_cut_error', 'ffmpeg_reframe_error', 'ffmpeg_concat_error',
+    'ffmpeg_merge_error', 'metadata_missing', 'process_exit',
+    'backend_execution_error', 'unknown',
+})
+_DIAGNOSTIC_VALUE_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$')
+
+
+def _safe_diagnostic_value(value):
+    """Keep provider/model labels useful without allowing arbitrary log text."""
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value if _DIAGNOSTIC_VALUE_RE.fullmatch(value) else 'unknown'
+
+
+class PipelineFailure(RuntimeError):
+    """A safe, machine-readable pipeline failure with optional log detail."""
+
+    def __init__(self, stage, code, message, provider=None, model=None):
+        self.stage = stage if stage in PIPELINE_STAGES else 'unknown'
+        self.code = code if code in PIPELINE_FAILURE_CODES else 'unknown'
+        self.provider = _safe_diagnostic_value(provider)
+        self.model = _safe_diagnostic_value(model)
+        super().__init__(message)
+
+
+def report_failure(stage, code, provider=None, model=None):
+    """Emit only allowlisted failure labels; never send raw exception text."""
+    safe_failure = PipelineFailure(stage, code, '', provider=provider, model=model)
+    marker = f"📍 OPENSHORTS_FAILURE:{safe_failure.stage}:{safe_failure.code}"
+    if safe_failure.provider:
+        marker += f":{safe_failure.provider}"
+        if safe_failure.model:
+            marker += f":{safe_failure.model}"
+    print(marker, flush=True)
 
 # --- Constants ---
 ASPECT_RATIO = 9 / 16
+VIRAL_ANALYSIS_PROVIDER = 'gemini'
+VIRAL_ANALYSIS_MODEL = 'gemini-2.5-flash'
 
 # Supported output aspect ratios -> (width, height). 1080-class for quality.
 ASPECT_PRESETS = {
@@ -143,6 +195,7 @@ TRAILER_PACE_PRESETS = {
 # prompt inconsistently (filler + cliffhanger failures were SYSTEMATIC across
 # samples, so best-of-N couldn't escape them); moving to a stronger flash is the
 # real fix. Env-overridable so we can A/B 3-flash vs 3.5-flash without a code edit.
+TRAILER_PROVIDER = 'gemini'
 TRAILER_MODEL = os.environ.get('TRAILER_MODEL', 'gemini-3.5-flash')
 
 # The judge only picks the best index from a shortlist — a cheap task that
@@ -224,7 +277,9 @@ def get_face_detection():
     return det
 
 
-def run_logged_command(command, label, output_path=None, check=False, interval=10):
+def run_logged_command(command, label, output_path=None, check=False, interval=10,
+                       failure_stage=None, failure_code=None,
+                       failure_provider=None, failure_model=None):
     print(f"   ▶️  {label}...")
     start = time.time()
     # ponytail: stderr -> temp file, not PIPE. We don't drain the pipe inside the
@@ -244,6 +299,15 @@ def run_logged_command(command, label, output_path=None, check=False, interval=1
     if process.returncode != 0:
         print(f"   ❌ {label} failed (exit code {process.returncode}).")
         if check:
+            if failure_stage:
+                raise PipelineFailure(
+                    failure_stage,
+                    failure_code or 'process_exit',
+                    f"{label} failed with exit code {process.returncode}. "
+                    f"FFmpeg details:\n{stderr.decode(errors='replace')[-2000:] or '(empty)'}",
+                    provider=failure_provider,
+                    model=failure_model,
+                )
             raise subprocess.CalledProcessError(process.returncode, command, stderr=stderr)
     else:
         print(f"   ✅ {label} finished in {time.time() - start:.0f}s")
@@ -1316,7 +1380,16 @@ def render_static_crop(input_video, temp_video_output, crop_box, fps,
                 '-to', str(bake_end_frame / float(fps))]
     cmd += ['-i', input_video, '-vf', vf, '-r', str(fps),
             *video_codec_args('final'), '-an', temp_video_output]
-    run_logged_command(cmd, "Static single-speaker reframe", temp_video_output, check=True)
+    run_logged_command(
+        cmd,
+        "Static single-speaker reframe",
+        temp_video_output,
+        check=True,
+        failure_stage='reframe',
+        failure_code='ffmpeg_reframe_error',
+        failure_provider='ffmpeg',
+        failure_model='ffmpeg',
+    )
 
 
 def process_video_to_vertical(input_video, final_output_video, framing_output_path=None,
@@ -1606,9 +1679,13 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
             print("   FFmpeg stderr:\n" + (stderr_output.strip() or "(empty)"))
             # Raise with the real cause so it lands in the job log, instead of a bare
             # BrokenPipeError that hides why FFmpeg exited.
-            raise RuntimeError(
+            raise PipelineFailure(
+                'reframe',
+                'ffmpeg_reframe_error',
                 "FFmpeg encoder exited early during frame processing. "
-                "Cause (FFmpeg stderr):\n" + (stderr_output.strip()[-2000:] or "(no stderr captured)")
+                "Cause (FFmpeg stderr):\n" + (stderr_output.strip()[-2000:] or "(no stderr captured)"),
+                provider='ffmpeg',
+                model='ffmpeg',
             )
 
     print("\n   🔊 Step 5: Extracting audio...")
@@ -1646,12 +1723,30 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
         ]
         
     try:
-        run_logged_command(merge_command, "Merging audio/video", final_output_video, check=True)
+        run_logged_command(
+            merge_command,
+            "Merging audio/video",
+            final_output_video,
+            check=True,
+            failure_stage='finalize',
+            failure_code='ffmpeg_merge_error',
+            failure_provider='ffmpeg',
+            failure_model='ffmpeg',
+        )
         print(f"   ✅ Clip saved to {final_output_video}")
+    except PipelineFailure:
+        print("\n   ❌ Final merge failed.")
+        raise
     except subprocess.CalledProcessError as e:
         print("\n   ❌ Final merge failed.")
         print("   Stderr:", e.stderr.decode(errors="replace"))
-        return False
+        raise PipelineFailure(
+            'finalize',
+            'ffmpeg_merge_error',
+            "Final merge failed. Stderr:\n" + (e.stderr.decode(errors="replace")[-2000:] or "(empty)"),
+            provider='ffmpeg',
+            model='ffmpeg',
+        ) from e
 
     # Clean up temp files
     if os.path.exists(temp_video_output): os.remove(temp_video_output)
@@ -1748,6 +1843,7 @@ def process_video_to_vertical(input_video, final_output_video, framing_output_pa
             json.dump(framing_data, f)
         print(f"   🎯 Framing metadata saved to {framing_output_path}")
 
+    report_stage("reframe", "done")
     return True
 
 def analyze_framing_range(input_video, start_frame, end_frame, aspect_ratio, out_path):
@@ -1784,10 +1880,26 @@ def analyze_framing_range(input_video, start_frame, end_frame, aspect_ratio, out
 def transcribe_video(video_path, whisper_model="base"):
     return transcribe(video_path, whisper_model)
 
-class ClipAnalysisError(Exception):
-    """Raised when Gemini cannot produce viral clip selections."""
 
-def is_retryable_gemini_error(error):
+def transcription_diagnostic_context(whisper_model):
+    """Return the selected speech provider and model without loading the model."""
+    try:
+        provider = resolve_backend()
+    except Exception:
+        provider = 'transcription'
+    model = SONIOX_MODEL if provider == 'soniox' else whisper_model
+    return provider, model
+
+class ClipAnalysisError(Exception):
+    """Raised when a model provider cannot produce usable clip selections."""
+
+    def __init__(self, message, code='provider_invalid_response', provider=None, model=None):
+        self.code = code if code in PIPELINE_FAILURE_CODES else 'unknown'
+        self.provider = _safe_diagnostic_value(provider)
+        self.model = _safe_diagnostic_value(model)
+        super().__init__(message)
+
+def is_retryable_provider_error(error):
     error_text = str(error).lower()
     retryable_markers = [
         "503",
@@ -1800,6 +1912,16 @@ def is_retryable_gemini_error(error):
         "timeout",
     ]
     return any(marker in error_text for marker in retryable_markers)
+
+
+def classify_provider_error(error):
+    """Map provider exceptions to stable, provider-neutral failure labels."""
+    error_text = str(error).lower()
+    if any(marker in error_text for marker in ("429", "rate limit", "resource_exhausted")):
+        return 'provider_rate_limited'
+    if any(marker in error_text for marker in ("timeout", "timed out")):
+        return 'provider_timeout'
+    return 'provider_request_error'
 
 def get_gemini_retry_delay(error, fallback_seconds):
     """Use Gemini's suggested retry delay when the API includes one."""
@@ -1897,18 +2019,22 @@ def filter_excluded_overlaps(shorts, exclude_ranges, overlap_threshold=0.2):
 
 def get_viral_clips(transcript_result, video_duration, max_retries=3,
                     min_clip_length=15, max_clip_length=60, moment_prompt=""):
+    provider = VIRAL_ANALYSIS_PROVIDER
+    model_name = VIRAL_ANALYSIS_MODEL
     print("🤖  Analyzing with Gemini...")
     
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         print("❌ Error: GEMINI_API_KEY not found in environment variables.")
-        raise ClipAnalysisError("GEMINI_API_KEY is missing.")
+        raise ClipAnalysisError(
+            "GEMINI_API_KEY is missing.",
+            'provider_missing_credentials',
+            provider=provider,
+            model=model_name,
+        )
 
 
     client = genai.Client(api_key=api_key)
-    
-    # We use gemini-2.5-flash as requested.
-    model_name = 'gemini-2.5-flash' 
     
     print(f"🤖  Initializing Gemini with model: {model_name}")
 
@@ -1942,6 +2068,7 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
     )
 
     last_error = None
+    last_failure_code = 'provider_request_error'
     for attempt in range(1, max_retries + 1):
         try:
             call_started = time.perf_counter()
@@ -2003,14 +2130,27 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
             text = text.strip()
 
             result_json = json.loads(text)
+            if not isinstance(result_json, dict):
+                raise ClipAnalysisError(
+                    "Model returned JSON in an unexpected shape.",
+                    'provider_invalid_response',
+                    provider=provider,
+                    model=model_name,
+                )
             if cost_analysis:
                 result_json['cost_analysis'] = cost_analysis
 
             return result_json
+        except json.JSONDecodeError as e:
+            last_error = e
+            last_failure_code = 'provider_invalid_json'
+            print(f"❌ Gemini attempt {attempt}/{max_retries} returned invalid JSON: {e}")
+            break
         except Exception as e:
             last_error = e
+            last_failure_code = classify_provider_error(e)
             print(f"❌ Gemini attempt {attempt}/{max_retries} failed: {e}")
-            if not is_retryable_gemini_error(e):
+            if not is_retryable_provider_error(e):
                 break
             if attempt < max_retries:
                 fallback_wait = min(60, 5 * (2 ** (attempt - 1)))
@@ -2020,7 +2160,10 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
 
     raise ClipAnalysisError(
         "Gemini could not identify clips after retrying. "
-        f"Last error: {last_error}"
+        f"Last error: {last_error}",
+        last_failure_code,
+        provider=provider,
+        model=model_name,
     )
 
 def _build_sentence_transcript(transcript_result):
@@ -2367,6 +2510,7 @@ def _generate_trailer_candidate(client, model_name, prompt, sentences,
     refined candidate {moments_ordered, script, cost_analysis}. Raises
     ClipAnalysisError on structural failure or exhausted retries."""
     last_error = None
+    last_failure_code = 'provider_request_error'
     for attempt in range(1, max_retries + 1):
         try:
             call_started = time.perf_counter()
@@ -2380,6 +2524,8 @@ def _generate_trailer_candidate(client, model_name, prompt, sentences,
                 cost_analysis = _augment_attempt_metrics(
                     cost_analysis, latency_ms, attempts_used=attempt, max_retries=max_retries)
             result_json = json.loads(_strip_json_fence(response.text))
+            if not isinstance(result_json, dict):
+                raise ClipAnalysisError("Trailer response was not a JSON object.")
 
             moments = result_json.get('moments_ordered')
             if not isinstance(moments, list):
@@ -2408,18 +2554,33 @@ def _generate_trailer_candidate(client, model_name, prompt, sentences,
                 script = ' '.join(str(m.get('text', '')).strip() for m in moments).strip()
             return {'moments_ordered': moments, 'script': script,
                     'cost_analysis': cost_analysis}
-        except ClipAnalysisError:
+        except ClipAnalysisError as e:
+            if e.provider is None:
+                e.provider = TRAILER_PROVIDER
+            if e.model is None:
+                e.model = model_name
             raise  # structural failure — this candidate is unusable, don't retry
+        except json.JSONDecodeError as e:
+            last_error = e
+            last_failure_code = 'provider_invalid_json'
+            print(f"❌ Trailer candidate attempt {attempt}/{max_retries} returned invalid JSON: {e}")
+            break
         except Exception as e:
             last_error = e
+            last_failure_code = classify_provider_error(e)
             print(f"❌ Trailer candidate attempt {attempt}/{max_retries} failed: {e}")
-            if not is_retryable_gemini_error(e):
+            if not is_retryable_provider_error(e):
                 break
             if attempt < max_retries:
                 wait = get_gemini_retry_delay(e, min(60, 5 * (2 ** (attempt - 1))))
                 print(f"⏳ retry {attempt + 1}/{max_retries} in {wait}s...")
                 time.sleep(wait)
-    raise ClipAnalysisError(f"Trailer candidate failed after retries. Last error: {last_error}")
+    raise ClipAnalysisError(
+        f"Trailer candidate failed after retries. Last error: {last_error}",
+        last_failure_code,
+        provider=TRAILER_PROVIDER,
+        model=model_name,
+    )
 
 
 def _deterministic_best_trailer(candidates):
@@ -2483,7 +2644,12 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         print("❌ Error: GEMINI_API_KEY not found in environment variables.")
-        raise ClipAnalysisError("GEMINI_API_KEY is missing.")
+        raise ClipAnalysisError(
+            "GEMINI_API_KEY is missing.",
+            'provider_missing_credentials',
+            provider=TRAILER_PROVIDER,
+            model=TRAILER_MODEL,
+        )
 
     client = genai.Client(api_key=api_key)
 
@@ -2533,6 +2699,7 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
     # Sample N candidates and let a judge pick the best — flash follows the
     # multi-constraint prompt inconsistently, so best-of-N beats single-shot.
     candidates = []
+    last_candidate_error = None
     for i in range(TRAILER_CANDIDATES):
         print(f"   🎲 Trailer candidate {i + 1}/{TRAILER_CANDIDATES}...")
         try:
@@ -2540,11 +2707,24 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
                 client, model_name, prompt, sentences, refine_words,
                 video_duration, lo, hi, max_retries))
         except ClipAnalysisError as e:
+            last_candidate_error = e
             print(f"   ⚠️ Candidate {i + 1} unusable: {e}")
 
     if not candidates:
+        if last_candidate_error is not None:
+            raise ClipAnalysisError(
+                "Gemini could not produce any usable trailer candidate. "
+                f"Last error: {last_candidate_error}",
+                last_candidate_error.code,
+                provider=last_candidate_error.provider or TRAILER_PROVIDER,
+                model=last_candidate_error.model or TRAILER_MODEL,
+            )
         raise ClipAnalysisError(
-            "Gemini could not produce any usable trailer candidate.")
+            "Gemini could not produce any usable trailer candidate.",
+            'provider_invalid_response',
+            provider=TRAILER_PROVIDER,
+            model=TRAILER_MODEL,
+        )
 
     if len(candidates) == 1:
         best = 0
@@ -2793,7 +2973,16 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
             '-c:a', 'aac',
             seg_path,
         ]
-        run_logged_command(cut_command, f"Cutting trailer segment {k}", seg_path)
+        run_logged_command(
+            cut_command,
+            f"Cutting trailer segment {k}",
+            seg_path,
+            check=True,
+            failure_stage='extract',
+            failure_code='ffmpeg_cut_error',
+            failure_provider='ffmpeg',
+            failure_model='ffmpeg',
+        )
         return seg_path
 
     from concurrent.futures import ThreadPoolExecutor
@@ -2808,8 +2997,13 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
     for k, seg_path in enumerate(seg_paths):
         if not os.path.exists(seg_path) or os.path.getsize(seg_path) == 0:
             m = moments_ordered[k]
-            raise ClipAnalysisError(
-                f"Trailer segment {k} failed to cut ({float(m['start']):.3f}s-{float(m['end']):.3f}s).")
+            raise PipelineFailure(
+                'extract',
+                'ffmpeg_cut_error',
+                f"Trailer segment {k} failed to cut ({float(m['start']):.3f}s-{float(m['end']):.3f}s).",
+                provider='ffmpeg',
+                model='ffmpeg',
+            )
 
     seg_frames = []
     for k, (seg_path, moment) in enumerate(zip(seg_paths, moments_ordered)):
@@ -2826,7 +3020,13 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
             f_k = int(round((end - start) * fps))
             print(f"   ⚠️  Segment {k}: cv2 frame count unavailable; estimated {f_k} from duration.")
         if f_k <= 0:
-            raise ClipAnalysisError(f"Trailer segment {k} produced no frames ({start:.3f}s-{end:.3f}s).")
+            raise PipelineFailure(
+                'extract',
+                'ffmpeg_cut_error',
+                f"Trailer segment {k} produced no frames ({start:.3f}s-{end:.3f}s).",
+                provider='ffmpeg',
+                model='ffmpeg',
+            )
         print(f"   📐 Segment {k}: {f_k} frames ({start:.3f}s-{end:.3f}s)")
         seg_frames.append(f_k)
 
@@ -2858,7 +3058,25 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
             '-c:a', 'aac',
             trailer_source,
         ]
-        run_logged_command(concat_reencode, "Re-encoding trailer concat", trailer_source)
+        reencode_result = run_logged_command(
+            concat_reencode,
+            "Re-encoding trailer concat",
+            trailer_source,
+            check=True,
+            failure_stage='extract',
+            failure_code='ffmpeg_concat_error',
+            failure_provider='ffmpeg',
+            failure_model='ffmpeg',
+        )
+        if (reencode_result.returncode != 0 or not os.path.exists(trailer_source)
+                or os.path.getsize(trailer_source) == 0):
+            raise PipelineFailure(
+                'extract',
+                'ffmpeg_concat_error',
+                "Trailer segment concatenation failed after the stream-copy and re-encode attempts.",
+                provider='ffmpeg',
+                model='ffmpeg',
+            )
     report_stage("extract", "done")
 
     # 5. Concat offsets in FRAMES (authoritative coordinate space).
@@ -2873,12 +3091,23 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
     #    coords; source.file=basename(trailer_source); durationFrames=sum(F_k).
     final_output = os.path.join(output_dir, f"{base}_clip_1.mp4")
     framing_path = os.path.join(output_dir, f"{base}_clip_1.framing.json")
-    process_video_to_vertical(
-        trailer_source, final_output,
-        framing_output_path=framing_path,
-        framing_source_override=None,
-        aspect_ratio=aspect_ratio,
-    )
+    try:
+        process_video_to_vertical(
+            trailer_source, final_output,
+            framing_output_path=framing_path,
+            framing_source_override=None,
+            aspect_ratio=aspect_ratio,
+        )
+    except PipelineFailure:
+        raise
+    except Exception as e:
+        raise PipelineFailure(
+            'reframe',
+            'reframe_error',
+            f"Trailer reframe failed: {e}",
+            provider='opencv',
+            model='opencv',
+        ) from e
 
     # 7-8. Read back the framing.json process_video_to_vertical wrote, retime
     #    captions using the EXACT source fps it recorded (the value the editor's
@@ -3003,7 +3232,11 @@ if __name__ == '__main__':
             else:
                 output_dir = "."
         
-        input_video, video_title = download_youtube_video(args.url, output_dir)
+        try:
+            input_video, video_title = download_youtube_video(args.url, output_dir)
+        except Exception:
+            report_failure('download', 'download_error', 'yt-dlp', 'youtube')
+            raise
     else:
         input_video = args.input
         # Sanitize the basename: an uploaded file (or its YouTube-derived name)
@@ -3025,11 +3258,11 @@ if __name__ == '__main__':
             else:
                 output_dir = os.path.dirname(input_video)
 
-    report_stage("download", "done")
-
     if not os.path.exists(input_video):
         print(f"❌ Input file not found: {input_video}")
+        report_failure('download', 'input_missing', 'filesystem', 'input')
         exit(1)
+    report_stage("download", "done")
 
     # 2. Transcribe (captions need word-level timestamps in BOTH modes).
     #    "More clips" mode instead reuses a completed job's SAVED transcript:
@@ -3043,8 +3276,18 @@ if __name__ == '__main__':
     else:
         report_stage("transcribe", "start")
         transcribe_start = time.monotonic()
-        print(f"🔊 Transcribing audio ({args.whisper_model})...")
-        transcript = transcribe_video(input_video, args.whisper_model)
+        transcription_provider, transcription_model = transcription_diagnostic_context(args.whisper_model)
+        print(f"🔊 Transcribing audio ({transcription_model}) with {transcription_provider}...")
+        try:
+            transcript = transcribe_video(input_video, args.whisper_model)
+        except Exception:
+            report_failure(
+                'transcribe',
+                'transcription_error',
+                transcription_provider,
+                transcription_model,
+            )
+            raise
         print(f"🔊 Transcription done: {len(transcript.get('segments', []))} segment(s), "
               f"lang={transcript.get('language', 'unknown')}, "
               f"elapsed={time.monotonic() - transcribe_start:.2f}s.")
@@ -3068,9 +3311,28 @@ if __name__ == '__main__':
                 pace=args.trailer_pace,
                 smart_placement=args.smart_placement,
             )
+        except PipelineFailure as e:
+            report_failure(e.stage, e.code, e.provider, e.model)
+            print(f"❌ Trailer assembly failed: {e}")
+            sys.exit(2)
         except ClipAnalysisError as e:
+            report_failure(
+                'analyze',
+                getattr(e, 'code', 'provider_invalid_response'),
+                getattr(e, 'provider', None) or TRAILER_PROVIDER,
+                getattr(e, 'model', None) or TRAILER_MODEL,
+            )
             print(f"❌ Trailer assembly failed: {e}")
             print("🛑 Stopping job. Not converting the whole video as a fallback.")
+            sys.exit(2)
+        except Exception as e:
+            report_failure(
+                'analyze',
+                classify_provider_error(e),
+                TRAILER_PROVIDER,
+                TRAILER_MODEL,
+            )
+            print(f"❌ Trailer assembly failed: {e}")
             sys.exit(2)
 
         # Retain the full original (or clean it up) for the editor's Extend feature.
@@ -3109,7 +3371,7 @@ if __name__ == '__main__':
             'viral_hook_text': '',
         }]}
     else:
-        # 4. Gemini Analysis
+        # 4. Model analysis
         moment_prompt = args.moment_prompt or ""
         if exclude_ranges:
             moment_prompt = build_more_clips_prompt(exclude_ranges, args.num_clips, moment_prompt)
@@ -3122,13 +3384,35 @@ if __name__ == '__main__':
                 moment_prompt=moment_prompt,
             )
         except ClipAnalysisError as e:
+            report_failure(
+                'analyze',
+                getattr(e, 'code', 'provider_invalid_response'),
+                getattr(e, 'provider', None) or VIRAL_ANALYSIS_PROVIDER,
+                getattr(e, 'model', None) or VIRAL_ANALYSIS_MODEL,
+            )
+            print(f"❌ Clip detection failed: {e}")
+            print("🛑 Stopping job. Not converting the whole video as a fallback.")
+            sys.exit(2)
+        except Exception as e:
+            report_failure(
+                'analyze',
+                classify_provider_error(e),
+                VIRAL_ANALYSIS_PROVIDER,
+                VIRAL_ANALYSIS_MODEL,
+            )
             print(f"❌ Clip detection failed: {e}")
             print("🛑 Stopping job. Not converting the whole video as a fallback.")
             sys.exit(2)
 
     if not clips_data or 'shorts' not in clips_data:
-        print("❌ Gemini response did not include any shorts.")
+        print("❌ Model response did not include any shorts.")
         print("🛑 Stopping job. Not converting the whole video as a fallback.")
+        report_failure(
+            'analyze',
+            'provider_invalid_response',
+            VIRAL_ANALYSIS_PROVIDER,
+            VIRAL_ANALYSIS_MODEL,
+        )
         sys.exit(2)
     else:
         # More-clips mode: prompt-level exclusion isn't reliable, so drop any
@@ -3142,6 +3426,12 @@ if __name__ == '__main__':
             if not clips_data['shorts']:
                 print("❌ No non-overlapping new moments remained after filtering.")
                 print("🛑 Stopping job. Not converting the whole video as a fallback.")
+                report_failure(
+                    'analyze',
+                    'provider_invalid_response',
+                    VIRAL_ANALYSIS_PROVIDER,
+                    VIRAL_ANALYSIS_MODEL,
+                )
                 sys.exit(2)
 
         # --num-clips is a hard cap, not a suggestion. The prompt asks for at
@@ -3222,8 +3512,13 @@ if __name__ == '__main__':
                 ]
                 exact_result = run_logged_command(exact_cut_command, f"Cutting clip {i+1} (exact range)", clip_source_path)
                 if exact_result.returncode != 0 or not os.path.exists(clip_source_path) or os.path.getsize(clip_source_path) == 0:
-                    print(f"   ❌ Could not cut a source for clip {i+1}; skipping it.")
-                    return False
+                    raise PipelineFailure(
+                        'extract',
+                        'ffmpeg_cut_error',
+                        f"Could not cut a source for clip {i+1}.",
+                        provider='ffmpeg',
+                        model='ffmpeg',
+                    )
                 pad_start = start  # offset collapses to 0
 
             framing_source_override = None
@@ -3246,20 +3541,36 @@ if __name__ == '__main__':
                 src_cap.release()
 
             if framing_source_override is None:
-                print(f"   ❌ Source cut for clip {i+1} is unreadable; skipping it.")
-                return False
+                raise PipelineFailure(
+                    'extract',
+                    'source_unreadable',
+                    f"Source cut for clip {i+1} is unreadable.",
+                    provider='opencv',
+                    model='opencv',
+                )
 
             # Process vertical: bake only the clip's window of the padded
             # source. Frame numbering is absolute in the padded file, so the
             # framing.json comes out in padded-source coordinates directly.
-            success = process_video_to_vertical(
-                clip_source_path, clip_final_path,
-                framing_output_path=clip_framing_path,
-                framing_source_override=framing_source_override,
-                aspect_ratio=args.aspect_ratio,
-                bake_in_frame=offset_frames,
-                bake_out_frame=bake_out,
-            )
+            try:
+                success = process_video_to_vertical(
+                    clip_source_path, clip_final_path,
+                    framing_output_path=clip_framing_path,
+                    framing_source_override=framing_source_override,
+                    aspect_ratio=args.aspect_ratio,
+                    bake_in_frame=offset_frames,
+                    bake_out_frame=bake_out,
+                )
+            except PipelineFailure:
+                raise
+            except Exception as e:
+                raise PipelineFailure(
+                    'reframe',
+                    'reframe_error',
+                    f"Reframe failed for clip {i+1}: {e}",
+                    provider='opencv',
+                    model='opencv',
+                ) from e
 
             if success:
                 print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
@@ -3270,7 +3581,12 @@ if __name__ == '__main__':
             # aborted the rest of the job; in parallel we finish the survivors).
             try:
                 return process_one_clip(i, clip)
+            except PipelineFailure as e:
+                report_failure(e.stage, e.code, e.provider, e.model)
+                print(f"   ❌ Clip {i+1} failed: {e}")
+                return False
             except Exception as e:
+                report_failure('extract', 'clip_processing_error', 'python', 'pipeline')
                 print(f"   ❌ Clip {i+1} failed: {e}")
                 return False
 

@@ -667,6 +667,11 @@ function App() {
               trackedProcessOutcomes.current.add(failureKey);
               track('process_failed', {
                 failure_category: 'processing',
+                failure_stage: data.failure_stage,
+                failure_code: data.failure_code,
+                failure_provider: data.failure_provider,
+                failure_model: data.failure_model,
+                failure_exit_code: data.failure_exit_code,
                 elapsed_seconds: data.elapsed_seconds,
               });
             }
@@ -948,7 +953,11 @@ function App() {
       return true;
     } catch (e) {
       setStatus('error');
-      track('process_failed', { failure_category: 'queueing' });
+      track('process_failed', {
+        failure_category: 'queueing',
+        failure_stage: 'queueing',
+        failure_code: 'queueing_error',
+      });
       captureError(e, { area: 'process_start' });
       setLogs(l => [...l, `Error starting job: ${e.message}`]);
       return false;
