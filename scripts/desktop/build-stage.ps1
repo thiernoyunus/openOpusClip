@@ -259,9 +259,9 @@ $PyDir = Join-Path $Stage 'python'
 $before = Get-FolderSizeMB $PyDir
 $PipCheckOutput = @(& $PyExe -m pip check 2>&1)
 if ($LASTEXITCODE -ne 0) {
-    # mediapipe 0.10.14 ships a universal2 binary but labels its wheel as
-    # x86_64. pip check reports that metadata mismatch on an arm64 interpreter;
-    # the import and inference smoke test below verifies the actual binary.
+    # Mirror the macOS check so both stage builders tolerate the same known
+    # MediaPipe wheel-label message; the native smoke test below verifies the
+    # runtime itself.
     $UnexpectedPipCheck = @($PipCheckOutput | Where-Object {
         $_ -notmatch '^mediapipe [^ ]+ is not supported on this platform$'
     })
