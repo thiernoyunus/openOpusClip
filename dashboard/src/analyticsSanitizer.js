@@ -22,6 +22,10 @@ export function safeContextValue(value, fallback = 'unknown') {
   return safe || fallback;
 }
 
+export function buildExceptionFingerprint(parts) {
+  return parts.map((part) => safeContextValue(part)).join(':');
+}
+
 function sanitizeStackFrame(frame) {
   if (!frame || typeof frame !== 'object') return undefined;
 

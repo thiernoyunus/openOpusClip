@@ -7,6 +7,7 @@ import {
   URL_PROPERTY,
   scrubText,
   safeContextValue,
+  buildExceptionFingerprint,
   sanitizeNested,
   sanitizeExceptionList,
 } from './analyticsSanitizer.js';
@@ -49,6 +50,7 @@ const DIAGNOSTIC_EXCEPTION_KEYS = new Set([
   '$exception_functions',
   '$exception_line',
   '$exception_colno',
+  '$exception_fingerprint',
 ]);
 const SENSITIVE_INPUT = /(?:api[\s_-]?(?:key|token)|password|secret|credential)/i;
 const API_KEY_VALUE = /\b(?:phc|sk|zern|soniox)[_-][A-Za-z0-9_-]{12,}\b|\bAIza[A-Za-z0-9_-]{30,}\b/i;
@@ -308,19 +310,21 @@ export async function submitFeedback(properties = {}) {
   }));
 }
 
-export function captureError(error, { area = 'renderer', ...context } = {}) {
+export function captureError(error, { area = 'renderer', fingerprint, ...context } = {}) {
   if (!initialized) return;
   if (error && typeof error === 'object') {
     if (capturedErrors.has(error)) return;
     capturedErrors.add(error);
   }
   const safeArea = safeContextValue(area);
-  const fingerprint = `${safeArea}:${safeContextValue(error?.name || 'Error')}:${scrubText(error?.message || error || 'Error')}`;
-  if (wasRecentlyCaptured(fingerprint)) return;
+  const issueFingerprint = Array.isArray(fingerprint) ? buildExceptionFingerprint(fingerprint) : null;
+  const dedupeKey = issueFingerprint || `${safeArea}:${safeContextValue(error?.name || 'Error')}:${scrubText(error?.message || error || 'Error')}`;
+  if (wasRecentlyCaptured(dedupeKey)) return;
   // Forward any extra context (e.g. an upstream error `code`) so a captured
   // exception carries its cause instead of collapsing into one fingerprint.
   // beforeSend still scrubs every value before it leaves the app.
   const properties = { area: safeArea };
+  if (issueFingerprint) properties.$exception_fingerprint = issueFingerprint;
   for (const [key, value] of Object.entries(context)) {
     if (value == null) continue;
     properties[safeContextValue(key)] = safeContextValue(value);

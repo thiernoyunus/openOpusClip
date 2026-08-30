@@ -777,6 +777,7 @@ function App() {
         } else {
           captureError(new Error(`social_connect_${platform}`), {
             area: 'social_connect',
+            fingerprint: ['social_connect', platform, zernio?.code, zernio?.reason],
             code: zernio?.code,
             reason: zernio?.reason,
           });
