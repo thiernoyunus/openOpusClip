@@ -27,6 +27,7 @@ const { spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 const { createTelemetry } = require('./telemetry');
 const { categorizeUpdaterError } = require('./updater-categories');
+const youtubeAuth = require('./youtube-auth');
 
 const ROOT = path.resolve(__dirname, '..');
 const BACKEND_URL = 'http://127.0.0.1:8000';
@@ -66,6 +67,17 @@ ipcMain.handle('open-opus-telemetry:get-context', () => telemetry.getContext());
 ipcMain.handle('open-opus-telemetry:capture-feedback', (_event, feedback) => {
   if (!feedback || typeof feedback !== 'object') return false;
   return telemetry.capture('survey sent', feedback);
+});
+
+ipcMain.handle('open-opus-youtube:get-status', () => ({
+  signedIn: youtubeAuth.isSignedIn(DATA),
+}));
+ipcMain.handle('open-opus-youtube:sign-in', async () => ({
+  signedIn: await youtubeAuth.openSignInWindow(DATA),
+}));
+ipcMain.handle('open-opus-youtube:sign-out', async () => {
+  await youtubeAuth.signOut(DATA);
+  return { signedIn: false };
 });
 
 function launchErrorCategory(err) {
@@ -273,6 +285,7 @@ function buildDevPlan() {
       env: Object.assign({}, process.env, {
         OPENSHORTS_OUTPUT_DIR: outputDir,
         OPENSHORTS_UPLOAD_DIR: uploadsDir,
+        YOUTUBE_COOKIES_FILE: youtubeAuth.cookieFilePath(DATA),
         RENDER_SERVICE_URL: 'http://127.0.0.1:' + RENDERER_PORT,
       }),
     },
@@ -370,6 +383,7 @@ function buildPackagedPlan() {
         PYTHONDONTWRITEBYTECODE: '1',
         OPENSHORTS_OUTPUT_DIR: outputDir,
         OPENSHORTS_UPLOAD_DIR: uploadsDir,
+        YOUTUBE_COOKIES_FILE: youtubeAuth.cookieFilePath(DATA),
         HF_HOME: hfHome, // whisper model cache
         RENDER_SERVICE_URL: 'http://127.0.0.1:' + RENDERER_PORT,
       }),

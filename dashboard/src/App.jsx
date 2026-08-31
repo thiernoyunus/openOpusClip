@@ -8,9 +8,11 @@ import ScheduleWeekModal from './components/ScheduleWeekModal';
 import SocialCalendar from './components/SocialCalendar';
 import TrailerPage from './TrailerPage';
 import ProcessingModal from './components/ProcessingModal';
+import YouTubeAccess from './components/YouTubeAccess';
 import EditorView from './components/editor/EditorView';
 import { getProjects, addProject, updateProject, removeProject, phaseFromLogs, titleFromPayload, thumbFromPayload, coverFromString, fetchVideoTitle, captureVideoFrame, isTrailerProject } from './lib/projectHistory';
 import { getClipList, setClipList, addToClipList } from './lib/clipState';
+import { GEMINI_MODEL_STORAGE_KEY, getStoredGeminiModel } from './lib/geminiModels';
 import { getApiUrl } from './config';
 import { captureError, track, trackPageview } from './analytics';
 import { getPhase, setPhase, armNext, runTourPhase, stopTour, startTourFromHome, APP_SUPPORT_INDEX } from './lib/platformTour.js';
@@ -58,6 +60,12 @@ const ShortcutItem = ({ icon: Icon, color, label, onClick, active = false, ...re
     <span className="text-xs">{label}</span>
   </button>
 );
+
+const isYouTubeAuthFailure = (data) => {
+  if (data?.failure_category === 'youtube_auth_required') return true;
+  const text = [...(data?.logs || []), data?.error || ''].join('\n').toLowerCase();
+  return text.includes('youtube_auth_required') || text.includes('sign in to confirm') || text.includes('http error 403');
+};
 
 // Enhanced "Encryption" using XOR + Base64 with a Salt
 // This is better than plain Base64 but still client-side.
@@ -149,6 +157,7 @@ const pollJob = async (jobId) => {
 
 function App() {
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
+  const [geminiModel, setGeminiModel] = useState(getStoredGeminiModel);
   // Social API State (Zernio) - Load encrypted or plain
   const [zernioKey, setZernioKey] = useState(() => {
     const stored = localStorage.getItem('zernioKey_v1');
@@ -213,6 +222,11 @@ function App() {
   const [sortBy, setSortBy] = useState('score'); // 'score' | 'order'
   const [logs, setLogs] = useState([]);
   const [processingMedia, setProcessingMedia] = useState(null);
+  const [youtubeSignedIn, setYoutubeSignedIn] = useState(null);
+  const [youtubeAuthBusy, setYoutubeAuthBusy] = useState(false);
+  const [youtubeAuthError, setYoutubeAuthError] = useState(null);
+  const [youtubeAuthRequired, setYoutubeAuthRequired] = useState(false);
+  const youtubeBridgeAvailable = Boolean(window.openOpusYouTube?.signIn);
   // dashboard, settings, trailer.
   // #trailer is a legacy deep link from when the trailer tool was its own page.
   const [activeTab, setActiveTab] = useState(() => (window.location.hash === '#trailer' ? 'trailer' : 'dashboard'));
@@ -250,6 +264,25 @@ function App() {
     const project = getProjects().find((p) => p.id === id);
     return project?.createdAt ? (Date.now() - project.createdAt) / 1000 : null;
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadYouTubeAuth = async () => {
+      if (!window.openOpusYouTube?.getStatus) {
+        setYoutubeSignedIn(false);
+        return;
+      }
+      try {
+        const result = await window.openOpusYouTube.getStatus();
+        if (!cancelled) setYoutubeSignedIn(Boolean(result?.signedIn));
+      } catch (e) {
+        if (!cancelled) setYoutubeAuthError('Could not check YouTube access.');
+        captureError(e, { area: 'youtube_auth_status' });
+      }
+    };
+    loadYouTubeAuth();
+    return () => { cancelled = true; };
+  }, []);
 
   // Platform tour: each phase runs when its screen is on stage. Ending a
   // phase's tour arms the next one; closing it early stops the flow.
@@ -393,6 +426,7 @@ function App() {
             if (session.processingMedia) setProcessingMedia(session.processingMedia);
             if (session.activeTab) setActiveTab(session.activeTab);
             setStatus(data.status === 'completed' ? 'complete' : data.status === 'failed' ? 'error' : 'processing');
+            setYoutubeAuthRequired(data.status === 'failed' && isYouTubeAuthFailure(data));
             const recoveredDone = data.status === 'completed' || data.status === 'failed';
             setProjects(updateProject(session.jobId, {
               durationSeconds: data.duration_seconds ?? (recoveredDone ? fallbackDurationSeconds(session.jobId) : null),
@@ -558,6 +592,10 @@ function App() {
   }, [apiKey]);
 
   useEffect(() => {
+    localStorage.setItem(GEMINI_MODEL_STORAGE_KEY, geminiModel);
+  }, [geminiModel]);
+
+  useEffect(() => {
     if (zernioKey) {
       localStorage.setItem('zernioKey_v1', encrypt(zernioKey));
     }
@@ -666,7 +704,7 @@ function App() {
             if (!trackedProcessOutcomes.current.has(failureKey)) {
               trackedProcessOutcomes.current.add(failureKey);
               track('process_failed', {
-                failure_category: 'processing',
+                failure_category: isYouTubeAuthFailure(data) ? 'youtube_auth_required' : 'processing',
                 failure_stage: data.failure_stage,
                 failure_code: data.failure_code,
                 failure_provider: data.failure_provider,
@@ -682,6 +720,7 @@ function App() {
             }));
             if (id === jobId) {
               setStatus('error');
+              setYoutubeAuthRequired(isYouTubeAuthFailure(data));
               setGeneratingMore(false);
               const errorMsg = data.error || (data.logs && data.logs.length > 0 ? data.logs[data.logs.length - 1] : "Process failed");
               setLogs(prev => [...prev, "Error: " + errorMsg]);
@@ -798,7 +837,7 @@ function App() {
 
   const startProcessJob = async (data, { makeActive = true } = {}) => {
     let body;
-    const headers = { 'X-Gemini-Key': apiKey };
+    const headers = { 'X-Gemini-Key': apiKey, 'X-Gemini-Model': geminiModel };
     // Soniox is bring-your-own key: only sent when that engine is selected.
     if (data.transcriptionEngine === 'soniox' && sonioxKey) {
       headers['X-Soniox-Key'] = sonioxKey;
@@ -831,7 +870,7 @@ function App() {
       method: 'POST',
       // For file uploads the browser sets Content-Type (multipart boundary), so
       // only forward the auth headers — including X-Soniox-Key when present.
-      headers: data.type === 'url' ? headers : { 'X-Gemini-Key': apiKey, ...(headers['X-Soniox-Key'] ? { 'X-Soniox-Key': headers['X-Soniox-Key'] } : {}) },
+      headers: data.type === 'url' ? headers : { 'X-Gemini-Key': apiKey, 'X-Gemini-Model': geminiModel, ...(headers['X-Soniox-Key'] ? { 'X-Soniox-Key': headers['X-Soniox-Key'] } : {}) },
       body
     });
 
@@ -888,7 +927,7 @@ function App() {
     try {
       const res = await fetch(getApiUrl(`/api/jobs/${jobId}/more-clips`), {
         method: 'POST',
-        headers: { 'X-Gemini-Key': apiKey, 'Content-Type': 'application/json' },
+        headers: { 'X-Gemini-Key': apiKey, 'X-Gemini-Model': geminiModel, 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
       if (!res.ok) {
@@ -921,6 +960,7 @@ function App() {
       setShowKeyModal(true);
       return;
     }
+    setYoutubeAuthRequired(false);
     track('process_started', {
       source_category: data.type === 'url' ? 'remote_video' : data.type === 'files' ? 'local_files' : 'local_file',
       operation_category: data.tool || 'clip_generation',
@@ -976,12 +1016,57 @@ function App() {
     }
   };
 
+  const handleYouTubeSignIn = async ({ retry = false } = {}) => {
+    if (!window.openOpusYouTube?.signIn) {
+      setYoutubeAuthError('YouTube sign-in is available in the desktop app.');
+      setActiveTab('settings');
+      return false;
+    }
+    setYoutubeAuthBusy(true);
+    setYoutubeAuthError(null);
+    try {
+      const result = await window.openOpusYouTube.signIn();
+      const signedIn = Boolean(result?.signedIn);
+      setYoutubeSignedIn(signedIn);
+      if (!signedIn) {
+        throw new Error('No signed-in YouTube session was saved. Sign in, close the window, and try again.');
+      }
+      if (retry && processingMedia?.type === 'url') {
+        setYoutubeAuthRequired(false);
+        await handleProcess(processingMedia);
+      }
+      return true;
+    } catch (e) {
+      setYoutubeAuthError(e.message || 'YouTube sign-in did not finish.');
+      captureError(e, { area: 'youtube_auth_sign_in' });
+      return false;
+    } finally {
+      setYoutubeAuthBusy(false);
+    }
+  };
+
+  const handleYouTubeSignOut = async () => {
+    if (!window.openOpusYouTube?.signOut) return;
+    setYoutubeAuthBusy(true);
+    setYoutubeAuthError(null);
+    try {
+      await window.openOpusYouTube.signOut();
+      setYoutubeSignedIn(false);
+    } catch (e) {
+      setYoutubeAuthError('Could not sign out of YouTube.');
+      captureError(e, { area: 'youtube_auth_sign_out' });
+    } finally {
+      setYoutubeAuthBusy(false);
+    }
+  };
+
   const handleReset = () => {
     setStatus('idle');
     setJobId(null);
     setResults(null);
     setLogs([]);
     setProcessingMedia(null);
+    setYoutubeAuthRequired(false);
     setViewingResults(false);
     setShowProcessingModal(false);
     setOpenClip(null);
@@ -1014,6 +1099,7 @@ function App() {
             }));
           } else if (data.status === 'failed') {
             setStatus('error');
+            setYoutubeAuthRequired(isYouTubeAuthFailure(data));
             setProjects(updateProject(p.id, {
               status: 'failed',
               durationSeconds: data.duration_seconds ?? (p.createdAt ? (Date.now() - p.createdAt) / 1000 : null),
@@ -1170,7 +1256,7 @@ function App() {
               {durationLabel ? ` · ${proc ? 'running ' : ''}${durationLabel}` : ''}
             </span>
             {p.cost != null && (
-              <span className="text-[10px] text-muted bg-surface2 px-1.5 py-0.5 rounded">${p.cost.toFixed(3)}</span>
+              <span className="text-[10px] text-muted bg-surface2 px-1.5 py-0.5 rounded" title="Paid-tier estimate; your Google Free Tier may charge $0">~${p.cost.toFixed(3)} est.</span>
             )}
           </div>
         </div>
@@ -1306,7 +1392,21 @@ function App() {
                 </div>
               </div>
 
-              <KeyInput onKeySet={setApiKey} savedKey={apiKey} />
+              <KeyInput
+                onKeySet={setApiKey}
+                savedKey={apiKey}
+                savedModel={geminiModel}
+                onModelChange={setGeminiModel}
+              />
+
+              <YouTubeAccess
+                available={youtubeBridgeAvailable}
+                signedIn={youtubeSignedIn}
+                busy={youtubeAuthBusy}
+                error={youtubeAuthError}
+                onSignIn={() => handleYouTubeSignIn()}
+                onSignOut={handleYouTubeSignOut}
+              />
 
               <div data-tour="zernio-section" className="glass-panel p-6 mt-8">
                 <div className="flex items-center justify-between mb-4">
@@ -1458,7 +1558,7 @@ function App() {
           {/* View: Podcast Trailer */}
           {activeTab === 'trailer' && (
             <div className="h-full overflow-y-auto custom-scrollbar p-6 md:p-10 animate-[fadeIn_0.3s_ease-out]">
-              <TrailerPage onGoToSettings={() => setActiveTab('settings')} />
+              <TrailerPage geminiModel={geminiModel} onGoToSettings={() => setActiveTab('settings')} />
             </div>
           )}
 
@@ -1538,8 +1638,8 @@ function App() {
                   <span className="text-xs bg-surface2 text-muted px-2 py-0.5 rounded-full">{liveClipCount}</span>
                 )}
                 {results?.cost_analysis && (
-                  <span className="text-xs bg-viral/10 border border-viral/20 text-viral px-2 py-0.5 rounded-full" title={`Input: ${results.cost_analysis.input_tokens} | Output: ${results.cost_analysis.output_tokens}`}>
-                    ${results.cost_analysis.total_cost.toFixed(4)}
+                  <span className="text-xs bg-viral/10 border border-viral/20 text-viral px-2 py-0.5 rounded-full" title={`Paid-tier estimate · Input: ${results.cost_analysis.input_tokens} | Output: ${results.cost_analysis.output_tokens}. Free Tier may charge $0`}>
+                    ~${results.cost_analysis.total_cost.toFixed(4)} est.
                   </span>
                 )}
                 {openJobBusy && (
@@ -1779,6 +1879,11 @@ function App() {
           status={status}
           phase={phaseFromLogs(logs)}
           duration={activeDuration}
+          youtubeAuthRequired={youtubeAuthRequired}
+          canRetryYouTube={processingMedia?.type === 'url'}
+          youtubeAuthBusy={youtubeAuthBusy}
+          youtubeAuthError={youtubeAuthError}
+          onYouTubeSignIn={() => handleYouTubeSignIn({ retry: processingMedia?.type === 'url' })}
           onViewClips={() => { setShowProcessingModal(false); setViewingResults(true); }}
         />
       )}

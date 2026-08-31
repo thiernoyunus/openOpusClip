@@ -13,6 +13,7 @@ import {
   captureVideoFrame,
 } from './lib/projectHistory';
 import { getApiUrl } from './config';
+import { getStoredGeminiModel } from './lib/geminiModels';
 
 // Transcription engines mirror MediaInput: 'whisper' (built-in, free) or
 // 'soniox' (BYO key, best for multilingual). Soniox is only usable with a key
@@ -79,7 +80,7 @@ const formatJobDuration = (seconds) => {
 // Rendered as a tab inside App (like SocialCalendar), not a standalone page —
 // onGoToSettings lets it hand off to the Settings tab in the same shell,
 // mirroring SocialCalendar's onGoToSettings prop.
-export default function TrailerPage({ onGoToSettings }) {
+export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGeminiModel() }) {
   // Reuse the exact same localStorage keys the main app uses.
   const apiKey = localStorage.getItem('gemini_key') || '';
   const sonioxKey = (() => {
@@ -220,7 +221,7 @@ export default function TrailerPage({ onGoToSettings }) {
     setShowModal(true);
 
     try {
-      const headers = { 'X-Gemini-Key': apiKey };
+      const headers = { 'X-Gemini-Key': apiKey, 'X-Gemini-Model': geminiModel };
       if (transcriptionEngine === 'soniox' && sonioxKey) {
         headers['X-Soniox-Key'] = sonioxKey;
       }
@@ -258,7 +259,7 @@ export default function TrailerPage({ onGoToSettings }) {
         headers:
           mode === 'url'
             ? headers
-            : { 'X-Gemini-Key': apiKey, ...(headers['X-Soniox-Key'] ? { 'X-Soniox-Key': headers['X-Soniox-Key'] } : {}) },
+            : { 'X-Gemini-Key': apiKey, 'X-Gemini-Model': geminiModel, ...(headers['X-Soniox-Key'] ? { 'X-Soniox-Key': headers['X-Soniox-Key'] } : {}) },
         body,
       });
 

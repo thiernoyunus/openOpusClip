@@ -4,6 +4,7 @@ import { defaultSubtitleConfig, saveDefaultCaptionStyle } from './useEditorState
 import { CAPTION_TEMPLATES, resolveTemplateId, getCaptionTemplate } from '@remotion-src/lib/captionTemplates';
 import { SUBTITLE_FONTS } from '@remotion-src/lib/fonts';
 import { getApiUrl } from '../../config';
+import { getStoredGeminiModel } from '../../lib/geminiModels';
 import CaptionPreview from './CaptionPreview';
 import { DEFAULT_EMOJI_SIZE } from '@remotion-src/compositions/Subtitles';
 
@@ -384,7 +385,11 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
         try {
             const res = await fetch(getApiUrl('/api/captions/enhance'), {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': apiKey },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Gemini-Key': apiKey,
+                    'X-Gemini-Model': getStoredGeminiModel(),
+                },
                 body: JSON.stringify({ words: words.map((w) => w.text) }),
             });
             if (!res.ok) {

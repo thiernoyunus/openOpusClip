@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from s3_uploader import upload_job_artifacts, delete_job_files, upload_job_file
 import transcription
 from transcription import WHISPER_MODELS
+from gemini_models import DEFAULT_GEMINI_MODEL, get_gemini_model
 
 try:
     import keyring
@@ -72,7 +73,8 @@ PIPELINE_FAILURE_CODES = frozenset({
     "clip_processing_error",
     "source_unreadable", "reframe_error", "ffmpeg_cut_error",
     "ffmpeg_reframe_error", "ffmpeg_concat_error", "ffmpeg_merge_error",
-    "metadata_missing", "process_exit", "backend_execution_error", "unknown",
+    "metadata_missing", "youtube_auth_required", "process_exit",
+    "backend_execution_error", "unknown",
 })
 PIPELINE_FAILURE_CODE_ALIASES = {
     # Accept markers from a worker that was started just before an app update.
@@ -180,6 +182,16 @@ extend_tasks: Dict[str, Dict] = {}
 extend_tasks_lock = threading.Lock()
 # Semester to limit concurrency to MAX_CONCURRENT_JOBS
 concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+
+
+def _request_gemini_model(request: Request) -> str:
+    """Validate the model selected by the browser at the API boundary."""
+    try:
+        return get_gemini_model(
+            request.headers.get("X-Gemini-Model") or DEFAULT_GEMINI_MODEL
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 def _relocate_root_job_artifacts(job_id: str, job_output_dir: str) -> bool:
     """
@@ -658,6 +670,19 @@ app.mount("/thumbnails", StaticFiles(directory=THUMBNAILS_DIR), name="thumbnails
 class ProcessRequest(BaseModel):
     url: str
 
+
+def _classify_failure(job):
+    if job.get('source_type') != 'youtube_url':
+        return None
+    logs = '\n'.join(job.get('logs', [])).lower()
+    if (job.get('failure_code') == 'youtube_auth_required'
+            or 'youtube_auth_required' in logs
+            or 'sign in to confirm' in logs
+            or 'http error 403' in logs):
+        return 'youtube_auth_required'
+    return None
+
+
 def enqueue_output(out, job_id):
     """Reads output from a subprocess and appends it to jobs logs."""
     try:
@@ -866,6 +891,7 @@ async def process_endpoint(
     api_key = request.headers.get("X-Gemini-Key")
     if not api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
+    gemini_model = _request_gemini_model(request)
 
     ack_flag = str(acknowledged).lower() in ("1", "true", "yes")
 
@@ -956,6 +982,7 @@ async def process_endpoint(
     cmd = [sys.executable, "-u", "main.py"] # -u for unbuffered
     env = os.environ.copy()
     env["GEMINI_API_KEY"] = api_key # Override with key from request
+    env["GEMINI_MODEL"] = gemini_model
     if transcription_engine == "soniox":
         # transcription.resolve_backend() reads WHISPER_BACKEND; Soniox key is
         # bring-your-own and only lives in this subprocess env, never on disk.
@@ -1014,6 +1041,7 @@ async def process_endpoint(
     # Enqueue Job
     jobs[job_id] = {
         'status': 'queued',
+        'source_type': 'youtube_url' if url else 'local_file',
         'logs': [f"Job {job_id} queued."],
         'current_stage': None,
         'last_stage': None,
@@ -1111,6 +1139,7 @@ async def get_status(job_id: str):
     return {
         "status": job['status'],
         "logs": job['logs'],
+        "failure_category": _classify_failure(job),
         "result": _normalize_clip_urls(job.get('result')),
         "created_at": job.get('created_at'),
         "started_at": started_at,
@@ -1428,7 +1457,7 @@ def _merge_more_clips(job_id: str, output_dir: str, meta_path: str, scratch_dir:
     return len(new_shorts)
 
 
-def _more_clips_worker(job_id: str, count, api_key: str):
+def _more_clips_worker(job_id: str, count, api_key: str, gemini_model: str):
     """Blocking worker (runs in an executor thread): spawn main.py in more-clips
     mode, stream its logs into the job, then merge the new clips. Always lands
     the job back on 'completed' — a failed run must never damage existing
@@ -1483,6 +1512,7 @@ def _more_clips_worker(job_id: str, count, api_key: str):
             cmd += ["--num-clips", str(count)]
         env = os.environ.copy()
         env["GEMINI_API_KEY"] = api_key
+        env["GEMINI_MODEL"] = gemini_model
 
         _log(f"Analyzing the transcript for new viral moments (excluding {len(exclude_ranges)} existing range(s))...")
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=os.getcwd())
@@ -1528,7 +1558,7 @@ def _more_clips_worker(job_id: str, count, api_key: str):
         shutil.rmtree(scratch_dir, ignore_errors=True)
 
 
-async def _run_more_clips_task(job_id: str, count, api_key: str):
+async def _run_more_clips_task(job_id: str, count, api_key: str, gemini_model: str):
     # Acquire the SAME asyncio semaphore that gates run_job so a more-clips run
     # counts against MAX_CONCURRENT_JOBS — a semaphore slot (vs. a bare thread)
     # is the right fit here because this is heavy ffmpeg/detection work that
@@ -1537,7 +1567,9 @@ async def _run_more_clips_task(job_id: str, count, api_key: str):
     # thread via run_in_executor.
     async with concurrency_semaphore:
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, _more_clips_worker, job_id, count, api_key)
+        await loop.run_in_executor(
+            None, _more_clips_worker, job_id, count, api_key, gemini_model
+        )
 
 
 @app.post("/api/jobs/{job_id}/more-clips")
@@ -1548,6 +1580,7 @@ async def more_clips(job_id: str, request: Request):
     api_key = request.headers.get("X-Gemini-Key")
     if not api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
+    gemini_model = _request_gemini_model(request)
     if not _safe_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job id")
 
@@ -1601,7 +1634,7 @@ async def more_clips(job_id: str, request: Request):
     job["status"] = "processing"
     job["logs"].append("Generating more clips...")
 
-    asyncio.create_task(_run_more_clips_task(job_id, count, api_key))
+    asyncio.create_task(_run_more_clips_task(job_id, count, api_key, gemini_model))
     return {"status": "processing"}
 
 
@@ -2135,6 +2168,7 @@ class CaptionEnhanceRequest(BaseModel):
 @app.post("/api/captions/enhance")
 async def enhance_captions(
     req: CaptionEnhanceRequest,
+    request: Request,
     x_gemini_key: Optional[str] = Header(None, alias="X-Gemini-Key")
 ):
     """AI emoji + keyword highlight pass over caption words (text-only Gemini).
@@ -2147,13 +2181,14 @@ async def enhance_captions(
 
     if not final_api_key:
         raise HTTPException(status_code=400, detail="Missing Gemini API Key (Header)")
+    gemini_model = _request_gemini_model(request)
 
     if not req.words:
         return {"emojis": {}, "highlights": []}
 
     try:
         def run_enhance():
-            editor = VideoEditor(api_key=final_api_key)
+            editor = VideoEditor(api_key=final_api_key, model_name=gemini_model)
             return editor.get_caption_enhancements(req.words)
 
         loop = asyncio.get_running_loop()
@@ -2174,6 +2209,7 @@ class BrollSuggestRequest(BaseModel):
 @app.post("/api/broll/suggest")
 async def suggest_broll(
     req: BrollSuggestRequest,
+    request: Request,
     x_gemini_key: Optional[str] = Header(None, alias="X-Gemini-Key")
 ):
     """AI b-roll auto-placement pass over caption words (text-only Gemini).
@@ -2186,13 +2222,14 @@ async def suggest_broll(
 
     if not final_api_key:
         raise HTTPException(status_code=400, detail="Missing Gemini API Key (Header)")
+    gemini_model = _request_gemini_model(request)
 
     if not req.words:
         return {"suggestions": []}
 
     try:
         def run_suggest():
-            editor = VideoEditor(api_key=final_api_key)
+            editor = VideoEditor(api_key=final_api_key, model_name=gemini_model)
             words = [{"text": w.text, "startMs": w.startMs} for w in req.words]
             return editor.get_broll_suggestions(words)
 
@@ -2918,6 +2955,7 @@ async def thumbnail_analyze(
     api_key = x_gemini_key
     if not api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
+    gemini_model = _request_gemini_model(request)
 
     pre_transcript = None
 
@@ -2961,7 +2999,9 @@ async def thumbnail_analyze(
 
         # Run analysis in thread pool (skips Whisper if pre_transcript is available)
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, analyze_video_for_titles, api_key, video_path, pre_transcript)
+        result = await loop.run_in_executor(
+            None, analyze_video_for_titles, api_key, video_path, pre_transcript, gemini_model
+        )
 
         # Store/update session context
         if session_id not in thumbnail_sessions:
@@ -2998,12 +3038,14 @@ class ThumbnailTitlesRequest(BaseModel):
 @app.post("/api/thumbnail/titles")
 async def thumbnail_titles(
     req: ThumbnailTitlesRequest,
+    request: Request,
     x_gemini_key: Optional[str] = Header(None, alias="X-Gemini-Key")
 ):
     """Refine title suggestions or accept a manual title."""
     api_key = x_gemini_key
     if not api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
+    gemini_model = _request_gemini_model(request)
 
     # Manual title mode - just create a session with the user's title
     if req.title:
@@ -3039,7 +3081,8 @@ async def thumbnail_titles(
             api_key,
             session["context"],
             req.message,
-            session["conversation"]
+            session["conversation"],
+            gemini_model,
         )
 
         new_titles = result.get("titles", [])
@@ -3068,6 +3111,7 @@ async def thumbnail_generate(
     api_key = x_gemini_key
     if not api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
+    _request_gemini_model(request)
 
     # Clamp count
     count = min(max(1, count), 6)
@@ -3113,7 +3157,7 @@ async def thumbnail_generate(
         )
 
         if not thumbnails:
-            raise HTTPException(status_code=500, detail="Thumbnail generation failed. Please check your Gemini API key has access to image generation (gemini-3.1-flash-image-preview model).")
+            raise HTTPException(status_code=500, detail="Thumbnail generation failed. Please check your Gemini API key has access to image generation (gemini-3.1-flash-image model).")
 
         return {"thumbnails": thumbnails}
 
@@ -3131,12 +3175,14 @@ class ThumbnailDescribeRequest(BaseModel):
 @app.post("/api/thumbnail/describe")
 async def thumbnail_describe(
     req: ThumbnailDescribeRequest,
+    request: Request,
     x_gemini_key: Optional[str] = Header(None, alias="X-Gemini-Key")
 ):
     """Generate a YouTube description with chapters from the transcript."""
     api_key = x_gemini_key
     if not api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
+    gemini_model = _request_gemini_model(request)
 
     if req.session_id not in thumbnail_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -3157,7 +3203,8 @@ async def thumbnail_describe(
             req.title,
             segments,
             session.get("language", "en"),
-            session.get("video_duration", 0)
+            session.get("video_duration", 0),
+            gemini_model,
         )
         return {"description": result.get("description", "")}
 
