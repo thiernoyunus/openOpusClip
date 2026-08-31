@@ -12,6 +12,7 @@ from main import _augment_attempt_metrics
 
 
 def test_passes_none_through():
+    """Missing cost data remains missing instead of becoming a fake estimate."""
     # Matches existing behaviour when usage_metadata was unavailable: no
     # synthetic dict, no zero values, no spurious zero-latency entry.
     assert _augment_attempt_metrics(
@@ -19,6 +20,7 @@ def test_passes_none_through():
 
 
 def test_adds_bounded_numeric_fields_without_altering_existing_shape():
+    """Attempt metadata is added without changing existing cost fields."""
     base = {
         "input_tokens": 1000,
         "output_tokens": 50,
@@ -46,6 +48,7 @@ def test_adds_bounded_numeric_fields_without_altering_existing_shape():
 
 
 def test_attempts_used_is_recorded_verbatim_for_diagnostics():
+    """The retry count remains available for diagnostics."""
     # The helper doesn't clamp attempts_used to max_retries — a single attempt
     # that fails past the cap is still useful diagnostic truth.
     out = _augment_attempt_metrics(

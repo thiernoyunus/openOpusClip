@@ -65,6 +65,12 @@ const decrypt = (text) => {
 
 const MAX_POLL_FAILURES = 5;
 
+const isYouTubeAuthFailure = (data) => {
+  if (data?.failure_category === 'youtube_auth_required') return true;
+  const text = [...(data?.logs || []), data?.error || ''].join('\n').toLowerCase();
+  return text.includes('youtube_auth_required') || text.includes('sign in to confirm') || text.includes('http error 403');
+};
+
 // Same "3m 12s" shaping the Clip Generator's project cards use.
 const formatJobDuration = (seconds) => {
   if (seconds == null || Number.isNaN(Number(seconds))) return null;
@@ -104,6 +110,9 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
   const [logs, setLogs] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [projects, setProjects] = useState(() => getProjects().filter(isTrailerProject));
+  const [youtubeAuthRequired, setYoutubeAuthRequired] = useState(false);
+  const [youtubeAuthBusy, setYoutubeAuthBusy] = useState(false);
+  const [youtubeAuthError, setYoutubeAuthError] = useState(null);
   const pollFailures = useRef(0);
 
   const sonioxBlocked = transcriptionEngine === 'soniox' && !sonioxKey;
@@ -127,6 +136,7 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
         if (data.logs) setLogs(data.logs);
 
         if (data.status === 'completed') {
+          setYoutubeAuthRequired(false);
           setStatus('complete');
           if (data.logs) setLogs(data.logs);
           updateProject(jobId, { status: 'completed', clipCount: 1, duration_seconds: data.duration_seconds ?? null });
@@ -140,6 +150,7 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
             window.location.search = params.toString();
           }
         } else if (data.status === 'failed') {
+          setYoutubeAuthRequired(isYouTubeAuthFailure(data));
           setStatus('error');
           updateProject(jobId, { status: 'error' });
           setProjects(getProjects().filter(isTrailerProject));
@@ -216,7 +227,10 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
     if (mode === 'file' && !file) return;
 
     setSubmitting(true);
+    setJobId(null);
     setStatus('processing');
+    setYoutubeAuthRequired(false);
+    setYoutubeAuthError(null);
     setLogs(['Queued podcast trailer…']);
     setShowModal(true);
 
@@ -296,6 +310,29 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
       setLogs((l) => [...l, `Error starting job: ${e.message}`]);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleYouTubeSignIn = async () => {
+    if (!window.openOpusYouTube?.signIn) {
+      setYoutubeAuthError('YouTube sign-in is available in the desktop app.');
+      return false;
+    }
+    setYoutubeAuthBusy(true);
+    setYoutubeAuthError(null);
+    try {
+      const result = await window.openOpusYouTube.signIn();
+      if (!result?.signedIn) {
+        throw new Error('No signed-in YouTube session was saved. Sign in, close the window, and try again.');
+      }
+      setYoutubeAuthRequired(false);
+      await submit();
+      return true;
+    } catch (e) {
+      setYoutubeAuthError(e.message || 'YouTube sign-in did not finish.');
+      return false;
+    } finally {
+      setYoutubeAuthBusy(false);
     }
   };
 
@@ -676,6 +713,11 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
         logs={logs}
         status={status}
         phase={phase}
+        youtubeAuthRequired={youtubeAuthRequired}
+        canRetryYouTube={mode === 'url'}
+        youtubeAuthBusy={youtubeAuthBusy || submitting}
+        youtubeAuthError={youtubeAuthError}
+        onYouTubeSignIn={handleYouTubeSignIn}
         onViewClips={() => {
           if (jobId) {
             const params = new URLSearchParams();

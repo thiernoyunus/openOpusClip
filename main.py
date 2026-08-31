@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 import json
 from transcription import WHISPER_MODELS, SONIOX_MODEL, resolve_backend, transcribe
 from ffmpeg_utils import video_codec_args
-from gemini_models import DEFAULT_GEMINI_MODEL, GEMINI_PRICING, get_gemini_model
+from gemini_models import DEFAULT_GEMINI_MODEL, get_gemini_model, get_gemini_pricing
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module='google.protobuf')
@@ -49,7 +49,7 @@ PIPELINE_FAILURE_CODES = frozenset({
     'provider_rate_limited', 'provider_timeout', 'provider_error',
     'clip_processing_error', 'source_unreadable', 'reframe_error',
     'ffmpeg_cut_error', 'ffmpeg_reframe_error', 'ffmpeg_concat_error',
-    'ffmpeg_merge_error', 'metadata_missing', 'process_exit',
+    'ffmpeg_merge_error', 'metadata_missing', 'youtube_auth_required', 'process_exit',
     'backend_execution_error', 'unknown',
 })
 _DIAGNOSTIC_VALUE_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$')
@@ -947,11 +947,13 @@ def retain_or_cleanup_original(input_video, output_dir, is_url, keep_flag):
 
 
 def _youtube_requires_sign_in(error):
+    """Return whether yt-dlp says YouTube requires an authenticated viewer."""
     message = str(error).lower()
     return "http error 403" in message or "sign in to confirm" in message
 
 
 def _youtube_download_error_message(error):
+    """Format a user-safe YouTube failure message and recovery instruction."""
     if _youtube_requires_sign_in(error):
         return """
 OPENSHORTS_FAILURE:download:youtube_auth_required
@@ -2048,6 +2050,7 @@ def filter_excluded_overlaps(shorts, exclude_ranges, overlap_threshold=0.2):
 
 def get_viral_clips(transcript_result, video_duration, max_retries=3,
                     min_clip_length=15, max_clip_length=60, moment_prompt=""):
+    """Ask the selected Gemini model to identify timestamped viral moments."""
     provider = VIRAL_ANALYSIS_PROVIDER
     model_name = VIRAL_ANALYSIS_MODEL
     print("🤖  Analyzing with Gemini...")
@@ -2120,7 +2123,7 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
             try:
                 usage = response.usage_metadata
                 if usage:
-                    input_price_per_million, output_price_per_million = GEMINI_PRICING[model_name]
+                    input_price_per_million, output_price_per_million = get_gemini_pricing(model_name)
 
                     prompt_tokens = usage.prompt_token_count
                     output_tokens = usage.candidates_token_count
@@ -2491,22 +2494,16 @@ def _strip_json_fence(text):
     return text.strip()
 
 
-# (input, output) USD per 1M tokens. These are paid-tier estimates; Google may
-# charge $0 when the account is within its Free Tier.
-_GEMINI_PRICING = GEMINI_PRICING
-
-
 def _trailer_cost(response, model_name):
     """Extract token usage/cost from a Gemini response; prints and returns a dict
-    (or None). Rates from _GEMINI_PRICING (defaults to 3-flash if unknown)."""
+    (or None). Rates use the current effective paid-tier schedule."""
     try:
         usage = response.usage_metadata
         if not usage:
             return None
         pt = usage.prompt_token_count
         ot = usage.candidates_token_count
-        in_rate, out_rate = _GEMINI_PRICING.get(
-            model_name, _GEMINI_PRICING[DEFAULT_GEMINI_MODEL])
+        in_rate, out_rate = get_gemini_pricing(model_name)
         input_cost = (pt / 1_000_000) * in_rate
         output_cost = (ot / 1_000_000) * out_rate
         total = input_cost + output_cost
@@ -3273,8 +3270,13 @@ if __name__ == '__main__':
         
         try:
             input_video, video_title = download_youtube_video(args.url, output_dir)
-        except Exception:
-            report_failure('download', 'download_error', 'yt-dlp', 'youtube')
+        except Exception as error:
+            report_failure(
+                'download',
+                'youtube_auth_required' if _youtube_requires_sign_in(error) else 'download_error',
+                'yt-dlp',
+                'youtube',
+            )
             raise
     else:
         input_video = args.input

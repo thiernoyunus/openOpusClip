@@ -1,9 +1,15 @@
 const assert = require('node:assert/strict');
+const path = require('node:path');
 const { cookieFilePath, hasAuthCookie, toNetscape } = require('./youtube-auth');
 
-assert.equal(hasAuthCookie([{ name: 'SID' }]), true);
+assert.equal(hasAuthCookie([{ name: 'SID' }]), false);
+assert.equal(hasAuthCookie([{ name: 'LOGIN_INFO' }]), false);
+assert.equal(hasAuthCookie([{ name: 'LOGIN_INFO' }, { name: 'SAPISID' }]), true);
 assert.equal(hasAuthCookie([{ name: 'YSC' }]), false);
-assert.equal(cookieFilePath('/tmp/openopusclip'), '/tmp/openopusclip/youtube-cookies.txt');
+assert.equal(
+  cookieFilePath(path.join('/tmp', 'openopusclip')),
+  path.join('/tmp', 'openopusclip', 'youtube-cookies.txt'),
+);
 
 const jar = toNetscape([{
   domain: '.youtube.com',

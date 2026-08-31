@@ -55,6 +55,7 @@ UPLOAD_RETENTION_SECONDS = int(os.environ.get("UPLOAD_RETENTION_SECONDS", "3600"
 # thumbnail studio's "thumbnails" dir). Never auto-purged or deletable as a job.
 RESERVED_OUTPUT_DIRS = {"thumbnails"}
 DISABLE_YOUTUBE_URL = os.environ.get("DISABLE_YOUTUBE_URL", "false").lower() in ("1", "true", "yes")
+YOUTUBE_COOKIES_FILE = os.environ.get("YOUTUBE_COOKIES_FILE")
 MCP_KEYRING_SERVICE = os.environ.get("OPENOPUSCLIPS_KEYRING_SERVICE", "openopusclips")
 MCP_KEYRING_USERNAME = "gemini"
 
@@ -303,6 +304,7 @@ def _persist_result(job_id: str) -> None:
         tmp = os.path.join(out_dir, "result.json.tmp")
         snapshot = {
             "status": job.get("status", "completed"),
+            "source_type": job.get("source_type"),
             "result": job.get("result"),
             "created_at": job.get("created_at"),
             "started_at": job.get("started_at"),
@@ -671,7 +673,12 @@ class ProcessRequest(BaseModel):
     url: str
 
 
+class YouTubeAccessRequest(BaseModel):
+    cookie_file: Optional[str] = None
+
+
 def _classify_failure(job):
+    """Return the YouTube sign-in recovery category for a failed URL job."""
     if job.get('source_type') != 'youtube_url':
         return None
     logs = '\n'.join(job.get('logs', [])).lower()
@@ -854,7 +861,25 @@ async def run_job(job_id, job_data):
 
 @app.get("/api/config")
 async def get_config():
+    """Report whether this deployment accepts YouTube URL imports."""
     return {"youtubeUrlEnabled": not DISABLE_YOUTUBE_URL}
+
+
+@app.put("/api/youtube/access")
+async def set_youtube_access(req: YouTubeAccessRequest, request: Request):
+    """Point newly queued local jobs at the Electron-managed cookie jar."""
+    global YOUTUBE_COOKIES_FILE
+    if not request.client or request.client.host not in {"127.0.0.1", "::1"}:
+        raise HTTPException(status_code=403, detail="YouTube access can only be configured locally")
+
+    if req.cookie_file:
+        cookie_file = os.path.abspath(os.path.expanduser(req.cookie_file))
+        if not os.path.isfile(cookie_file):
+            raise HTTPException(status_code=400, detail="YouTube cookie file is unavailable")
+        YOUTUBE_COOKIES_FILE = cookie_file
+    else:
+        YOUTUBE_COOKIES_FILE = None
+    return {"configured": bool(YOUTUBE_COOKIES_FILE)}
 
 @app.put("/api/mcp/credentials")
 async def save_mcp_credentials(x_gemini_key: Optional[str] = Header(None, alias="X-Gemini-Key")):
@@ -888,6 +913,7 @@ async def process_endpoint(
     trailer_pace: Optional[str] = Form("standard"),
     smart_placement: Optional[str] = Form(None),
 ):
+    """Validate a media job request and enqueue its isolated worker process."""
     api_key = request.headers.get("X-Gemini-Key")
     if not api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
@@ -983,6 +1009,10 @@ async def process_endpoint(
     env = os.environ.copy()
     env["GEMINI_API_KEY"] = api_key # Override with key from request
     env["GEMINI_MODEL"] = gemini_model
+    if YOUTUBE_COOKIES_FILE:
+        env["YOUTUBE_COOKIES_FILE"] = YOUTUBE_COOKIES_FILE
+    else:
+        env.pop("YOUTUBE_COOKIES_FILE", None)
     if transcription_engine == "soniox":
         # transcription.resolve_backend() reads WHISPER_BACKEND; Soniox key is
         # bring-your-own and only lives in this subprocess env, never on disk.
@@ -1072,6 +1102,7 @@ async def get_all_status():
         if snap is not None:
             jobs[job_id] = {
                 "status": snap.get("status", "completed"),
+                "source_type": snap.get("source_type"),
                 "logs": [],
                 "current_stage": None,
                 "last_stage": None,
@@ -1105,6 +1136,7 @@ async def get_all_status():
 
 @app.get("/api/status/{job_id}")
 async def get_status(job_id: str):
+    """Return live or persisted job status, including safe failure metadata."""
     if job_id not in jobs:
         # Projects persist on disk; rehydrate a finished one whose in-memory
         # state was lost (e.g. server restart) so it stays openable, not "expired".
@@ -1115,6 +1147,7 @@ async def get_status(job_id: str):
             raise HTTPException(status_code=404, detail="Job not found")
         jobs[job_id] = {
             "status": snap.get("status", "completed"),
+            "source_type": snap.get("source_type"),
             "logs": [],
             "current_stage": None,
             "last_stage": None,

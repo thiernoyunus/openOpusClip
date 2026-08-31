@@ -6,6 +6,7 @@ from gemini_models import get_gemini_model
 
 class VideoEditor:
     def __init__(self, api_key, model_name=None):
+        """Create an editor client using the selected supported Gemini model."""
         self.client = genai.Client(api_key=api_key)
         self.text_model_name = get_gemini_model(model_name)
 

@@ -12,7 +12,7 @@ const PARTITION = 'persist:youtube';
 const BROWSER_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:141.0) ' +
   'Gecko/20100101 Firefox/141.0';
-const AUTH_COOKIES = ['SID', 'SAPISID', '__Secure-1PSID', '__Secure-3PSID', 'LOGIN_INFO'];
+const AUTH_COOKIES = ['SAPISID', '__Secure-1PAPISID', '__Secure-3PAPISID'];
 
 function cookieFilePath(dataDir) {
   return path.join(dataDir, 'youtube-cookies.txt');
@@ -39,7 +39,8 @@ function toNetscape(cookies) {
 }
 
 function hasAuthCookie(cookies) {
-  return cookies.some((cookie) => AUTH_COOKIES.includes(cookie.name));
+  return cookies.some((cookie) => cookie.name === 'LOGIN_INFO')
+    && cookies.some((cookie) => AUTH_COOKIES.includes(cookie.name));
 }
 
 async function exportCookies(dataDir) {
@@ -68,7 +69,7 @@ async function signOut(dataDir) {
 }
 
 function openSignInWindow(dataDir) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const partitionSession = session.fromPartition(PARTITION);
     partitionSession.setUserAgent(BROWSER_UA);
 
@@ -89,15 +90,23 @@ function openSignInWindow(dataDir) {
       if (/^https?:$/.test(new URL(url).protocol)) shell.openExternal(url);
       return { action: 'deny' };
     });
-    win.loadURL('https://www.youtube.com/');
-
+    let settled = false;
     win.on('closed', async () => {
+      if (settled) return;
+      settled = true;
       try {
         resolve(await exportCookies(dataDir));
       } catch (error) {
         console.error('[youtube-auth] cookie export failed:', error.message);
         resolve(false);
       }
+    });
+
+    win.loadURL('https://www.youtube.com/').catch(() => {
+      if (settled) return;
+      settled = true;
+      if (!win.isDestroyed()) win.destroy();
+      reject(new Error('Could not open YouTube sign-in. Check your internet connection and try again.'));
     });
   });
 }
