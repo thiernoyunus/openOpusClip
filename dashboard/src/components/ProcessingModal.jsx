@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, ArrowDown, Check, ChevronRight } from 'lucide-react';
+import { X, ArrowDown, Check, ChevronRight, Loader2, Youtube } from 'lucide-react';
 import { PHASE_LABELS, phaseIndexFromLogs } from '../lib/projectHistory';
 
 // Colorize a log line the way Opus does: highlight quoted strings, dim routine
@@ -12,7 +12,21 @@ function logColor(line) {
   return 'text-muted';
 }
 
-export default function ProcessingModal({ open, onClose, title: _title, logs = [], status, phase, duration, onViewClips }) {
+export default function ProcessingModal({
+  open,
+  onClose,
+  title: _title,
+  logs = [],
+  status,
+  phase,
+  duration,
+  youtubeAuthRequired = false,
+  canRetryYouTube = false,
+  youtubeAuthBusy = false,
+  youtubeAuthError = null,
+  onYouTubeSignIn,
+  onViewClips,
+}) {
   const endRef = useRef(null);
   const scrollRef = useRef(null);
   // Stick to the newest line only while the user is already at the bottom.
@@ -157,6 +171,30 @@ export default function ProcessingModal({ open, onClose, title: _title, logs = [
               );
             })}
           </ul>
+
+          {failed && youtubeAuthRequired && (
+            <div className="mt-4 p-4 rounded-lg border border-amber-500/30 bg-amber-500/10" role="alert">
+              <div className="flex items-start gap-3">
+                <Youtube size={18} className="text-red-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm text-fg font-medium">YouTube requires sign-in</p>
+                  <p className="text-xs text-muted mt-1 leading-relaxed">
+                    This video needs a signed-in YouTube viewer. Your saved session stays on this computer.
+                  </p>
+                </div>
+              </div>
+              {youtubeAuthError && <p className="text-xs text-red-400 mt-3" aria-live="polite">{youtubeAuthError}</p>}
+              <button
+                type="button"
+                onClick={onYouTubeSignIn}
+                disabled={youtubeAuthBusy}
+                className="mt-3 px-3 py-2 rounded-lg text-sm font-medium bg-fg text-[#18181b] hover:bg-white active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {youtubeAuthBusy ? <Loader2 size={15} className="animate-spin" /> : <Youtube size={15} />}
+                {youtubeAuthBusy ? 'YouTube sign-in in progress…' : canRetryYouTube ? 'Sign in & retry' : 'Sign in to YouTube'}
+              </button>
+            </div>
+          )}
 
           {/* Raw log, collapsed by default. Keeps the exact streaming output for
               anyone who wants it, without making it the first thing you see. */}

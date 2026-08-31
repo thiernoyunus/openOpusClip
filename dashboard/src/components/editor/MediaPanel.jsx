@@ -4,6 +4,7 @@ import {
     Image as ImageIcon, Clapperboard, Music, ChevronLeft,
 } from 'lucide-react';
 import { getApiUrl } from '../../config';
+import { getStoredGeminiModel } from '../../lib/geminiModels';
 import { outputDurationFrames } from '@remotion-src/lib/edl';
 import { EDITOR_FPS } from './EditorCanvas';
 
@@ -264,7 +265,11 @@ function MediaPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
         try {
             const res = await fetch(getApiUrl('/api/broll/suggest'), {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': geminiKey },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Gemini-Key': geminiKey,
+                    'X-Gemini-Model': getStoredGeminiModel(),
+                },
                 body: JSON.stringify({ words: captions.map((w) => ({ text: w.text, startMs: w.startMs })) }),
             });
             if (!res.ok) throw new Error(await readErrorMessage(res, `Suggestion failed (${res.status})`));

@@ -1,15 +1,14 @@
-import os
 import json
 from google import genai
 from google.genai import types
+from gemini_models import get_gemini_model
 
 
 class VideoEditor:
-    def __init__(self, api_key):
+    def __init__(self, api_key, model_name=None):
+        """Create an editor client using the selected supported Gemini model."""
         self.client = genai.Client(api_key=api_key)
-        self.model_name = "gemini-3-flash-preview"
-        # Cheap model for tiny text-only tasks (caption emoji, b-roll keywords).
-        self.text_model_name = os.environ.get("EDITOR_TEXT_MODEL", "gemini-2.5-flash-lite")
+        self.text_model_name = get_gemini_model(model_name)
 
     def get_caption_enhancements(self, words: list[str]) -> dict:
         """

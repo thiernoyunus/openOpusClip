@@ -5,9 +5,10 @@ import json
 from google import genai
 from google.genai import types
 from PIL import Image
+from gemini_models import GEMINI_IMAGE_MODEL, get_gemini_model
 
 
-def analyze_video_for_titles(api_key, video_path, transcript=None):
+def analyze_video_for_titles(api_key, video_path, transcript=None, model_name=None):
     """
     Transcribes a video and uses Gemini to suggest viral YouTube titles.
     If transcript is provided, skips Whisper transcription.
@@ -22,6 +23,7 @@ def analyze_video_for_titles(api_key, video_path, transcript=None):
 
     print("📤 [Thumbnail] Uploading video to Gemini...")
     client = genai.Client(api_key=api_key)
+    model_name = get_gemini_model(model_name)
 
     file_upload = client.files.upload(file=video_path)
     while True:
@@ -65,7 +67,7 @@ OUTPUT JSON:
 
     print("🤖 [Thumbnail] Asking Gemini for title suggestions...")
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=model_name,
         contents=[file_upload, prompt],
         config=types.GenerateContentConfig(
             response_mime_type="application/json"
@@ -108,11 +110,12 @@ OUTPUT JSON:
         }
 
 
-def refine_titles(api_key, context, user_message, conversation_history=None):
+def refine_titles(api_key, context, user_message, conversation_history=None, model_name=None):
     """
     Takes video context + user feedback and returns refined title suggestions.
     """
     client = genai.Client(api_key=api_key)
+    model_name = get_gemini_model(model_name)
 
     history_text = ""
     if conversation_history:
@@ -143,7 +146,7 @@ OUTPUT JSON:
 }}"""
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=model_name,
         contents=[prompt],
         config=types.GenerateContentConfig(
             response_mime_type="application/json"
@@ -244,7 +247,9 @@ DESIGN REQUIREMENTS:
         print(f"🎨 [Thumbnail] Generating thumbnail {i + 1}/{count}...")
         try:
             response = client.models.generate_content(
-                model="gemini-3.1-flash-image-preview",
+                # Text models cannot return images, so image generation uses
+                # Gemini's separate stable image model.
+                model=GEMINI_IMAGE_MODEL,
                 contents=prompt_parts,
                 config=types.GenerateContentConfig(
                     response_modalities=["TEXT", "IMAGE"],
@@ -276,12 +281,13 @@ DESIGN REQUIREMENTS:
     return thumbnails
 
 
-def generate_youtube_description(api_key, title, transcript_segments, language, video_duration):
+def generate_youtube_description(api_key, title, transcript_segments, language, video_duration, model_name=None):
     """
     Uses Gemini to generate a YouTube description with chapter markers from transcript segments.
     Returns: { "description": "full description text with chapters" }
     """
     client = genai.Client(api_key=api_key)
+    model_name = get_gemini_model(model_name)
 
     # Format segments for the prompt
     formatted_segments = []
@@ -325,7 +331,7 @@ OUTPUT: Return ONLY the description text (no JSON wrapper, no markdown code bloc
 
     print("🤖 [Thumbnail] Generating YouTube description with chapters...")
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=model_name,
         contents=[prompt],
     )
 

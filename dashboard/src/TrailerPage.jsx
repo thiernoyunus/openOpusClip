@@ -13,6 +13,7 @@ import {
   captureVideoFrame,
 } from './lib/projectHistory';
 import { getApiUrl } from './config';
+import { getStoredGeminiModel } from './lib/geminiModels';
 
 // Transcription engines mirror MediaInput: 'whisper' (built-in, free) or
 // 'soniox' (BYO key, best for multilingual). Soniox is only usable with a key
@@ -64,6 +65,12 @@ const decrypt = (text) => {
 
 const MAX_POLL_FAILURES = 5;
 
+const isYouTubeAuthFailure = (data) => {
+  if (data?.failure_category === 'youtube_auth_required') return true;
+  const text = [...(data?.logs || []), data?.error || ''].join('\n').toLowerCase();
+  return text.includes('youtube_auth_required') || text.includes('sign in to confirm') || text.includes('http error 403');
+};
+
 // Same "3m 12s" shaping the Clip Generator's project cards use.
 const formatJobDuration = (seconds) => {
   if (seconds == null || Number.isNaN(Number(seconds))) return null;
@@ -79,7 +86,7 @@ const formatJobDuration = (seconds) => {
 // Rendered as a tab inside App (like SocialCalendar), not a standalone page —
 // onGoToSettings lets it hand off to the Settings tab in the same shell,
 // mirroring SocialCalendar's onGoToSettings prop.
-export default function TrailerPage({ onGoToSettings }) {
+export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGeminiModel() }) {
   // Reuse the exact same localStorage keys the main app uses.
   const apiKey = localStorage.getItem('gemini_key') || '';
   const sonioxKey = (() => {
@@ -103,6 +110,9 @@ export default function TrailerPage({ onGoToSettings }) {
   const [logs, setLogs] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [projects, setProjects] = useState(() => getProjects().filter(isTrailerProject));
+  const [youtubeAuthRequired, setYoutubeAuthRequired] = useState(false);
+  const [youtubeAuthBusy, setYoutubeAuthBusy] = useState(false);
+  const [youtubeAuthError, setYoutubeAuthError] = useState(null);
   const pollFailures = useRef(0);
 
   const sonioxBlocked = transcriptionEngine === 'soniox' && !sonioxKey;
@@ -126,6 +136,7 @@ export default function TrailerPage({ onGoToSettings }) {
         if (data.logs) setLogs(data.logs);
 
         if (data.status === 'completed') {
+          setYoutubeAuthRequired(false);
           setStatus('complete');
           if (data.logs) setLogs(data.logs);
           updateProject(jobId, { status: 'completed', clipCount: 1, duration_seconds: data.duration_seconds ?? null });
@@ -139,6 +150,7 @@ export default function TrailerPage({ onGoToSettings }) {
             window.location.search = params.toString();
           }
         } else if (data.status === 'failed') {
+          setYoutubeAuthRequired(isYouTubeAuthFailure(data));
           setStatus('error');
           updateProject(jobId, { status: 'error' });
           setProjects(getProjects().filter(isTrailerProject));
@@ -215,12 +227,15 @@ export default function TrailerPage({ onGoToSettings }) {
     if (mode === 'file' && !file) return;
 
     setSubmitting(true);
+    setJobId(null);
     setStatus('processing');
+    setYoutubeAuthRequired(false);
+    setYoutubeAuthError(null);
     setLogs(['Queued podcast trailer…']);
     setShowModal(true);
 
     try {
-      const headers = { 'X-Gemini-Key': apiKey };
+      const headers = { 'X-Gemini-Key': apiKey, 'X-Gemini-Model': geminiModel };
       if (transcriptionEngine === 'soniox' && sonioxKey) {
         headers['X-Soniox-Key'] = sonioxKey;
       }
@@ -258,7 +273,7 @@ export default function TrailerPage({ onGoToSettings }) {
         headers:
           mode === 'url'
             ? headers
-            : { 'X-Gemini-Key': apiKey, ...(headers['X-Soniox-Key'] ? { 'X-Soniox-Key': headers['X-Soniox-Key'] } : {}) },
+            : { 'X-Gemini-Key': apiKey, 'X-Gemini-Model': geminiModel, ...(headers['X-Soniox-Key'] ? { 'X-Soniox-Key': headers['X-Soniox-Key'] } : {}) },
         body,
       });
 
@@ -295,6 +310,29 @@ export default function TrailerPage({ onGoToSettings }) {
       setLogs((l) => [...l, `Error starting job: ${e.message}`]);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleYouTubeSignIn = async () => {
+    if (!window.openOpusYouTube?.signIn) {
+      setYoutubeAuthError('YouTube sign-in is available in the desktop app.');
+      return false;
+    }
+    setYoutubeAuthBusy(true);
+    setYoutubeAuthError(null);
+    try {
+      const result = await window.openOpusYouTube.signIn();
+      if (!result?.signedIn) {
+        throw new Error('No signed-in YouTube session was saved. Sign in, close the window, and try again.');
+      }
+      setYoutubeAuthRequired(false);
+      await submit();
+      return true;
+    } catch (e) {
+      setYoutubeAuthError(e.message || 'YouTube sign-in did not finish.');
+      return false;
+    } finally {
+      setYoutubeAuthBusy(false);
     }
   };
 
@@ -675,6 +713,11 @@ export default function TrailerPage({ onGoToSettings }) {
         logs={logs}
         status={status}
         phase={phase}
+        youtubeAuthRequired={youtubeAuthRequired}
+        canRetryYouTube={mode === 'url'}
+        youtubeAuthBusy={youtubeAuthBusy || submitting}
+        youtubeAuthError={youtubeAuthError}
+        onYouTubeSignIn={handleYouTubeSignIn}
         onViewClips={() => {
           if (jobId) {
             const params = new URLSearchParams();

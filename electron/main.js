@@ -27,6 +27,7 @@ const { spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 const { createTelemetry } = require('./telemetry');
 const { categorizeUpdaterError } = require('./updater-categories');
+const youtubeAuth = require('./youtube-auth');
 
 const ROOT = path.resolve(__dirname, '..');
 const BACKEND_URL = 'http://127.0.0.1:8000';
@@ -66,6 +67,20 @@ ipcMain.handle('open-opus-telemetry:get-context', () => telemetry.getContext());
 ipcMain.handle('open-opus-telemetry:capture-feedback', (_event, feedback) => {
   if (!feedback || typeof feedback !== 'object') return false;
   return telemetry.capture('survey sent', feedback);
+});
+
+ipcMain.handle('open-opus-youtube:get-status', () => ({
+  signedIn: youtubeAuth.isSignedIn(DATA),
+}));
+ipcMain.handle('open-opus-youtube:sign-in', async () => {
+  const signedIn = await youtubeAuth.openSignInWindow(DATA);
+  const backendSynced = await syncYouTubeCookiesFile();
+  return { signedIn, backendSynced };
+});
+ipcMain.handle('open-opus-youtube:sign-out', async () => {
+  await youtubeAuth.signOut(DATA);
+  await syncYouTubeCookiesFile();
+  return { signedIn: false };
 });
 
 function launchErrorCategory(err) {
@@ -225,6 +240,36 @@ function checkUrlIsUp(url, timeoutMs) {
   });
 }
 
+// Tell a backend that was started outside Electron where the local cookie jar
+// lives. The path is sent, never the cookie contents; a missing/older backend
+// endpoint is non-fatal because spawned backends already receive the env var.
+function syncYouTubeCookiesFile() {
+  const cookieFile = youtubeAuth.isSignedIn(DATA)
+    ? youtubeAuth.cookieFilePath(DATA)
+    : null;
+  if (!cookieFile) return Promise.resolve(true);
+  const body = JSON.stringify({ cookie_file: cookieFile });
+
+  return new Promise((resolve) => {
+    const req = http.request(BACKEND_URL + '/api/youtube/access', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode === 200));
+    });
+    req.setTimeout(2000, () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.on('error', () => resolve(false));
+    req.end(body);
+  });
+}
+
 // --- Step 3: spawn backend + renderer -------------------------------------
 
 // Build the two child-process descriptions for the current mode. Dev mode
@@ -273,6 +318,7 @@ function buildDevPlan() {
       env: Object.assign({}, process.env, {
         OPENSHORTS_OUTPUT_DIR: outputDir,
         OPENSHORTS_UPLOAD_DIR: uploadsDir,
+        YOUTUBE_COOKIES_FILE: youtubeAuth.cookieFilePath(DATA),
         RENDER_SERVICE_URL: 'http://127.0.0.1:' + RENDERER_PORT,
       }),
     },
@@ -370,6 +416,7 @@ function buildPackagedPlan() {
         PYTHONDONTWRITEBYTECODE: '1',
         OPENSHORTS_OUTPUT_DIR: outputDir,
         OPENSHORTS_UPLOAD_DIR: uploadsDir,
+        YOUTUBE_COOKIES_FILE: youtubeAuth.cookieFilePath(DATA),
         HF_HOME: hfHome, // whisper model cache
         RENDER_SERVICE_URL: 'http://127.0.0.1:' + RENDERER_PORT,
       }),
@@ -574,6 +621,7 @@ async function waitForBackendThenShowWindow() {
   while (Date.now() < deadline) {
     const up = await checkUrlIsUp(BACKEND_URL + '/api/config', 2000);
     if (up) {
+      await syncYouTubeCookiesFile();
       createWindow();
       return;
     }

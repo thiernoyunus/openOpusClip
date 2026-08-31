@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const { UPDATER_ERROR_CATEGORIES, categorizeUpdaterError } = require('./updater-categories');
 const { files: packagedShellFiles } = require('./electron-builder');
 
-for (const file of ['main.js', 'preload.js', 'telemetry.js', 'updater-categories.js']) {
+for (const file of ['main.js', 'preload.js', 'telemetry.js', 'updater-categories.js', 'youtube-auth.js']) {
   assert.ok(packagedShellFiles.includes(file), `${file} must be included in the packaged desktop shell`);
 }
 
@@ -94,7 +94,7 @@ async function main() {
   }
 
   const preloadSource = fs.readFileSync(path.join(__dirname, 'preload.js'), 'utf8');
-  let exposedBridge;
+  const exposedBridges = {};
   const invocations = [];
   vm.runInNewContext(preloadSource, {
     require(request) {
@@ -102,8 +102,7 @@ async function main() {
       return {
         contextBridge: {
           exposeInMainWorld(name, value) {
-            assert.equal(name, 'openOpusTelemetry');
-            exposedBridge = value;
+            exposedBridges[name] = value;
           },
         },
         ipcRenderer: {
@@ -116,7 +115,7 @@ async function main() {
     },
     Object,
   });
-  assert.equal(await exposedBridge.captureFeedback({
+  assert.equal(await exposedBridges.openOpusTelemetry.captureFeedback({
     category: 'bug',
     detail: 'Bridge check',
     sessionId: '019fdfec-e7a0-7230-bf66-23721d3d8bc7',
@@ -126,6 +125,15 @@ async function main() {
   assert.equal(invocations[0].payload.detail, 'Bridge check');
   assert.equal(invocations[0].payload.sessionId, '019fdfec-e7a0-7230-bf66-23721d3d8bc7');
   assert.equal(invocations[0].payload.submissionId, '019fdfec-e7a0-7230-bf66-23721d3d8bc8');
+
+  await exposedBridges.openOpusYouTube.getStatus();
+  await exposedBridges.openOpusYouTube.signIn();
+  await exposedBridges.openOpusYouTube.signOut();
+  assert.deepEqual(invocations.slice(1).map(({ channel }) => channel), [
+    'open-opus-youtube:get-status',
+    'open-opus-youtube:sign-in',
+    'open-opus-youtube:sign-out',
+  ]);
 
   await telemetry.shutdown();
   fs.rmSync(userData, { recursive: true, force: true });

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Key, Eye, EyeOff, Check } from 'lucide-react';
+import { DEFAULT_GEMINI_MODEL, GEMINI_MODELS } from '../lib/geminiModels';
 
-export default function KeyInput({ onKeySet, savedKey }) {
+export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMINI_MODEL, onModelChange }) {
     const [key, setKey] = useState(savedKey || '');
     const [isVisible, setIsVisible] = useState(false);
     const [isSaved, setIsSaved] = useState(!!savedKey);
@@ -60,6 +61,27 @@ export default function KeyInput({ onKeySet, savedKey }) {
                 >
                     {isSaved ? <><Check size={18} /> Ready</> : 'Set Key'}
                 </button>
+            </div>
+            <div className="mt-6">
+                <label htmlFor="gemini-model" className="block text-sm text-zinc-300 mb-2">
+                    Gemini model for AI features
+                </label>
+                <select
+                    id="gemini-model"
+                    value={savedModel}
+                    onChange={(e) => onModelChange?.(e.target.value)}
+                    className="input-field w-full"
+                >
+                    {GEMINI_MODELS.map((model) => (
+                        <option key={model.value} value={model.value}>
+                            {model.label} · {model.help}
+                        </option>
+                    ))}
+                </select>
+                <p className="mt-2 text-xs text-zinc-500 leading-relaxed">
+                    This controls clip detection, titles, descriptions, captions, b-roll, and trailers. Google&apos;s free tier may cover requests within its limits; the app shows a paid-tier estimate when usage is available.
+                    Thumbnail image creation uses Gemini&apos;s separate image model automatically.
+                </p>
             </div>
             <p className="mt-3 text-sm text-zinc-400">
                 Your key stays local. The app stores it in the browser and syncs it to your OS keychain for the local MCP.

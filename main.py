@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 import json
 from transcription import WHISPER_MODELS, SONIOX_MODEL, resolve_backend, transcribe
 from ffmpeg_utils import video_codec_args
+from gemini_models import DEFAULT_GEMINI_MODEL, get_gemini_model, get_gemini_pricing
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module='google.protobuf')
@@ -48,7 +49,7 @@ PIPELINE_FAILURE_CODES = frozenset({
     'provider_rate_limited', 'provider_timeout', 'provider_error',
     'clip_processing_error', 'source_unreadable', 'reframe_error',
     'ffmpeg_cut_error', 'ffmpeg_reframe_error', 'ffmpeg_concat_error',
-    'ffmpeg_merge_error', 'metadata_missing', 'process_exit',
+    'ffmpeg_merge_error', 'metadata_missing', 'youtube_auth_required', 'process_exit',
     'backend_execution_error', 'unknown',
 })
 _DIAGNOSTIC_VALUE_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$')
@@ -86,7 +87,7 @@ def report_failure(stage, code, provider=None, model=None):
 # --- Constants ---
 ASPECT_RATIO = 9 / 16
 VIRAL_ANALYSIS_PROVIDER = 'gemini'
-VIRAL_ANALYSIS_MODEL = 'gemini-2.5-flash'
+VIRAL_ANALYSIS_MODEL = DEFAULT_GEMINI_MODEL
 
 # Supported output aspect ratios -> (width, height). 1080-class for quality.
 ASPECT_PRESETS = {
@@ -191,17 +192,12 @@ TRAILER_PACE_PRESETS = {
     'extended': (12, 18, 90),
 }
 
-# Selection model for the trailer. gemini-2.5-flash followed the multi-constraint
-# prompt inconsistently (filler + cliffhanger failures were SYSTEMATIC across
-# samples, so best-of-N couldn't escape them); moving to a stronger flash is the
-# real fix. Env-overridable so we can A/B 3-flash vs 3.5-flash without a code edit.
 TRAILER_PROVIDER = 'gemini'
-TRAILER_MODEL = os.environ.get('TRAILER_MODEL', 'gemini-3.5-flash')
+TRAILER_MODEL = DEFAULT_GEMINI_MODEL
+TRAILER_JUDGE_MODEL = DEFAULT_GEMINI_MODEL
 
-# The judge only picks the best index from a shortlist — a cheap task that
-# doesn't need the expensive selection model (3.5-flash is 15x the input price
-# of 2.5-flash). Env-overridable.
-TRAILER_JUDGE_MODEL = os.environ.get('TRAILER_JUDGE_MODEL', 'gemini-2.5-flash')
+# All text-based Gemini features use the one model selected in Settings. Image
+# generation keeps its own image-capable model in thumbnail.py.
 
 # How many candidate selections to sample. 1 = single-shot (the judge is skipped).
 # Best-of-N only helps against random variance, not the systematic biases above,
@@ -950,6 +946,40 @@ def retain_or_cleanup_original(input_video, output_dir, is_url, keep_flag):
         print("🗑️  Cleaned up downloaded video.")
 
 
+def _youtube_requires_sign_in(error):
+    """Return whether yt-dlp says YouTube requires an authenticated viewer."""
+    message = str(error).lower()
+    return "http error 403" in message or "sign in to confirm" in message
+
+
+def _youtube_download_error_message(error):
+    """Format a user-safe YouTube failure message and recovery instruction."""
+    if _youtube_requires_sign_in(error):
+        return """
+OPENSHORTS_FAILURE:download:youtube_auth_required
+
+❌ YouTube requires a signed-in viewer for this video.
+
+NEXT STEP: In OpenShorts Settings, choose YouTube access → Sign in to YouTube, then retry.
+"""
+    return f"""
+❌ ================================================================= ❌
+❌ FATAL ERROR: YOUTUBE DOWNLOAD FAILED
+❌ ================================================================= ❌
+
+REASON: YouTube has blocked the download request (Error 429/Unavailable).
+        This is likely a temporary IP ban on this server.
+
+👇 SOLUTION FOR USER 👇
+---------------------------------------------------------------------
+1. Download the video manually to your computer.
+2. Use the 'Upload Video' tab in this app to process it.
+---------------------------------------------------------------------
+
+Technical Details: {str(error)}
+"""
+
+
 def download_youtube_video(url, output_dir="."):
     """
     Downloads a YouTube video using yt-dlp.
@@ -973,7 +1003,12 @@ def download_youtube_video(url, output_dir="."):
             cookies_path = None
     else:
         cookies_path = None
-        print("⚠️ YOUTUBE_COOKIES env var not found.")
+        signed_in_file = os.environ.get("YOUTUBE_COOKIES_FILE")
+        if signed_in_file and os.path.isfile(signed_in_file):
+            cookies_path = signed_in_file
+            print("🍪 Using the signed-in YouTube session from this app.")
+        else:
+            print("⚠️ No YouTube cookies — downloading as a signed-out viewer.")
 
     cookies_from_browser = os.environ.get("YOUTUBE_COOKIES_FROM_BROWSER")
     if cookies_from_browser and cookies_path:
@@ -1084,23 +1119,7 @@ def download_youtube_video(url, output_dir="."):
             # Print minimal error first to ensure something gets out
             print("🚨 YOUTUBE DOWNLOAD ERROR 🚨", file=sys.stderr)
             
-            error_msg = f"""
-            
-❌ ================================================================= ❌
-❌ FATAL ERROR: YOUTUBE DOWNLOAD FAILED
-❌ ================================================================= ❌
-            
-REASON: YouTube has blocked the download request (Error 429/Unavailable).
-        This is likely a temporary IP ban on this server.
-
-👇 SOLUTION FOR USER 👇
----------------------------------------------------------------------
-1. Download the video manually to your computer.
-2. Use the 'Upload Video' tab in this app to process it.
----------------------------------------------------------------------
-
-Technical Details: {str(e)}
-            """
+            error_msg = _youtube_download_error_message(e)
             # Print to both streams to ensure capture
             print(error_msg, file=sys.stdout)
             print(error_msg, file=sys.stderr)
@@ -1150,6 +1169,18 @@ Technical Details: {str(e)}
                 print(f"🎞️  Selected YouTube formats: {selected}")
             else:
                 print(f"🎞️  Selected YouTube format: {info.get('format_id', 'unknown')} {info.get('resolution', '')}")
+    except Exception as e:
+        import sys
+        import traceback
+
+        print("🚨 YOUTUBE DOWNLOAD ERROR 🚨", file=sys.stderr)
+        error_msg = _youtube_download_error_message(e)
+        print(error_msg, file=sys.stdout)
+        print(error_msg, file=sys.stderr)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        time.sleep(0.5)
+        raise
     finally:
         if cookies_env and cookies_path and os.path.exists(cookies_path):
             os.remove(cookies_path)
@@ -2019,6 +2050,7 @@ def filter_excluded_overlaps(shorts, exclude_ranges, overlap_threshold=0.2):
 
 def get_viral_clips(transcript_result, video_duration, max_retries=3,
                     min_clip_length=15, max_clip_length=60, moment_prompt=""):
+    """Ask the selected Gemini model to identify timestamped viral moments."""
     provider = VIRAL_ANALYSIS_PROVIDER
     model_name = VIRAL_ANALYSIS_MODEL
     print("🤖  Analyzing with Gemini...")
@@ -2035,6 +2067,14 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
 
 
     client = genai.Client(api_key=api_key)
+    # The request boundary validates the setting; this keeps direct CLI runs
+    # safe too and lets diagnostics identify the actual model used.
+
+    try:
+        model_name = get_gemini_model()
+    except ValueError as e:
+        raise ClipAnalysisError(
+            str(e), 'provider_invalid_response', provider=provider, model=VIRAL_ANALYSIS_MODEL)
     
     print(f"🤖  Initializing Gemini with model: {model_name}")
 
@@ -2083,12 +2123,7 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
             try:
                 usage = response.usage_metadata
                 if usage:
-                    # Gemini 2.5 Flash Pricing (Dec 2025)
-                    # Input: $0.10 per 1M tokens
-                    # Output: $0.40 per 1M tokens
-
-                    input_price_per_million = 0.10
-                    output_price_per_million = 0.40
+                    input_price_per_million, output_price_per_million = get_gemini_pricing(model_name)
 
                     prompt_tokens = usage.prompt_token_count
                     output_tokens = usage.candidates_token_count
@@ -2104,6 +2139,7 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
                         "output_cost": output_cost,
                         "total_cost": total_cost,
                         "model": model_name,
+                        "estimate_basis": "paid_standard",
                         "latency_ms": latency_ms,
                         "attempts_used": attempt,
                         "max_retries": max_retries,
@@ -2458,26 +2494,16 @@ def _strip_json_fence(text):
     return text.strip()
 
 
-# (input, output) USD per 1M tokens, by model-id substring. Matched longest-first.
-_GEMINI_PRICING = {
-    'gemini-3.5-flash': (1.50, 9.00),
-    'gemini-3-flash':   (0.50, 3.00),
-    'gemini-2.5-flash': (0.10, 0.40),
-}
-
-
 def _trailer_cost(response, model_name):
     """Extract token usage/cost from a Gemini response; prints and returns a dict
-    (or None). Rates from _GEMINI_PRICING (defaults to 3-flash if unknown)."""
+    (or None). Rates use the current effective paid-tier schedule."""
     try:
         usage = response.usage_metadata
         if not usage:
             return None
         pt = usage.prompt_token_count
         ot = usage.candidates_token_count
-        in_rate, out_rate = next(
-            (r for key, r in _GEMINI_PRICING.items() if key in model_name),
-            (0.50, 3.00))
+        in_rate, out_rate = get_gemini_pricing(model_name)
         input_cost = (pt / 1_000_000) * in_rate
         output_cost = (ot / 1_000_000) * out_rate
         total = input_cost + output_cost
@@ -2486,6 +2512,7 @@ def _trailer_cost(response, model_name):
             "input_tokens": pt, "output_tokens": ot,
             "input_cost": input_cost, "output_cost": output_cost,
             "total_cost": total, "model": model_name,
+            "estimate_basis": "paid_standard",
         }
     except Exception as e:
         print(f"⚠️ Could not calculate cost: {e}")
@@ -2658,7 +2685,10 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
 
     client = genai.Client(api_key=api_key)
 
-    model_name = TRAILER_MODEL
+    try:
+        model_name = get_gemini_model()
+    except ValueError as e:
+        raise ClipAnalysisError(str(e))
     print(f"🤖  Initializing Gemini with model: {model_name}")
 
     # Sentence-grouped transcript for the model (script-first selection), plus a
@@ -2735,7 +2765,7 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
         best = 0
         print("   🧑‍⚖️ Only one usable candidate; skipping judge.")
     else:
-        best = _judge_trailer_candidates(client, TRAILER_JUDGE_MODEL, candidates)
+        best = _judge_trailer_candidates(client, model_name, candidates)
     winner = candidates[best]
     moments = winner['moments_ordered']
     script = winner['script']
@@ -2758,6 +2788,7 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
             "output_tokens": sum(c['output_tokens'] for c in costs),
             "total_cost": sum(c['total_cost'] for c in costs),
             "model": model_name,
+            "estimate_basis": "paid_standard",
             "candidates": len(candidates),
             # Trailer cost covers usable candidate calls; the optional judge
             # call is intentionally not included because it has no cost dict.
@@ -3239,8 +3270,13 @@ if __name__ == '__main__':
         
         try:
             input_video, video_title = download_youtube_video(args.url, output_dir)
-        except Exception:
-            report_failure('download', 'download_error', 'yt-dlp', 'youtube')
+        except Exception as error:
+            report_failure(
+                'download',
+                'youtube_auth_required' if _youtube_requires_sign_in(error) else 'download_error',
+                'yt-dlp',
+                'youtube',
+            )
             raise
     else:
         input_video = args.input

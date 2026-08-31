@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Upload, Image, Loader2, Send, Check, Download, ArrowRight, ArrowLeft, Sparkles, Video, Type, X, Plus, MessageSquare, FileText, Youtube, AlertCircle, CheckCircle2, Settings } from 'lucide-react';
 import { getApiUrl } from '../config';
+import { getStoredGeminiModel } from '../lib/geminiModels';
 
 const STEPS = ['Input', 'Titles', 'Generate', 'Description', 'Publish'];
 
@@ -99,7 +100,8 @@ function DragDropZone({ label, accept, onFile, file, onClear, icon: Icon }) {
   );
 }
 
-export default function ThumbnailStudio({ geminiApiKey, zernioKey, socialAccounts = [] }) {
+export default function ThumbnailStudio({ geminiApiKey, zernioKey, socialAccounts = [], geminiModel }) {
+  const selectedGeminiModel = geminiModel || getStoredGeminiModel();
   const youtubeAccount = socialAccounts.find((a) => a.platform === 'youtube');
   // Step management
   const [step, setStep] = useState(0);
@@ -191,7 +193,7 @@ export default function ThumbnailStudio({ geminiApiKey, zernioKey, socialAccount
 
       const res = await fetch(getApiUrl('/api/thumbnail/analyze'), {
         method: 'POST',
-        headers: { 'X-Gemini-Key': geminiApiKey },
+        headers: { 'X-Gemini-Key': geminiApiKey, 'X-Gemini-Model': selectedGeminiModel },
         body: formData
       });
 
@@ -236,7 +238,8 @@ export default function ThumbnailStudio({ geminiApiKey, zernioKey, socialAccount
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Gemini-Key': geminiApiKey
+          'X-Gemini-Key': geminiApiKey,
+          'X-Gemini-Model': selectedGeminiModel
         },
         body: JSON.stringify({ title: manualTitle, session_id: newSessionId })
       }).catch(() => { });
@@ -259,7 +262,8 @@ export default function ThumbnailStudio({ geminiApiKey, zernioKey, socialAccount
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Gemini-Key': geminiApiKey
+          'X-Gemini-Key': geminiApiKey,
+          'X-Gemini-Model': selectedGeminiModel
         },
         body: JSON.stringify({ session_id: sessionId, message: userMsg })
       });
@@ -302,7 +306,7 @@ export default function ThumbnailStudio({ geminiApiKey, zernioKey, socialAccount
 
       const res = await fetch(getApiUrl('/api/thumbnail/generate'), {
         method: 'POST',
-        headers: { 'X-Gemini-Key': geminiApiKey },
+        headers: { 'X-Gemini-Key': geminiApiKey, 'X-Gemini-Model': selectedGeminiModel },
         body: formData
       });
 
@@ -354,7 +358,8 @@ export default function ThumbnailStudio({ geminiApiKey, zernioKey, socialAccount
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Gemini-Key': geminiApiKey
+          'X-Gemini-Key': geminiApiKey,
+          'X-Gemini-Model': selectedGeminiModel
         },
         body: JSON.stringify({ session_id: sessionId, title: finalTitle })
       });
