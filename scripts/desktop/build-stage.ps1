@@ -293,7 +293,7 @@ Write-Log 'e. Staging backend Python source + fonts'
 $Backend = Join-Path $Stage 'backend'
 New-Item -ItemType Directory -Force -Path $Backend | Out-Null
 # Exact set of local modules the app imports (grep-verified in app.py/main.py/etc.).
-foreach ($f in @('app.py', 'main.py', 'editor.py',
+foreach ($f in @('app.py', 'main.py', 'editor.py', 'gemini_models.py',
                  'transcription.py', 'transcription_worker.py', 'thumbnail.py', 's3_uploader.py',
                  'ffmpeg_utils.py', 'requirements.txt')) {
     Copy-Item -Force (Join-Path $RepoRoot $f) (Join-Path $Backend $f)
