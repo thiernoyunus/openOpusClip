@@ -168,10 +168,11 @@ SOUNDBITE_PROMPT_TEMPLATE = """You are the assistant editor on 'The Diary of a C
 
 A SOUNDBITE IS A COMPLETE THOUGHT: one or more consecutive sentences (from_i..to_i, inclusive) that start where the speaker starts the thought and end where they FINISH it. A listener must hear the full stop. Never start or end halfway through a sentence.
 
-Hunt across the WHOLE episode (beginning, middle and end), and tag each soundbite with one role:
+Hunt across the WHOLE episode (beginning, middle and end). Stay on the episode's central topic: skip quotable lines that wander into unrelated talk. Tag each soundbite with one role:
 - hook: the unexpected — a shocking, taboo, vulnerable or jaw-dropping line that stops a bored scroller cold and lands with zero setup.
 - lesson: a compact, useful insight that rewards the viewer for watching.
-- proof: credibility — a number, a named result, a track record, who the guest is and why they matter (never a flat roll-call introduction).
+- premise: the line that says what the episode is arguing about (the thing, the promise, the number), so a newcomer gets the context.
+- proof: credibility — a number, a named result, a track record, who the guest is and why they matter. Pull one for the main guest AND one for the skeptic or other side (a credential line from the host's intro counts; a flat roll-call does not).
 - emotion: a raw high or low — a confession, a story that hurts, a laugh, anger.
 - question: a short, punchy HOST question that sets up a great guest answer (tag the answer as answer, right after it).
 - answer: the guest's reply to the question just before it.
@@ -181,7 +182,7 @@ Hunt across the WHOLE episode (beginning, middle and end), and tag each soundbit
 
 TRANSCRIPT (sentences as {{i, s, e, text}} with s/e in seconds{speaker_note}): {transcript}
 
-Return ONLY valid JSON, no prose, no markdown fences: an object with key soundbites (array of objects each having from_i (int), to_i (int), role (one of hook|lesson|proof|emotion|question|answer|cliffhanger), why (string, max 12 words))."""
+Return ONLY valid JSON, no prose, no markdown fences: an object with key soundbites (array of objects each having from_i (int), to_i (int), role (one of hook|premise|lesson|proof|emotion|question|answer|cliffhanger), why (string, max 12 words))."""
 
 TRAILER_PROMPT_TEMPLATE = """You are Anthony Smith, Director of Trailers for 'The Diary of a CEO'. From ONE podcast you build a single gripping cold-open trailer of about {target_seconds} seconds by selecting and RE-ORDERING moments. The order is a deliberate narrative, NOT chronological. You work like you always do: script first, in a text document, and only then cut.
 
@@ -198,6 +199,12 @@ STEP 2 — MAP TO SENTENCES. Turn each script line into a moment that names the 
 4. THE CLIFFHANGER — see the ending rule below.
 Before you finish, count the reasons you have given the viewer to watch the full episode. A great trailer seeds several open loops and lands the biggest one LAST.
 
+THE STORY SPINE (what the best cut of a real episode did, and the creator loved):
+- ONE TOPIC ALL THE WAY THROUGH. Find the episode's central question (the title's, when given) and make every moment serve it: the claim, the pushback, what could go wrong. Drop good lines that wander into general talk; a tangent breaks the thread even if it is quotable.
+- CONTEXT EARLY. Within the first ~30 seconds the viewer must know what is being argued about (the premise: what the thing is, the promise, the number), so everything after it makes sense.
+- A BOLD CLAIM, THEN A CHALLENGE. Open strong, then let someone push back or ask "what gives you the confidence to say that?" right away. Friction (a skeptic's "not yet", tough questions, a real risk, a story where it nearly went wrong) is what makes it a debate worth watching.
+- A-B-C ARC: A = the claim and who is making it; B = the pushback and the stakes; C = the unanswered question. Order moments by this arc, not by the clock.
+
 RULES FOR MOMENTS:
 - EVERY MOMENT EXCEPT THE LAST IS A COMPLETE THOUGHT. It starts at the beginning of a sentence and ends at the END of a sentence — the listener must hear the speaker finish. Never end on "and", "but", "because", "so", or a half-said clause. If a sentence is too long, pick a different one; do not chop it. Moments are normally 3 to 10 seconds; hold up to ~15s only for one emotionally heavy story. Pace comes from dialogue volleys, not machine-gun cuts. Aim for {min_moments} to {max_moments} moments total.
 - A MOMENT IS ONE OR TWO SENTENCES. Check each moment's length with s/e before you answer: a from_i..to_i span that covers a whole monologue is wrong; find the one line inside it that lands.
@@ -206,7 +213,7 @@ RULES FOR MOMENTS:
 - LENGTH IS A HARD LIMIT: add up (e - s) of every moment. The total must land between {target_seconds} and {max_seconds} seconds. If it runs over, cut your weakest moment; never go over.
 - BACK-AND-FORTH: the DOAC rhythm is a volley between host and guest — a short, sharp host question, then the guest's answer. QUESTION -> ANSWER STAY TOGETHER: if you include a host question, the guest's ACTUAL answer must be the very next moment. Never leave a question with no answer, or an answer with no question.
 - THE HOOK (first moment) IS THE SINGLE MOST SHOCKING LINE IN THE WHOLE EPISODE. Its theme is THE UNEXPECTED — the "did they really just say that?" line that stops a bored scroller cold: a raw taboo opinion, a violent confession, a stunning admission, a jaw-dropping number. Pick the biggest emotional gut-punch even if it is the most controversial or vulnerable thing said — put it FIRST, do not save it for the middle. It MUST land emotionally ON ITS OWN with zero setup: if it only makes sense once the NEXT line explains it, it is NOT your hook. NEVER open on an abstract thesis, a topic-definition, a "here's what this is about" framing, or a scene-setting statement — those are what you put AFTER the shock, never before it. (E.g. open on "The modern woman, I hate." — NOT on "There's a conspiracy to turn men and women against each other.")
-- IDENTITY CARD (conditional, HIGH BAR): Only include an identity-card moment if the transcript contains a line with real DRAMATIC WEIGHT about who the guest is — a specific achievement, a striking credential, a track record, a title that signals authority or stakes (e.g. "21 years of counseling, tens of thousands of cases," "a globally recognized voice on AI safety"). If it clears that bar, place it as the 2nd or 3rd moment. DO NOT use a flat, listy, as-spoken roll-call introduction ("to my right I have X, to my left I have Y, we also have Z") — that is podcast housekeeping, not a hook. If there is no introduction that clears the bar, SKIP the identity card entirely — no identity card beats a boring one.
+- SELL THE PEOPLE (within the first ~40 seconds): the viewer must know why each side is worth listening to. Use short lines with SPECIFIC numbers and results ("three exits, two of them multi-seven figure", "manages a quarter of a billion dollars") for the main guest AND for the skeptic or other side, so both are characters. A line lifted out of the host's introduction is fine when it carries a specific credential; a flat roll-call ("to my right I have X, to my left Y") or a vague compliment is not. If no line has a specific credential, skip it.
 - END ON A REAL CLIFFHANGER — the single most important ending rule, and the one most often gotten wrong. The FINAL moment must leave a BURNING, UNRESOLVED question that can ONLY be answered by watching the full episode. Do it ONE of two ways: (a) cut a line off the instant BEFORE its payoff lands — right before the answer, the number, the name, the reason, or the list (e.g. "and the number one reason men fail is—", "what you actually have to do is—", "80% of women need—"); or (b) end on an open question the guest raises but never answers on screen (e.g. "so where do you even start?"). The viewer must feel a GAP they need filled. NEVER end on a resolved, complete, or conclusive statement, however punchy it sounds — a line like "they're afraid to take that risk" ANSWERS and kills the pull. For (a), the final moment's text is EXACTLY the words kept, from the start of its first sentence up to the cut (e.g. "and the number one reason men fail is"). Only this final moment may stop mid-sentence.
 - EXCLUDE: sponsor reads / ads, "welcome back", "subscribe", channel housekeeping, crosstalk, throat-clearing, and trailing filler. Never cut on an ad.
 
