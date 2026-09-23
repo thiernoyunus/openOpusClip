@@ -50,11 +50,12 @@ Role names are free labels: `hook`, `challenge`, `premise`, `frame`, `sell-guest
 | **Moment of value** | | One genuinely useful idea given away free (a definition, a rule, a framework). |
 | **Conflict** | | Pushback: "Personally, no, not yet", "merciless due diligence". The trailer needs friction. |
 | **Stakes** | | Risk, admission, a personal story with a concrete detail ("my Facebook profile gets banned out of nowhere"). |
-| **Cliffhanger** | last 2-4 s | A short question or setup that the episode answers and the trailer doesn't. Cut to black right after it. |
+| **Cliffhanger** | last 2-6 s | A short question or setup that the episode answers and the trailer doesn't. Cut to black right after it. In a guest episode the strongest version is the DOAC move: the host asks the central question ("Does it actually help me?"), the guest *starts* to answer ("So firstly, people need to have a mindset shift…", "Do you really want to know?", "Here's the thing…"), and it cuts to black before the answer lands. Look for the guest's first sentence after each big question. |
 
 ## 3. Tests every bite must pass
 - **On topic.** Is it about the one topic? A great line about something else still gets cut. v2 lost points because it drifted into general investing talk.
-- **Complete sentence.** Start where a sentence starts ("And..." or "But..." is fine), and end after its last word. Never end mid-thought. Check each edge with `words.py transcript.json START-END`.
+- **Complete sentence.** Start where a sentence starts ("And..." or "But..." is fine), and end after its last word. Never end mid-thought.
+- **Stands alone from its first word.** Cut lead-ins that point back to something the viewer never heard: "What I mean by that is…", "Like I said…", "The reason is…", "So basically…", "That's why…". Start on the claim itself ("AI is not going to…"). Speakers often pause after a lead-in, so there's usually a clean cut right before the claim. Check each edge with `words.py transcript.json START-END`.
 - **Justified.** You can write its `why` in one line. If you can't, cut it.
 - **Bridges.** Read the running order out loud as a script. Each line should follow from the one before, like one conversation. If it jumps, reorder, or add a short bridge line (a question, a "but").
 - **Guest share.** In a guest episode, is the guest speaking for at least half the running time, in more than one place? If the guest only speaks once or twice, it's the host's trailer, not the guest's.

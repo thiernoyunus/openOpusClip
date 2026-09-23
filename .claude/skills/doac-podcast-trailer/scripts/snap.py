@@ -27,9 +27,14 @@ def rms(t):
     return float(np.sqrt(np.mean(A[max(0, i - h):i + h] ** 2)))
 
 
-def best(lo, hi):
+HOLD = 0.12   # a real pause stays quiet this long; a gap inside a word ("twenty-eigh|teen") doesn't
+
+
+def best(lo, hi, side):
+    """Quietest point in [lo, hi] that is followed (side=+1, an end) or preceded (side=-1, a start) by HOLD s of quiet.
+    Returns (time, loudness of the loudest moment in that HOLD window)."""
     ts = np.arange(lo, max(hi, lo + 0.02), 0.01)
-    r = np.array([rms(t) for t in ts])
+    r = np.array([max(rms(t + side * k) for k in np.arange(0, HOLD + 0.001, 0.02)) for t in ts])
     return float(ts[r.argmin()]), float(r.min())
 
 
@@ -45,10 +50,12 @@ for b in bites:
     prev = [x for x in ws if x["e"] <= inside[0]["s"] + 0.01]
     nxt = [x for x in ws if x["s"] >= inside[-1]["e"] - 0.01 and x is not inside[-1]]
     lo = max(prev[-1]["e"] - 0.1, inside[0]["s"] - 0.35) if prev else inside[0]["s"] - 0.35
-    s0, r0 = best(lo, inside[0]["s"] + 0.06)
-    e0, r1 = best(inside[-1]["e"] - 0.06, min(inside[-1]["e"] + 0.4, nxt[0]["s"] + 0.1 if nxt else 1e9))
+    s0, r0 = best(lo, inside[0]["s"] + 0.06, -1)
+    # Whisper often ends a word early (long numbers, trailing consonants), so look up to 0.6 s past its end
+    e0, r1 = best(inside[-1]["e"] - 0.06, min(inside[-1]["e"] + 0.6, nxt[0]["s"] + 0.1 if nxt else 1e9), +1)
     # never trade a quieter hand-placed cut for a louder one
-    c0, c1 = rms(b["start"] + 0.03), rms(b["end"] - 0.03)
+    c0 = max(rms(b["start"] + 0.03 - k) for k in np.arange(0, HOLD + 0.001, 0.02))
+    c1 = max(rms(b["end"] - 0.03 + k) for k in np.arange(0, HOLD + 0.001, 0.02))
     if c0 <= r0: s0, r0 = b["start"] + 0.03, c0
     if c1 <= r1: e0, r1 = b["end"] - 0.03, c1
     flag = "  <-- check" if max(r0, r1) > 0.01 else ""

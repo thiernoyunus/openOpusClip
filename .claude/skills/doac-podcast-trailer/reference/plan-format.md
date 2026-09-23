@@ -36,6 +36,7 @@ Editorial choices live here and nowhere else, so changing the trailer means edit
 | `big` | no | Words shown huge (Anton caps). One per caption line is ideal: numbers, the topic word, the emotional word. If missing, the longest non-filler word is picked |
 | `accent` | no | Big words shown in gold. Use for the episode's topic word and the stakes. Two or three in the whole trailer |
 | `gap` | no | Pause (seconds) that starts a new caption block (default 0.5). Raise it if a slow speaker's lines get split |
+| `fade_in`, `fade_out` | no | Edge fade in seconds (default 0.025). Use 0.08-0.12 when another voice starts right on top of the last word |
 | `boom` | no | `true`: sub hit at the bite's first frame. Use on 2-4 turns (the hook, the guest reveal, the stakes) |
 | `focus_pull` | no | Seconds of blur-to-sharp at the bite start ("perfect imperfection"). 0.4-0.6 on one or two bites |
 | `zoom` | no | `[1.0, 1.06]` slow push-in on this bite. Off by default. Don't use unless asked: people want both faces in shot |

@@ -1,7 +1,8 @@
 """Build the trailer's audio: dialogue bites with click-free edges, a quiet music bed, sub booms.
 usage: audio.py plan.json [audio_mix.wav]
 Optional plan keys: "music": path to a licensed track (used instead of the synth pad), "music_db": its level (default -24).
-Bite keys: "boom": true puts a sub hit at the start of that bite. The bed always drops out before the last bite."""
+Bite keys: "boom": true puts a sub hit at the start of that bite. "fade_in"/"fade_out" (seconds, default 0.025)
+lengthen a bite's edge fade, e.g. 0.1 when the next speaker starts right on top of the last word. The bed always drops out before the last bite."""
 import os, subprocess, sys
 import numpy as np
 from common import load_plan
@@ -25,9 +26,11 @@ for b in plan["bites"]:
     n = int(round(n / FPS * SR))
     x = load(plan["source"], b["start"], n / SR + 0.1)[:n]
     if len(x) < n: x = np.vstack([x, np.zeros((n - len(x), 2), np.float32)])
-    f = int(0.025 * SR)
-    ramp = np.linspace(0, 1, f, dtype=np.float32)[:, None]
-    x[:f] *= ramp; x[-f:] *= ramp[::-1]
+    for key, edge in (("fade_in", 0), ("fade_out", 1)):   # 25 ms by default; longer to soften an overlapping voice
+        f = max(1, int(b.get(key, 0.025) * SR))
+        ramp = np.linspace(0, 1, f, dtype=np.float32)[:, None]
+        if edge == 0: x[:f] *= ramp
+        else: x[-f:] *= ramp[::-1]
     parts.append(x); marks.append((t, b)); t += n / SR
 parts.append(np.zeros((int(END_HOLD * SR), 2), np.float32))
 dlg = np.vstack(parts)
