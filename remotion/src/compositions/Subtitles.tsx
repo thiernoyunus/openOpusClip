@@ -696,6 +696,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   const containerStyle = template.containerStyle?.(style) ?? {};
   // Per-word layout roles (DOAC: lead / big / tail), computed once per block.
   const roles = template.assignRoles?.(block.words);
+  const accents = template.assignAccents?.(block.words, roles);
   // Generic vertical stacking: lay the words out in a centered column. Templates
   // that draw their own stack (podcast's emphasis-aware layout) opt out and keep
   // the row-wrap container.
@@ -813,7 +814,8 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
             uppercase,
             seed: Math.round(word.startMs),
             isEmphasis: i === emphasisIndex,
-            accentColor: word.accentColor,
+            accentColor: word.accentColor ?? accents?.[i],
+            box: word.box,
             role: roles?.[i],
             blockDurationFrames: durationFrames,
           });

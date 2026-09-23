@@ -285,6 +285,20 @@ def test_retime_flags_power_words_for_big_captions():
     assert next(c for c in caps if c['text'] == 'crash')['accentColor'] == '#FF2B2B'
 
 
+def test_retime_boxes_hook_stakes_and_credential_accents():
+    words = (_timed("AI will not pay.", 0.0) + _timed("He sold three brands.", 10.0)
+             + _timed("My account got banned.", 20.0) + _timed("Is it worth it?", 30.0))
+    tr = {'segments': [{'words': words}]}
+    m = [{'start': 0.0, 'end': 2.0, 'accent_word': 'pay', 'emotion': 'payoff'},
+         {'start': 10.0, 'end': 12.0, 'accent_word': 'three', 'emotion': 'power'},
+         {'start': 20.0, 'end': 22.0, 'accent_word': 'banned', 'emotion': 'danger'},
+         {'start': 30.0, 'end': 32.0, 'accent_word': 'worth', 'emotion': 'curiosity'}]
+    caps = retime_captions(tr, m, [0, 60, 120, 180], [60, 60, 60, 60], 30)
+    boxed = {c['text'] for c in caps if c.get('box')}
+    assert boxed == {'pay.', 'three', 'banned.'}
+    assert next(c for c in caps if c['text'] == 'three')['accentColor'] == '#FFD21F'
+
+
 def test_save_transcript_writes_json_and_speaker_turns():
     transcript = {'segments': [
         {'start': 0.0, 'end': 2.0, 'text': 'Welcome back.', 'speaker': '1'},
@@ -324,7 +338,7 @@ def test_budget_drops_question_with_its_answer():
 def test_budget_trims_long_moment_to_last_sentence_end():
     ws = words_from([('One', 0.0, 0.5), ('thing.', 0.5, 4.0), ('Two', 4.2, 4.6),
                      ('things.', 4.6, 12.0), ('Three', 12.2, 13.0), ('more', 13.0, 20.0)])
-    out = _fit_trailer_budget([_mk(0, 20), _mk(30, 32, 4)], ws, 60)
+    out = _fit_trailer_budget([_mk(0, 20), _mk(30, 32, 4)], ws, 60, max_moment=15)
     assert 12.0 <= out[0]['end'] <= 12.2
 
 

@@ -24,6 +24,8 @@ export interface CaptionWord {
   highlight?: boolean;
   /** Per-word color override (e.g. DOAC emotion accent). When set, persists from the word's start. */
   accentColor?: string;
+  /** DOAC: draw this word white on a red box (the trailer's 2-3 strongest words). */
+  box?: boolean;
   /**
    * When true, this word is dropped from the burned-in captions but its video
    * and audio stay (the "Remove caption only" transcript action). The word

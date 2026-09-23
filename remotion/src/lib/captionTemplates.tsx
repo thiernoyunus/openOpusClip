@@ -29,6 +29,7 @@ export interface WordRenderArgs {
   isEmphasis?: boolean; // the one "key" word in the block (drives size-contrast styles)
   accentColor?: string; // per-word color override (e.g. DOAC emotion accent)
   role?: string; // per-word layout role from template.assignRoles (e.g. DOAC lead/big/tail)
+  box?: boolean; // DOAC: white on a red box
   blockDurationFrames?: number; // how long the block is on screen (for exit animations)
 }
 
@@ -67,6 +68,12 @@ export interface CaptionTemplate {
    * to renderWord as `role`). A word whose role is "big" claims its own line.
    */
   assignRoles?: (words: Pick<CaptionWord, "text" | "highlight" | "accentColor">[]) => string[];
+  /**
+   * Optional per-block colour pass, run after assignRoles: a colour per word
+   * (undefined = the template's normal colour). Overrides nothing the word
+   * already carries in accentColor.
+   */
+  assignAccents?: (words: Pick<CaptionWord, "text" | "accentColor" | "box">[], roles: string[] | undefined) => (string | undefined)[];
   /** Side-placed blocks (smart placement) align toward the frame edge instead of centering. */
   sideAligns?: boolean;
   renderWord: (args: WordRenderArgs) => React.ReactNode;
@@ -832,7 +839,47 @@ function doacRoles(words: Pick<CaptionWord, "text" | "highlight" | "accentColor"
   });
 }
 
-const DoACWord: React.FC<WordRenderArgs> = ({ word, role, isEmphasis, frame, fps, wordStartFrame, style, accentColor, blockDurationFrames }) => {
+// Colour by meaning, in almost every block (DOAC sheets colour a word nearly
+// every time: red "HATE", yellow "AI", green "RESULTS"). Red = danger, loss,
+// negatives, pushback; green = money, results, wins; pink = love, family;
+// yellow = the topic word, names, numbers, emphasis. Word lists mirror the
+// doac-podcast-trailer skill's captions.py.
+export const DOAC_COLORS = { red: "#FF2B2B", green: "#3EE06E", yellow: "#FFD21F", pink: "#FF7AC6" };
+const DOAC_RED = new Set(
+  "not no never nothing nobody zero lose losing lost loss fail failed failing failure hate hated wrong worst waste wasting wasted risk risky broke broken banned ban scam dead die dying death fear scared afraid stop quit lie lies fake greed ego debt fired crash war danger dangerous problem problems less can't don't won't isn't aren't shouldn't bad hard struggle pain poor burning burn replaced replace angry mistake mistakes".split(" ")
+);
+const DOAC_GREEN = new Set(
+  "money millionaire millionaires rich wealth wealthy profit profits profitable win winning won success successful results growth grow grew more free best better sold selling sales revenue income paid earn earning earned yes good great solution solutions help works worked working opportunity freedom invest investment asset".split(" ")
+);
+const DOAC_PINK = new Set("love loved loving heart family wife husband kids children mother father mum mom dad beautiful".split(" "));
+
+function doacMood(text: string): string | undefined {
+  const c = text.toLowerCase().replace(/’/g, "'").replace(/[^\p{L}\p{N}'$%-]/gu, "").replace(/^'+|'+$/g, "");
+  if (DOAC_RED.has(c)) return DOAC_COLORS.red;
+  if (DOAC_GREEN.has(c)) return DOAC_COLORS.green;
+  if (DOAC_PINK.has(c)) return DOAC_COLORS.pink;
+  return undefined;
+}
+
+/** One or two coloured words per block: meaning words first (any role, so a
+ *  small red "not" counts), else the big word in yellow. A block with neither
+ *  (a quiet setup line) stays white, which keeps the colour meaningful. */
+function doacAccents(words: Pick<CaptionWord, "text" | "accentColor" | "box">[], roles: string[] | undefined): (string | undefined)[] {
+  const out: (string | undefined)[] = words.map(() => undefined);
+  let used = words.filter((w) => w.accentColor || w.box).length;
+  const bigs = (roles ?? []).flatMap((r, i) => (r === "big" ? [i] : []));
+  const order = [...bigs, ...words.map((_, i) => i).filter((i) => !bigs.includes(i))];
+  for (const i of order) {
+    if (used >= 2) break;
+    if (words[i].accentColor || words[i].box) continue;
+    const mood = doacMood(words[i].text);
+    if (mood) { out[i] = mood; used += 1; }
+  }
+  if (used === 0 && bigs.length) out[bigs[0]] = DOAC_COLORS.yellow;
+  return out;
+}
+
+const DoACWord: React.FC<WordRenderArgs> = ({ word, role, isEmphasis, frame, fps, wordStartFrame, style, accentColor, box, blockDurationFrames }) => {
   const r = role ?? (isEmphasis ? "big" : "lead");
   const t = frame - wordStartFrame;
   const inFrames = Math.max(1, Math.round(0.28 * fps));
@@ -856,8 +903,11 @@ const DoACWord: React.FC<WordRenderArgs> = ({ word, role, isEmphasis, frame, fps
     fontSize = base * 0.31;
     typeface = { fontFamily: "'Montserrat', system-ui, sans-serif", fontWeight: 800, letterSpacing: "-0.01em", lineHeight: 1.1 };
   }
-  const color = accentColor ?? (r === "big" ? style.highlightColor || style.fontColor : style.fontColor);
-  const glow = accentColor && r === "big" ? `, 0 0 40px ${withAlpha(accentColor, 0.4)}` : "";
+  const color = box ? "#FFFFFF" : accentColor ?? (r === "big" ? style.highlightColor || style.fontColor : style.fontColor);
+  const glow = accentColor && !box && r === "big" ? `, 0 0 40px ${withAlpha(accentColor, 0.4)}` : "";
+  const boxStyle: React.CSSProperties = box
+    ? { backgroundColor: DOAC_COLORS.red, padding: "0 0.14em", borderRadius: "0.06em", textShadow: "none", boxShadow: "0 4px 18px rgba(0,0,0,.45)" }
+    : {};
   return (
     <span
       style={{
@@ -872,6 +922,7 @@ const DoACWord: React.FC<WordRenderArgs> = ({ word, role, isEmphasis, frame, fps
         transform: `translateY(${((1 - p) * base * 0.1).toFixed(2)}px) scale(${(1.12 - 0.12 * p).toFixed(3)})`,
         filter: `blur(${(14 * (1 - p) + 10 * exit).toFixed(2)}px)`,
         textShadow: DOAC_SHADOW + glow,
+        ...boxStyle,
       }}
     >
       {word}
@@ -962,6 +1013,7 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     // Tight word spacing: the three sizes set their own rhythm.
     containerStyle: (style) => ({ gap: `${Math.round(style.fontSize * 0.03)}px ${Math.round(style.fontSize * 0.1 * (style.wordSpacing ?? 1))}px` }),
     assignRoles: doacRoles,
+    assignAccents: doacAccents,
     sideAligns: true,
     renderWord: (args) => <DoACWord {...args} />,
   },

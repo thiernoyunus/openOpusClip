@@ -119,6 +119,7 @@ export default function CaptionPreview({ templateId, animate = false, words = SA
     words.forEach((w, i) => { if (w.length > longest) { longest = w.length; emphasisIndex = i; } });
     // Templates with per-word layout roles (DOAC lead/big/tail) pick them here too.
     const roles = template.assignRoles?.(words.map((text) => ({ text })));
+    const accents = template.assignAccents?.(words.map((text) => ({ text })), roles);
 
     return (
         <div
@@ -167,6 +168,7 @@ export default function CaptionPreview({ templateId, animate = false, words = SA
                             seed: i * 17 + 3,
                             isEmphasis: i === emphasisIndex,
                             role: roles?.[i],
+                            accentColor: accents?.[i],
                         })}
                     </React.Fragment>
                 ))}

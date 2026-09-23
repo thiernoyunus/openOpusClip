@@ -203,19 +203,21 @@ THE STORY SPINE (what the best cut of a real episode did, and the creator loved)
 - ONE TOPIC ALL THE WAY THROUGH. Find the episode's central question (the title's, when given) and make every moment serve it: the claim, the pushback, what could go wrong. Drop good lines that wander into general talk; a tangent breaks the thread even if it is quotable.
 - CONTEXT EARLY. Within the first ~30 seconds the viewer must know what is being argued about (the premise: what the thing is, the promise, the number), so everything after it makes sense.
 - A BOLD CLAIM, THEN A CHALLENGE. Open strong, then let someone push back or ask "what gives you the confidence to say that?" right away. Friction (a skeptic's "not yet", tough questions, a real risk, a story where it nearly went wrong) is what makes it a debate worth watching.
-- THE GUEST CARRIES IT. When the transcript introduces someone as the guest or the expert (the person the episode is built around), their points are the spine: give them most of the moments and let them speak several times, not once. The GUEST SPEAKS FIRST: the opening moment is the guest's boldest claim in their own voice, then the back-and-forth, then who they are (their credentials) and the rest. Host questions and other panelists are there to set up, challenge or react to the guest. This does not apply to a regular multi-host episode with no featured guest.
+- THE GUEST CARRIES IT. When the transcript introduces someone as the guest or the expert (the person the episode is built around), their points are the spine: the guest's own voice fills AT LEAST HALF of the running time, spread across the whole trailer (not one run of bites together), and owns the big moments: the opening claim, the moment of value, the proof or story, the stakes. The GUEST SPEAKS FIRST: the opening moment is the guest's boldest claim in their own voice, then one or two quick exchanges (the host challenges or reacts, the guest doubles down), then who they are (their credentials), then the premise, the central question asked out loud, the moment of value, the pushback, the stakes, and the cliffhanger. Host questions and other panelists are there to set up, challenge or react to the guest. This does not apply to a regular multi-host episode with no featured guest.
+- EVERYONE WHO ARGUES IS INTRODUCED. Anyone who speaks twice or carries the conflict (a guest, a co-host, a skeptic) gets one short credential line; if there is none for them, give their point to someone else. An unknown voice arguing carries no weight.
+- EACH MOMENT STANDS ALONE FROM ITS FIRST WORD. Never start on a lead-in that points back to something the viewer never heard ("What I mean by that is", "Like I said", "The reason is", "So basically", "That's why"); start on the claim itself ("AI is not going to..."). "And" or "But" is fine.
 - A-B-C ARC: A = the claim and who is making it; B = the pushback and the stakes; C = the unanswered question. Order moments by this arc, not by the clock.
 
 RULES FOR MOMENTS:
-- EVERY MOMENT EXCEPT THE LAST IS A COMPLETE THOUGHT. It starts at the beginning of a sentence and ends at the END of a sentence — the listener must hear the speaker finish. Never end on "and", "but", "because", "so", or a half-said clause. If a sentence is too long, pick a different one; do not chop it. Moments are normally 3 to 10 seconds; hold up to ~15s only for one emotionally heavy story. Pace comes from dialogue volleys, not machine-gun cuts. Aim for {min_moments} to {max_moments} moments total.
+- EVERY MOMENT EXCEPT THE LAST IS A COMPLETE THOUGHT. It starts at the beginning of a sentence and ends at the END of a sentence — the listener must hear the speaker finish. Never end on "and", "but", "because", "so", or a half-said clause. If a sentence is too long, pick a different one; do not chop it. Moments are normally 2 to 10 seconds; hold up to ~20s only for the one moment of value (a complete framework or rule, given away free) or one emotionally heavy story. Pace comes from dialogue volleys, not machine-gun cuts. Aim for {min_moments} to {max_moments} moments total.
 - A MOMENT IS ONE OR TWO SENTENCES. Check each moment's length with s/e before you answer: a from_i..to_i span that covers a whole monologue is wrong; find the one line inside it that lands.
-- OPEN LOOPS STAY OPEN: a question in the trailer is either answered in the very next moment (a volley) or not answered at all. The question you end on is never answered anywhere in the trailer; if its answer is a great line, leave it for the episode.
+- OPEN LOOPS STAY OPEN: a question in the trailer is either answered in the very next moment (a volley) or not answered at all. The answer to the question you end on never lands anywhere in the trailer; if its answer is a great line, leave it for the episode.
 - NO REPEATS: never use two moments that say the same line or make the same point.
 - LENGTH IS A HARD LIMIT: add up (e - s) of every moment. The total must land between {target_seconds} and {max_seconds} seconds. If it runs over, cut your weakest moment; never go over.
 - BACK-AND-FORTH: the DOAC rhythm is a volley between host and guest — a short, sharp host question, then the guest's answer. QUESTION -> ANSWER STAY TOGETHER: if you include a host question, the guest's ACTUAL answer must be the very next moment. Never leave a question with no answer, or an answer with no question.
-- THE HOOK (first moment) IS THE SINGLE MOST SHOCKING LINE IN THE WHOLE EPISODE. Its theme is THE UNEXPECTED — the "did they really just say that?" line that stops a bored scroller cold: a raw taboo opinion, a violent confession, a stunning admission, a jaw-dropping number. Pick the biggest emotional gut-punch even if it is the most controversial or vulnerable thing said — put it FIRST, do not save it for the middle. It MUST land emotionally ON ITS OWN with zero setup: if it only makes sense once the NEXT line explains it, it is NOT your hook. NEVER open on an abstract thesis, a topic-definition, a "here's what this is about" framing, or a scene-setting statement — those are what you put AFTER the shock, never before it. (E.g. open on "The modern woman, I hate." — NOT on "There's a conspiracy to turn men and women against each other.")
+- THE HOOK (first moment) IS THE SINGLE MOST SHOCKING LINE IN THE WHOLE EPISODE. Its theme is THE UNEXPECTED — the "did they really just say that?" line that stops a bored scroller cold: a raw taboo opinion, a violent confession, a stunning admission, a jaw-dropping number. Pick the biggest emotional gut-punch even if it is the most controversial or vulnerable thing said — put it FIRST, do not save it for the middle. It MUST land emotionally ON ITS OWN with zero setup: if it only makes sense once the NEXT line explains it, it is NOT your hook. The strongest hook is usually the claim nobody expects from THAT speaker (a doctor: "most of what you eat for health does nothing"; an AI expert: "AI is not going to make you money"), and it is about the episode's one topic. NEVER open on an abstract thesis, a topic-definition, a "here's what this is about" framing, or a scene-setting statement — those are what you put AFTER the shock, never before it. (E.g. open on "The modern woman, I hate." — NOT on "There's a conspiracy to turn men and women against each other.")
 - SELL THE PEOPLE (within the first ~40 seconds): the viewer must know why each side is worth listening to. Use short lines with SPECIFIC numbers and results ("three exits, two of them multi-seven figure", "manages a quarter of a billion dollars") for the main guest AND for the skeptic or other side, so both are characters. A line lifted out of the host's introduction is fine when it carries a specific credential; a flat roll-call ("to my right I have X, to my left Y") or a vague compliment is not. If no line has a specific credential, skip it.
-- END ON A REAL CLIFFHANGER — the single most important ending rule, and the one most often gotten wrong. The FINAL moment must leave a BURNING, UNRESOLVED question that can ONLY be answered by watching the full episode. Do it ONE of two ways: (a) cut a line off the instant BEFORE its payoff lands — right before the answer, the number, the name, the reason, or the list (e.g. "and the number one reason men fail is—", "what you actually have to do is—", "80% of women need—"); or (b) end on an open question the guest raises but never answers on screen (e.g. "so where do you even start?"). The viewer must feel a GAP they need filled. NEVER end on a resolved, complete, or conclusive statement, however punchy it sounds — a line like "they're afraid to take that risk" ANSWERS and kills the pull. For (a), the final moment's text is EXACTLY the words kept, from the start of its first sentence up to the cut (e.g. "and the number one reason men fail is"). Only this final moment may stop mid-sentence.
+- END ON A REAL CLIFFHANGER — the single most important ending rule, and the one most often gotten wrong. The FINAL moment must leave a BURNING, UNRESOLVED question that can ONLY be answered by watching the full episode. Do it ONE of three ways: (a) cut a line off the instant BEFORE its payoff lands — right before the answer, the number, the name, the reason, or the list (e.g. "and the number one reason men fail is—", "what you actually have to do is—", "80% of women need—"); or (b) end on an open question the guest raises but never answers on screen (e.g. "so where do you even start?"). The viewer must feel a GAP they need filled. NEVER end on a resolved, complete, or conclusive statement, however punchy it sounds — a line like "they're afraid to take that risk" ANSWERS and kills the pull. For (a), the final moment's text is EXACTLY the words kept, from the start of its first sentence up to the cut (e.g. "and the number one reason men fail is"). In a GUEST episode the strongest version is (c), the DOAC move: the host asks the central question ("Does it actually help me?") and the guest STARTS to answer ("So firstly, people need to have a mindset shift...", "Do you really want to know?", "Here's the thing..."); the final moment spans the host's question and the guest's first words, its text is exactly the words kept, and it cuts to black before the answer lands. Look for the guest's first sentence after each big question. Only this final moment may stop mid-sentence.
 - EXCLUDE: sponsor reads / ads, "welcome back", "subscribe", channel housekeeping, crosstalk, throat-clearing, and trailing filler. Never cut on an ad.
 
 For EACH moment choose ONE accent word — the single most emotionally loaded word in that moment's spoken text — and label its emotion: danger (conflict/threat/failure/stakes/fear), payoff (a win/result/money/breakthrough), power (authority/scale/expertise/dominance/certainty), curiosity (mystery/question/open loop), neutral (none). The accent_word MUST literally appear in that moment's text. Also list up to 3 power_words per moment — the words a trailer editor would blow up big on screen (numbers, names, loaded nouns and verbs; never filler like "the", "and", "really"). Each power word MUST literally appear in that moment's text.
@@ -275,12 +277,17 @@ _TRAILER_FILLER = {
 # wins, blue for open loops. Power words stay white — they read as authority
 # through SIZE (the DOAC template sets highlighted words big), not colour.
 EMOTION_HEX = {
-    'danger': '#FF2B2B',
-    'payoff': '#3EE06E',
-    'power': None,
-    'curiosity': '#4EA8FF',
+    'danger': '#FF2B2B',     # red: danger, loss, pushback
+    'payoff': '#3EE06E',     # green: money, results, wins
+    'power': '#FFD21F',      # yellow: names, numbers, credentials
+    'curiosity': '#FFD21F',  # yellow: the topic word, open loops
     'neutral': None,
 }
+# Most caption blocks also get a word coloured by meaning in the DOAC caption
+# template (remotion captionTemplates doacAccents); these accent words are the
+# ones the model picked per moment. Up to TRAILER_BOX_WORDS of them are drawn
+# white on a red box: the hook's, then the stakes' and the credential's.
+TRAILER_BOX_WORDS = 3
 
 # Backend writes this verbatim into framing.subtitles.style. The remotion 'doac'
 # template defaultStyle MUST match this exactly.
@@ -2809,7 +2816,7 @@ def _augment_attempt_metrics(cost_analysis, latency_ms, attempts_used, max_retri
 
 
 TRAILER_BUDGET_SLACK = 1.2   # a "60s" trailer may run to 72s, never 2:37
-TRAILER_MAX_MOMENT = 15.0    # one heavy story at most; the prompt asks for 3-10s
+TRAILER_MAX_MOMENT = 20.0    # the moment of value or one heavy story; most are 2-10s
 
 
 def _fit_trailer_budget(moments, words, target_seconds,
@@ -3380,7 +3387,10 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
     way a trailer editor blows up the key words, and every other template
     treats them as keywords.
 
-    Returns a list of CaptionWord dicts {text, startMs, endMs[, accentColor]} in
+    Up to TRAILER_BOX_WORDS accent words (the hook's, the first stakes and
+    credential moments') also get box=True: white on a red box.
+
+    Returns a list of CaptionWord dicts {text, startMs, endMs[, accentColor, box]} in
     trailer time order (monotonic by construction).
     """
     # Flatten transcript words once.
@@ -3390,6 +3400,7 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
             all_words.append(word)
 
     captions = []
+    accent_at = {}  # moment index -> index in captions of its accent word
     for k, moment in enumerate(moments_ordered):
         s_k = float(moment['start'])
         e_k = float(moment['end'])
@@ -3437,12 +3448,24 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
                     and _accent_normalize(word['word']) == accent_target):
                 cap['accentColor'] = accent_color
                 accent_assigned = True
+                accent_at[k] = len(captions)
             norm = _accent_normalize(word['word'])
             if norm in power_targets:
                 cap['highlight'] = True
                 power_targets.discard(norm)
 
             captions.append(cap)
+
+    # Red-box words: the hook's accent, then the first stakes (danger) and
+    # credential (power) moments after it.
+    picks = [0] if 0 in accent_at else []
+    for emotion in ('danger', 'power'):
+        k = next((k for k, m in enumerate(moments_ordered)
+                  if k and k in accent_at and k not in picks and m.get('emotion') == emotion), None)
+        if k is not None:
+            picks.append(k)
+    for k in picks[:TRAILER_BOX_WORDS]:
+        captions[accent_at[k]]['box'] = True
 
     return captions
 
