@@ -168,7 +168,7 @@ SOUNDBITE_PROMPT_TEMPLATE = """You are the assistant editor on 'The Diary of a C
 
 A SOUNDBITE IS A COMPLETE THOUGHT: one or more consecutive sentences (from_i..to_i, inclusive) that start where the speaker starts the thought and end where they FINISH it. A listener must hear the full stop. Never start or end halfway through a sentence.
 
-Hunt across the WHOLE episode (beginning, middle and end). Stay on the episode's central topic: skip quotable lines that wander into unrelated talk. Tag each soundbite with one role:
+Hunt across the WHOLE episode (beginning, middle and end). Stay on the episode's central topic: skip quotable lines that wander into unrelated talk. When someone is introduced as the guest or expert, most soundbites should be theirs. Tag each soundbite with one role:
 - hook: the unexpected — a shocking, taboo, vulnerable or jaw-dropping line that stops a bored scroller cold and lands with zero setup.
 - lesson: a compact, useful insight that rewards the viewer for watching.
 - premise: the line that says what the episode is arguing about (the thing, the promise, the number), so a newcomer gets the context.
@@ -203,6 +203,7 @@ THE STORY SPINE (what the best cut of a real episode did, and the creator loved)
 - ONE TOPIC ALL THE WAY THROUGH. Find the episode's central question (the title's, when given) and make every moment serve it: the claim, the pushback, what could go wrong. Drop good lines that wander into general talk; a tangent breaks the thread even if it is quotable.
 - CONTEXT EARLY. Within the first ~30 seconds the viewer must know what is being argued about (the premise: what the thing is, the promise, the number), so everything after it makes sense.
 - A BOLD CLAIM, THEN A CHALLENGE. Open strong, then let someone push back or ask "what gives you the confidence to say that?" right away. Friction (a skeptic's "not yet", tough questions, a real risk, a story where it nearly went wrong) is what makes it a debate worth watching.
+- THE GUEST CARRIES IT. When the transcript introduces someone as the guest or the expert (the person the episode is built around), their points are the spine: give them most of the moments and let them speak several times, not once. Host questions and other panelists are there to set up, challenge or react to the guest. This does not apply to a regular multi-host episode with no featured guest.
 - A-B-C ARC: A = the claim and who is making it; B = the pushback and the stakes; C = the unanswered question. Order moments by this arc, not by the clock.
 
 RULES FOR MOMENTS:
