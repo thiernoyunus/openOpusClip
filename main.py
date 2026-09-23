@@ -203,7 +203,7 @@ THE STORY SPINE (what the best cut of a real episode did, and the creator loved)
 - ONE TOPIC ALL THE WAY THROUGH. Find the episode's central question (the title's, when given) and make every moment serve it: the claim, the pushback, what could go wrong. Drop good lines that wander into general talk; a tangent breaks the thread even if it is quotable.
 - CONTEXT EARLY. Within the first ~30 seconds the viewer must know what is being argued about (the premise: what the thing is, the promise, the number), so everything after it makes sense.
 - A BOLD CLAIM, THEN A CHALLENGE. Open strong, then let someone push back or ask "what gives you the confidence to say that?" right away. Friction (a skeptic's "not yet", tough questions, a real risk, a story where it nearly went wrong) is what makes it a debate worth watching.
-- THE GUEST CARRIES IT. When the transcript introduces someone as the guest or the expert (the person the episode is built around), their points are the spine: give them most of the moments and let them speak several times, not once. Host questions and other panelists are there to set up, challenge or react to the guest. This does not apply to a regular multi-host episode with no featured guest.
+- THE GUEST CARRIES IT. When the transcript introduces someone as the guest or the expert (the person the episode is built around), their points are the spine: give them most of the moments and let them speak several times, not once. The GUEST SPEAKS FIRST: the opening moment is the guest's boldest claim in their own voice, then the back-and-forth, then who they are (their credentials) and the rest. Host questions and other panelists are there to set up, challenge or react to the guest. This does not apply to a regular multi-host episode with no featured guest.
 - A-B-C ARC: A = the claim and who is making it; B = the pushback and the stakes; C = the unanswered question. Order moments by this arc, not by the clock.
 
 RULES FOR MOMENTS:
@@ -3070,7 +3070,7 @@ def _trailer_brief(title='', notes='', stage='trailer'):
                          "claim; tag the strongest proof of the title as hook or proof.")
         else:
             lines.append("- The hook lands the title's core claim: the first moment is a speaker "
-                         "saying it in their own words. If the title quotes a line that is in the "
+                         "(the guest, in a guest episode) saying it in their own words. If the title quotes a line that is in the "
                          "transcript, open on that exact line.")
             lines.append("- Every key noun or number in the title is heard within the first ~30 "
                          "seconds.")
