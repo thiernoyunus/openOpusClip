@@ -35,7 +35,7 @@ Work in a folder of its own, e.g. `trailer-<episode>/`. `S` is this skill's fold
    - Write `plan.json` with a `role`, `speaker` and `why` on every bite.
    - Use `python3 $S/scripts/words.py transcript.json START-END` to put each start and end on a sentence boundary.
 5. **Clean the cuts**: `python3 $S/scripts/snap.py plan.json`. Fix any cut it marks `<-- check` (its header says how), and put `"lock": true` on bites you place by hand. It's safe to re-run: it only touches bites whose times changed, and never makes a cut louder.
-6. **Sound**: `python3 $S/scripts/audio.py plan.json`, which writes `audio_mix.wav`. Then run `python3 $S/scripts/check_audio.py plan.json`. It transcribes the mix, so you can "hear" each bite: no stray words from another speaker, and no clipped first or last word.
+6. **Sound**: `python3 $S/scripts/audio.py plan.json`, which writes `audio_mix.wav`. Then run `python3 $S/scripts/check_audio.py plan.json`. It transcribes the mix, so you can "hear" each bite: no stray words from another speaker, and no clipped first or last word. To find a true word boundary where Whisper's times look wrong, run `python3 $S/scripts/edge.py original.mp4 SECONDS`: it re-transcribes 2 s around that point with exact word times.
 7. **Finish.** First check the captions without rendering: `python3 $S/scripts/captions.py plan.json`. Then run `npx hyperframes --version`:
    - **Works → HyperFrames** (the person can open it and tweak captions and graphics themselves):
      1. `python3 $S/scripts/hyperframes.py plan.json hf/`
@@ -48,7 +48,7 @@ Work in a folder of its own, e.g. `trailer-<episode>/`. `S` is this skill's fold
      HyperFrames needs Node 22, Chrome and ffprobe. `npx hyperframes doctor` says what's missing, and `npx hyperframes browser ensure` fetches Chrome. With no ffprobe or Chrome download, set `HYPERFRAMES_FFPROBE_PATH` and `HYPERFRAMES_BROWSER_PATH`.
    - **Not installed → Python:** `python3 $S/scripts/render.py plan.json trailer.mp4`. For 9:16, set `"aspect": "9:16"` and run `track.py plan.json` first.
    Both paths read the same plan and give the same picture. The HyperFrames mix comes out about 0.7 dB quieter, because it limits peaks to -1 dB.
-8. **Review before sharing**: `python3 $S/scripts/review.py trailer.mp4 plan.json`. It makes a time-labelled sheet and prints the captions exactly as they appear on screen. Look at the sheet and check that:
+8. **Review before sharing**: `python3 $S/scripts/review.py trailer.mp4 plan.json`. It makes a time-labelled sheet and prints the captions exactly as they appear on screen. Look at the sheet, and at 5+ full-size frames (the sheet catches words mid-animation). Check that:
    - in a guest episode, the first voice is the guest's, and the guest's share (printed by `review.py`) is at least 50%, spread through the trailer
    - captions never cover a face
    - the running order reads as one conversation

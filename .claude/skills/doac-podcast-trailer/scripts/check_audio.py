@@ -1,6 +1,7 @@
 """Listen to the mix the cheap way: transcribe audio_mix.wav and print what is heard in each bite.
 usage: check_audio.py plan.json [audio_mix.wav]
-Catches stray words from the other speaker at an edge, clipped first/last words, and bites that end mid-thought."""
+Catches stray words from the other speaker at an edge, clipped first/last words, and bites that end mid-thought.
+Whisper can mishear very short bites (under ~1.5 s); check those with edge.py or by listening before changing a cut."""
 import os, sys
 from faster_whisper import WhisperModel
 from common import load_plan
@@ -13,6 +14,6 @@ heard = [w for s in segs for w in s.words]
 t = 0.0
 for b in plan["bites"]:
     d = b["end"] - b["start"]
-    ws = " ".join(w.word.strip() for w in heard if t - 0.1 <= (w.start + w.end) / 2 < t + d)
+    ws = " ".join(w.word.strip() for w in heard if t - 0.05 <= w.start < t + d - 0.05)
     print(f"{t:5.1f}s {b.get('id'):>3} {b.get('role', ''):<12} | {ws}")
     t += d

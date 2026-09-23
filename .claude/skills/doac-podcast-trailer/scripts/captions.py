@@ -62,7 +62,7 @@ def build_blocks(timeline, words_all):
               for x in words_all if x["s"] >= b.get("cap_start", b["start"]) - 0.05 and x["s"] < b.get("cap_end", b["end"]) - 0.05 and clean(x["w"])]
         merged = []
         for w in ws:
-            if merged and re.match(r"^[-,]\w", w["w"]):
+            if merged and (re.match(r"^[-,]\w", w["w"]) or re.match(r"^%[.,?!]?$", w["w"])):   # "e"+"-commerce", "195"+",000", "10"+"%"
                 merged[-1]["w"] += w["w"]; merged[-1]["e"] = w["e"]
             else:
                 merged.append(w)
@@ -160,5 +160,5 @@ if __name__ == "__main__":
         rs = roles(bl)
         acc = ["*" if is_accent(bl, w, r) else "" for w, r in zip(bl["words"], rs)]
         print(f"{bl['s']:5.1f}s  bite {bl['bite'].get('id'):>3}  " +
-              " ".join((display_text(w, r) + a) if r == "big" else w["w"] for w, r, a in zip(bl["words"], rs, acc)))
-    print(f"total {total:.1f}s   (BIG = huge word, * = gold)")
+              " ".join(f"[{display_text(w, r)}{a}]" if r == "big" else w["w"] for w, r, a in zip(bl["words"], rs, acc)))
+    print(f"total {total:.1f}s   ([WORD] = huge word, * = gold)")

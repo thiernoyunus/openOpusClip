@@ -42,8 +42,8 @@ if len(sys.argv) > 2:
         print(f"  guest '{g}': {gs:.0%}" + ("  <-- under 50%: give the guest more of the trailer" if gs < 0.5 else "  ok"))
 cap = vid.rsplit(".", 1)[0] + "_captions.json"
 if os.path.exists(cap):
-    print("\ncaptions on screen (BIG words in caps)")
+    print("\ncaptions on screen ([WORD] = huge word)")
     for c in json.load(open(cap)):
         words = c["text"].split()
         roles = c.get("roles", ["lead"] * len(words))
-        print(f"{c['s']:5.1f}s  " + " ".join(w.upper() if r == "big" else w for w, r in zip(words, roles)))
+        print(f"{c['s']:5.1f}s  " + " ".join(f"[{w.upper()}]" if r == "big" else w for w, r in zip(words, roles)))
