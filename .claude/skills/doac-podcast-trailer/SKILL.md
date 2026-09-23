@@ -28,7 +28,7 @@ Work in a folder of its own, e.g. `trailer-<episode>/`. `S` is this skill's fold
    - Upload: copy the file in.
 3. **Transcribe**: `python3 $S/scripts/transcribe.py original.mp4`. This writes `transcript.json`, `transcript.txt` and `audio.wav`, and takes about a quarter of the episode's length. Read the transcript while it finishes.
 4. **Pick the story** following `reference/editorial.md`:
-   - Name the one topic.
+   - Name the one topic, and decide whether it's a guest episode (someone brought in as the expert) or a panel/regular one. A guest episode is guest-led: the guest speaks for at least half the trailer.
    - Find who is who: `python3 $S/scripts/frames.py original.mp4 who.jpg --burst MM:SS ...` shows three frames per time, so you can see whose mouth moves.
    - List candidate lines.
    - Build the arc.
@@ -49,6 +49,7 @@ Work in a folder of its own, e.g. `trailer-<episode>/`. `S` is this skill's fold
    - **Not installed → Python:** `python3 $S/scripts/render.py plan.json trailer.mp4`. For 9:16, set `"aspect": "9:16"` and run `track.py plan.json` first.
    Both paths read the same plan and give the same picture. The HyperFrames mix comes out about 0.7 dB quieter, because it limits peaks to -1 dB.
 8. **Review before sharing**: `python3 $S/scripts/review.py trailer.mp4 plan.json`. It makes a time-labelled sheet and prints the captions exactly as they appear on screen. Look at the sheet and check that:
+   - in a guest episode, the guest's share (printed by `review.py`) is at least 50%, spread through the trailer
    - captions never cover a face
    - the running order reads as one conversation
    - every bite starts and ends on a complete sentence

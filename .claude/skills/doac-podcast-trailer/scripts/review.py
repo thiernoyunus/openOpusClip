@@ -30,6 +30,16 @@ if len(sys.argv) > 2:
         d = b["end"] - b["start"]
         print(f"{t:5.1f}s {b['id']:>3} {b.get('role', ''):<12} {b.get('speaker', '')[:18]:<18} {d:4.1f}s  src {int(b['start'] // 60)}:{b['start'] % 60:04.1f}")
         t += d
+    share = {}
+    for b in plan["bites"]:
+        share[b.get("speaker", "?")] = share.get(b.get("speaker", "?"), 0) + b["end"] - b["start"]
+    print("\nspeaking time by speaker (in a guest episode the guest should be 50% or more)")
+    for k, v in sorted(share.items(), key=lambda kv: -kv[1]):
+        print(f"  {v / t:4.0%}  {v:5.1f}s  {k}")
+    g = plan.get("guest")
+    if g:
+        gs = share.get(g, 0) / t
+        print(f"  guest '{g}': {gs:.0%}" + ("  <-- under 50%: give the guest more of the trailer" if gs < 0.5 else "  ok"))
 cap = vid.rsplit(".", 1)[0] + "_captions.json"
 if os.path.exists(cap):
     print("\ncaptions on screen (BIG words in caps)")

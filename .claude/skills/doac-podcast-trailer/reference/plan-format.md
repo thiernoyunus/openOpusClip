@@ -10,6 +10,7 @@ Editorial choices live here and nowhere else, so changing the trailer means edit
   "aspect": "16:9",                  // "16:9" (full two-shot, default) or "9:16" (speaker crop, run track.py)
   "topic": "e-commerce as an asset class",   // the one thing this episode is about (for you, not the renderer)
   "genre": "interrogation / thriller",
+  "guest": "Jamal",                  // guest episodes only: exactly the label used in the bites' "speaker"; review.py checks their share
   "music": "track.mp3",              // optional licensed track; without it a quiet synth pad is used
   "music_db": -24,
   "bites": [ { ... }, ... ]          // in trailer order
@@ -22,7 +23,7 @@ Editorial choices live here and nowhere else, so changing the trailer means edit
 |-----|----------|---------|
 | `id` | no | Label shown in logs (defaults to 1, 2, 3...) |
 | `role` | yes | Its job in the story: `hook`, `challenge`, `premise`, `sell-guest`, `value`, `pushback`, `stakes`, `admission`, `cliffhanger`... |
-| `speaker` | yes | Who is talking (name or description) |
+| `speaker` | yes | Who is talking. Use one short label per person, identical on every bite ("Host", "Jamal"), so `review.py` can add up each person's share. Put descriptions in `notes`, not here |
 | `start`, `end` | yes | Source seconds. Start at a sentence start, end after the sentence's last word. `snap.py` refines both |
 | `why` | yes | One line: what this bite does for the viewer. If you can't write it, cut the bite |
 | `cap_start`, `cap_end` | no | Only caption words spoken inside this window (default: the bite). Use to drop a stray word from the other speaker at an edge |
