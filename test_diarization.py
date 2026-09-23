@@ -121,7 +121,7 @@ def test_prompt_formats_with_and_without_speaker_block():
     for ctx in ("", "\nSPEAKERS: test block\n"):
         p = TRAILER_PROMPT_TEMPLATE.format(
             transcript="[]", duration=100, min_moments=8, max_moments=14,
-            target_seconds=60, max_seconds=72, speaker_context=ctx)
+            target_seconds=60, max_seconds=72, speaker_context=ctx, brief='')
         assert "RULES FOR MOMENTS:" in p
         assert ("SPEAKERS: test block" in p) == bool(ctx)
 

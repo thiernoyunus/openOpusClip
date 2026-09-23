@@ -16,6 +16,7 @@ from main import (
     save_transcript,
     _fit_trailer_budget,
     _trailer_length_problems,
+    _trailer_brief,
 )
 import json
 import os
@@ -353,6 +354,14 @@ def test_length_problems_flags_monologue_and_total():
     probs = _trailer_length_problems([_mk(0, 15), _mk(20, 35), _mk(40, 55), _mk(60, 75),
                                       _mk(80, 95), _mk(100, 102)], 60)
     assert probs[-1].startswith('The trailer runs')
+
+
+def test_trailer_brief_empty_and_filled():
+    assert _trailer_brief('', '') == ''
+    b = _trailer_brief("Don't Buy Real Estate", '  open on   Dubai ')
+    assert "Don't Buy Real Estate" in b and 'Creator instructions: "open on Dubai"' in b
+    assert 'hook lands' in b
+    assert 'Favour soundbites' in _trailer_brief('T', stage='selects')
 
 
 if __name__ == '__main__':

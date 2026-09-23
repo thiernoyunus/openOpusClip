@@ -912,6 +912,7 @@ async def process_endpoint(
     mode: Optional[str] = Form("normal"),
     trailer_pace: Optional[str] = Form("standard"),
     smart_placement: Optional[str] = Form(None),
+    trailer_title: Optional[str] = Form(None),
 ):
     """Validate a media job request and enqueue its isolated worker process."""
     api_key = request.headers.get("X-Gemini-Key")
@@ -939,6 +940,7 @@ async def process_endpoint(
         mode = body.get("mode", mode)
         trailer_pace = body.get("trailer_pace", trailer_pace)
         smart_placement = body.get("smart_placement", smart_placement)
+        trailer_title = body.get("trailer_title", trailer_title)
 
     skip_flag = str(skip_analysis).lower() in ("1", "true", "yes")
     # Keep in sync with main.ASPECT_PRESETS. Intentionally NOT importing main here:
@@ -1064,6 +1066,8 @@ async def process_endpoint(
     cmd.extend(["--trailer-pace", trailer_pace])
     if smart_placement_flag:
         cmd.append("--smart-placement")
+    if mode == "trailer" and trailer_title and str(trailer_title).strip():
+        cmd.extend(["--trailer-title", str(trailer_title).strip()[:200]])
     cmd.extend(["-o", job_output_dir])
 
     print(f"[attestation] job={job_id} ip={attestation['ip']} source={attestation['source']} ack=true")

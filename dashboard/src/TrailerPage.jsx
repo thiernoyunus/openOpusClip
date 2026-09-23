@@ -99,6 +99,11 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
   const [file, setFile] = useState(null);
   const [aspectRatio, setAspectRatio] = useState('9:16');
   const [pace, setPace] = useState('standard');
+  // Optional brief: the title the episode will go out under (the trailer is
+  // cut to prove it) and free-text direction. Sent as trailer_title and
+  // moment_prompt; empty means the AI picks the angle itself.
+  const [trailerTitle, setTrailerTitle] = useState('');
+  const [trailerNotes, setTrailerNotes] = useState('');
   // On by default: captions dodge faces (the user's #1 note on the Imran edit).
   // It's a no-op on 9:16, where captions stay at the bottom anyway.
   const [smartPlacement, setSmartPlacement] = useState(true);
@@ -218,8 +223,8 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
   }, [resumeIds, jobId]);
 
   // Mirror App.jsx startProcessJob exactly, but add mode:'trailer' and omit the
-  // clip-length / skip_analysis / moment_prompt controls (trailer mode owns the
-  // moment selection on the backend).
+  // clip-length / skip_analysis controls (trailer mode owns the moment
+  // selection on the backend). moment_prompt carries the trailer instructions.
   const submit = async () => {
     if (!apiKey) {
       alert('Add your Gemini API key in Settings to generate a trailer.');
@@ -252,6 +257,8 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
           mode: 'trailer',
           trailer_pace: pace,
           smart_placement: smartPlacement,
+          trailer_title: trailerTitle.trim(),
+          moment_prompt: trailerNotes.trim(),
           acknowledged: true,
           whisper_model: whisperModel,
           transcription_engine: transcriptionEngine,
@@ -263,6 +270,8 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
         formData.append('mode', 'trailer');
         formData.append('trailer_pace', pace);
         formData.append('smart_placement', smartPlacement ? 'true' : 'false');
+        if (trailerTitle.trim()) formData.append('trailer_title', trailerTitle.trim());
+        if (trailerNotes.trim()) formData.append('moment_prompt', trailerNotes.trim());
         formData.append('acknowledged', 'true');
         formData.append('whisper_model', whisperModel);
         formData.append('transcription_engine', transcriptionEngine || 'whisper');
@@ -290,7 +299,7 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
       const payload = { type: mode, payload: mode === 'url' ? url : file };
       addProject({
         id: resData.job_id,
-        title: `Trailer · ${mode === 'url' ? url : file?.name || 'Podcast'}`,
+        title: `Trailer · ${trailerTitle.trim() || (mode === 'url' ? url : file?.name) || 'Podcast'}`,
         type: mode,
         model: whisperModel,
         src: mode === 'url' ? url : null,
@@ -504,6 +513,33 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
                   </option>
                 ))}
               </select>
+            </label>
+
+            <label className="block mt-5">
+              <span className="block text-xs font-medium text-zinc-400 mb-2">Episode title (optional)</span>
+              <input
+                type="text"
+                value={trailerTitle}
+                onChange={(e) => setTrailerTitle(e.target.value)}
+                maxLength={200}
+                placeholder="e.g. Don't Buy Real Estate, Buy an E-Commerce Site"
+                className="input-field"
+              />
+              <span className="block text-[11px] text-zinc-500 mt-2">
+                The trailer is cut to prove this title, so viewers who click get what it promised.
+              </span>
+            </label>
+
+            <label className="block mt-5">
+              <span className="block text-xs font-medium text-zinc-400 mb-2">Trailer instructions (optional)</span>
+              <textarea
+                value={trailerNotes}
+                onChange={(e) => setTrailerNotes(e.target.value)}
+                maxLength={500}
+                rows={3}
+                placeholder="e.g. Open on the Dubai 2002 line. Lean on Jamal's exits. End on whether you can lose it all."
+                className="input-field resize-none"
+              />
             </label>
 
             <label className="block mt-5">

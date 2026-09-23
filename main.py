@@ -160,7 +160,7 @@ The virality_score MUST be consistent with the ordering (higher score = earlier 
 # the transcript itself (see _resolve_moment_bounds / _complete_thought_bounds).
 # See docs/trailer-doac-alignment-plan.md for the research behind the rules.
 # Format placeholders (trailer): {transcript} {duration} {min_moments}
-# {max_moments} {target_seconds} {max_seconds} {speaker_context}. speaker_context is the
+# {max_moments} {target_seconds} {max_seconds} {speaker_context} {brief}. speaker_context is the
 # diarization-aware SPEAKERS block from _trailer_speaker_context ('' when the
 # transcript has no speaker labels, e.g. local Whisper). JSON shapes are
 # described in words (no literal braces) so .format() can never raise KeyError.
@@ -177,7 +177,7 @@ Hunt across the WHOLE episode (beginning, middle and end), and tag each soundbit
 - answer: the guest's reply to the question just before it.
 - cliffhanger: a line that builds toward a payoff (a reason, a number, a name, a list, a secret) — the trailer will cut it off right before the payoff lands — or an open question the episode answers later.
 {speaker_context}
-Skip sponsor reads and ads, "welcome back", "subscribe", housekeeping, crosstalk and filler. Prefer soundbites of 3 to 15 seconds.
+{brief}Skip sponsor reads and ads, "welcome back", "subscribe", housekeeping, crosstalk and filler. Prefer soundbites of 3 to 15 seconds.
 
 TRANSCRIPT (sentences as {{i, s, e, text}} with s/e in seconds{speaker_note}): {transcript}
 
@@ -191,7 +191,7 @@ STEP 1 — WRITE THE SCRIPT. Draft the trailer as one continuous script using ON
 
 STEP 2 — MAP TO SENTENCES. Turn each script line into a moment that names the transcript sentences it uses: from_i and to_i (inclusive sentence indices).
 {speaker_context}
-THE FOUR PARTS OF EVERY DOAC TRAILER:
+{brief}THE FOUR PARTS OF EVERY DOAC TRAILER:
 1. THE HOOK — the unexpected. See THE HOOK rule below.
 2. THE LESSON — early on, give the viewer something genuinely useful or eye-opening, so they trust the episode is worth their time.
 3. THE EMOTIONAL ROLLERCOASTER — alternate tension and release, highs and lows, controversy and payoff. When interest could dip, drop in another hook: good trailers stack several hooks, each one answering the viewer's next "why should I care?".
@@ -3040,8 +3040,38 @@ def _judge_trailer_candidates(client, model_name, candidates):
     return _deterministic_best_trailer(candidates)
 
 
+TRAILER_BRIEF_TITLE_MAX = 200
+TRAILER_BRIEF_NOTES_MAX = 500
+
+
+def _trailer_brief(title='', notes='', stage='trailer'):
+    """The creator's optional EPISODE BRIEF for the trailer prompts: the video
+    title (the trailer has to prove the title's promise) and free-text
+    instructions. '' when neither is given, so prompts read as before."""
+    title = ' '.join(str(title or '').split())[:TRAILER_BRIEF_TITLE_MAX]
+    notes = ' '.join(str(notes or '').split())[:TRAILER_BRIEF_NOTES_MAX]
+    if not title and not notes:
+        return ''
+    lines = ["\nEPISODE BRIEF (from the creator; it outranks your own taste):"]
+    if title:
+        lines.append(f'- The video will be published as: "{title}". The trailer exists to sell '
+                     "THIS title, so a viewer who reads it and then watches the trailer feels the "
+                     "promise is real.")
+        if stage == 'selects':
+            lines.append("- Favour soundbites that prove, dramatise or push back on the title's "
+                         "claim; tag the strongest proof of the title as hook or proof.")
+        else:
+            lines.append("- The hook lands the title's core claim or its most provocative proof. "
+                         "Most moments back the title up; pushback against it is welcome as "
+                         "tension, but the title's side must be the one the viewer leaves wanting "
+                         "to hear. A trailer that would fit a different title is wrong.")
+    if notes:
+        lines.append(f'- Creator instructions: "{notes}"')
+    return "\n".join(lines) + "\n"
+
+
 def _select_soundbites(client, model_name, sentences, speaker_context,
-                       max_soundbites, max_retries=3):
+                       max_soundbites, max_retries=3, brief=''):
     """Selects pass (Anthony Smith's first step: cut the episode down to its
     best soundbites before writing the trailer). One Gemini call over the whole
     transcript -> (soundbites, cost_analysis), or (None, None) on any failure so
@@ -3052,6 +3082,7 @@ def _select_soundbites(client, model_name, sentences, speaker_context,
         max_soundbites=max_soundbites,
         speaker_context=speaker_context,
         speaker_note=speaker_note,
+        brief=brief,
     )
     valid_i = {s['i'] for s in sentences}
     for attempt in range(1, max_retries + 1):
@@ -3112,7 +3143,8 @@ def _soundbite_transcript(sentences, soundbites):
     return out
 
 
-def get_trailer_moments(transcript_result, video_duration, pace='standard', max_retries=5):
+def get_trailer_moments(transcript_result, video_duration, pace='standard', max_retries=5,
+                        title='', notes=''):
     """Ask Gemini to SCRIPT+ORDER coherent moments into a DOAC cold-open trailer.
 
     Script-first: the model drafts a readable trailer from verbatim sentence
@@ -3127,6 +3159,10 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
         pace, TRAILER_PACE_PRESETS['standard'])
     print(f"🎬  Analyzing trailer moments with Gemini (pace={pace}, "
           f"~{target_seconds}s, {min_moments}-{max_moments} cuts)...")
+    if title:
+        print(f"   🏷️  Cutting the trailer to sell the title: \"{title}\"")
+    if notes:
+        print(f"   📝 Creator instructions: {notes}")
 
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -3181,7 +3217,8 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
         max_soundbites = max(20, max_moments * 2 + 6)
         print(f"   🎧 Selects pass: pulling up to {max_soundbites} soundbites...")
         bites, selects_cost = _select_soundbites(
-            client, model_name, sentences, speaker_context, max_soundbites)
+            client, model_name, sentences, speaker_context, max_soundbites,
+            brief=_trailer_brief(title, notes, stage='selects'))
         if bites:
             picked = _soundbite_transcript(sentences, bites)
             if len(picked) >= max_moments:
@@ -3202,6 +3239,7 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
         target_seconds=target_seconds,
         max_seconds=int(target_seconds * TRAILER_BUDGET_SLACK),
         speaker_context=speaker_context,
+        brief=_trailer_brief(title, notes),
     )
 
     # lo/hi guard against DEGENERATE responses, not the exact pace window — the
@@ -3478,7 +3516,8 @@ def compute_smart_placements(framing_data):
     return framing_data
 
 
-def assemble_trailer(input_video, output_dir, video_title, transcript, duration, fps, aspect_ratio, pace='standard', smart_placement=False):
+def assemble_trailer(input_video, output_dir, video_title, transcript, duration, fps, aspect_ratio, pace='standard', smart_placement=False,
+                     trailer_title='', trailer_notes=''):
     """Build a Diary-of-a-CEO-style cold-open trailer (Option B: concat-then-frame-once).
 
     Steps (LOCKED spec):
@@ -3498,7 +3537,8 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
 
     # 2. Select + order moments (raises ClipAnalysisError -> caller sys.exit(2))
     report_stage("analyze", "start")
-    trailer = get_trailer_moments(transcript, duration, pace=pace)
+    trailer = get_trailer_moments(transcript, duration, pace=pace,
+                                  title=trailer_title, notes=trailer_notes)
     moments_ordered = trailer['moments_ordered']
     report_stage("analyze", "done")
     print(f"🎞️  Trailer: {len(moments_ordered)} ordered moments.")
@@ -3750,6 +3790,7 @@ if __name__ == '__main__':
     parser.add_argument('--aspect-ratio', choices=sorted(ASPECT_PRESETS), default='9:16', help="Output aspect ratio.")
     parser.add_argument('--mode', choices=['normal', 'trailer'], default='normal', help="Processing mode: 'normal' viral clips, or 'trailer' (Diary-of-a-CEO cold-open).")
     parser.add_argument('--trailer-pace', choices=sorted(TRAILER_PACE_PRESETS), default='standard', help="Trailer length/cut-density preset (trailer mode): punchy ~35s, standard ~60s, extended ~90s.")
+    parser.add_argument('--trailer-title', type=str, default="", help="Trailer mode: the title the episode will be published under; the trailer is cut to prove it. --moment-prompt adds free-text trailer instructions.")
     parser.add_argument('--smart-placement', action='store_true', help="Trailer mode: auto-position captions to avoid the speaker's face (DOAC smart placement; effective on wide/square output).")
 
     parser.add_argument('--transcript-file', type=str, default=None, help="Load the transcript from this JSON file instead of transcribing (requires -i). Used by More-clips mode, and to rerun a trailer/clips job from the {title}_transcript.json it saved.")
@@ -3879,6 +3920,8 @@ if __name__ == '__main__':
                 aspect_ratio=args.aspect_ratio,
                 pace=args.trailer_pace,
                 smart_placement=args.smart_placement,
+                trailer_title=args.trailer_title,
+                trailer_notes=args.moment_prompt,
             )
         except PipelineFailure as e:
             report_failure(e.stage, e.code, e.provider, e.model)
