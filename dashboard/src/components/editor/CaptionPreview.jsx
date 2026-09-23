@@ -117,6 +117,8 @@ export default function CaptionPreview({ templateId, animate = false, words = SA
     // Emphasis word = the longest (drives size-contrast templates like Podcast).
     let emphasisIndex = 0, longest = -1;
     words.forEach((w, i) => { if (w.length > longest) { longest = w.length; emphasisIndex = i; } });
+    // Templates with per-word layout roles (DOAC lead/big/tail) pick them here too.
+    const roles = template.assignRoles?.(words.map((text) => ({ text })));
 
     return (
         <div
@@ -164,6 +166,7 @@ export default function CaptionPreview({ templateId, animate = false, words = SA
                             uppercase,
                             seed: i * 17 + 3,
                             isEmphasis: i === emphasisIndex,
+                            role: roles?.[i],
                         })}
                     </React.Fragment>
                 ))}

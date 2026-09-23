@@ -146,41 +146,72 @@ The virality_score MUST be consistent with the ordering (higher score = earlier 
 """
 
 # --- Podcast Trailer mode ---
-# Prompt for the AI trailer editor. SCRIPT-FIRST: the model drafts a coherent
-# cold-open script from verbatim transcript spans, THEN maps each line to
-# timestamps. This is what real Diary-of-a-CEO intros do — complete thoughts,
-# question->answer pairs, a spoken identity card, and exactly one open loop at
-# the very end. (The old "rapid 2-4s fragment montage" prompt produced
-# unintelligible word-salad; see docs/trailer-doac-alignment-plan.md.)
-# Format placeholders: {transcript} {duration} {min_moments} {max_moments}
-# {target_seconds} {speaker_context}. speaker_context is the diarization-aware
-# SPEAKERS block from _trailer_speaker_context ('' when the transcript has no
-# speaker labels, e.g. local Whisper). The JSON shape is described in words (no
-# literal braces) so .format() can never raise KeyError on stray { }.
-TRAILER_PROMPT_TEMPLATE = """You are the trailer editor for 'The Diary of a CEO'. From ONE podcast transcript you build a single gripping cold-open trailer of about {target_seconds} seconds by selecting and RE-ORDERING moments. The order is a deliberate narrative, NOT chronological.
+# DOAC trailers are built the way their Director of Trailers, Anthony Smith,
+# describes his process: first cut the episode down to its best soundbites,
+# then write the trailer as a script in a text document ("does it read like a
+# clear narrative?"), and only then cut video. We mirror that with two Gemini
+# calls:
+#   1. SOUNDBITE_PROMPT_TEMPLATE — read the whole transcript and pull the
+#      strongest complete-thought soundbites, tagged by story role.
+#   2. TRAILER_PROMPT_TEMPLATE — script the trailer from ONLY those soundbites.
+# Both address the transcript by SENTENCE INDEX, never by seconds: the model
+# used to guess float timestamps and routinely landed a few words short of the
+# full stop, which is what made cuts end mid-sentence. Boundaries now come from
+# the transcript itself (see _resolve_moment_bounds / _complete_thought_bounds).
+# See docs/trailer-doac-alignment-plan.md for the research behind the rules.
+# Format placeholders (trailer): {transcript} {duration} {min_moments}
+# {max_moments} {target_seconds} {speaker_context}. speaker_context is the
+# diarization-aware SPEAKERS block from _trailer_speaker_context ('' when the
+# transcript has no speaker labels, e.g. local Whisper). JSON shapes are
+# described in words (no literal braces) so .format() can never raise KeyError.
+SOUNDBITE_PROMPT_TEMPLATE = """You are the assistant editor on 'The Diary of a CEO' trailer team. Before the trailer is written, your job is the SELECTS PASS: read the ENTIRE podcast transcript and pull out the {max_soundbites} strongest soundbites — the juiciest material in the episode, the lines a viewer would repeat to a friend.
+
+A SOUNDBITE IS A COMPLETE THOUGHT: one or more consecutive sentences (from_i..to_i, inclusive) that start where the speaker starts the thought and end where they FINISH it. A listener must hear the full stop. Never start or end halfway through a sentence.
+
+Hunt across the WHOLE episode (beginning, middle and end), and tag each soundbite with one role:
+- hook: the unexpected — a shocking, taboo, vulnerable or jaw-dropping line that stops a bored scroller cold and lands with zero setup.
+- lesson: a compact, useful insight that rewards the viewer for watching.
+- proof: credibility — a number, a named result, a track record, who the guest is and why they matter (never a flat roll-call introduction).
+- emotion: a raw high or low — a confession, a story that hurts, a laugh, anger.
+- question: a short, punchy HOST question that sets up a great guest answer (tag the answer as answer, right after it).
+- answer: the guest's reply to the question just before it.
+- cliffhanger: a line that builds toward a payoff (a reason, a number, a name, a list, a secret) — the trailer will cut it off right before the payoff lands — or an open question the episode answers later.
+{speaker_context}
+Skip sponsor reads and ads, "welcome back", "subscribe", housekeeping, crosstalk and filler. Prefer soundbites of 3 to 15 seconds.
+
+TRANSCRIPT (sentences as {{i, s, e, text}} with s/e in seconds{speaker_note}): {transcript}
+
+Return ONLY valid JSON, no prose, no markdown fences: an object with key soundbites (array of objects each having from_i (int), to_i (int), role (one of hook|lesson|proof|emotion|question|answer|cliffhanger), why (string, max 12 words))."""
+
+TRAILER_PROMPT_TEMPLATE = """You are Anthony Smith, Director of Trailers for 'The Diary of a CEO'. From ONE podcast you build a single gripping cold-open trailer of about {target_seconds} seconds by selecting and RE-ORDERING moments. The order is a deliberate narrative, NOT chronological. You work like you always do: script first, in a text document, and only then cut.
 
 WORK IN TWO STEPS.
 
-STEP 1 — WRITE THE SCRIPT. Draft the trailer as one continuous script using ONLY verbatim spans copied from the transcript (you may re-order them, but never invent or paraphrase words). Then READ IT BACK: it must read as ONE coherent, gripping piece a listener can follow with NO video. If it reads like disconnected fragments, fix it before continuing.
+STEP 1 — WRITE THE SCRIPT. Draft the trailer as one continuous script using ONLY verbatim sentences copied from the transcript (you may re-order them, but never invent or paraphrase words). Then READ IT BACK: it must read as ONE coherent, gripping piece a listener can follow with NO video. You cannot hide a bad story in a text document — if it reads like disconnected fragments, fix it before continuing.
 
-STEP 2 — MAP TO TIMESTAMPS. Turn each script line into a moment with start/end seconds taken from the transcript.
+STEP 2 — MAP TO SENTENCES. Turn each script line into a moment that names the transcript sentences it uses: from_i and to_i (inclusive sentence indices).
 {speaker_context}
+THE FOUR PARTS OF EVERY DOAC TRAILER:
+1. THE HOOK — the unexpected. See THE HOOK rule below.
+2. THE LESSON — early on, give the viewer something genuinely useful or eye-opening, so they trust the episode is worth their time.
+3. THE EMOTIONAL ROLLERCOASTER — alternate tension and release, highs and lows, controversy and payoff. When interest could dip, drop in another hook: good trailers stack several hooks, each one answering the viewer's next "why should I care?".
+4. THE CLIFFHANGER — see the ending rule below.
+Before you finish, count the reasons you have given the viewer to watch the full episode. A great trailer seeds several open loops and lands the biggest one LAST.
+
 RULES FOR MOMENTS:
-- Each moment is a COMPLETE THOUGHT — a full clause or sentence(s), normally 3 to 10 seconds. Hold up to ~15s only for one emotionally heavy story. NEVER sub-second word-splinters. Pace comes from dialogue volleys, not machine-gun cuts. Aim for {min_moments} to {max_moments} moments total.
-- QUESTION -> ANSWER STAY TOGETHER: if you include a host question, the guest's ACTUAL answer must be the very next moment. Never leave a question with no answer, or an answer with no question.
+- EVERY MOMENT EXCEPT THE LAST IS A COMPLETE THOUGHT. It starts at the beginning of a sentence and ends at the END of a sentence — the listener must hear the speaker finish. Never end on "and", "but", "because", "so", or a half-said clause. If a sentence is too long, pick a different one; do not chop it. Moments are normally 3 to 10 seconds; hold up to ~15s only for one emotionally heavy story. Pace comes from dialogue volleys, not machine-gun cuts. Aim for {min_moments} to {max_moments} moments total.
+- BACK-AND-FORTH: the DOAC rhythm is a volley between host and guest — a short, sharp host question, then the guest's answer. QUESTION -> ANSWER STAY TOGETHER: if you include a host question, the guest's ACTUAL answer must be the very next moment. Never leave a question with no answer, or an answer with no question.
 - THE HOOK (first moment) IS THE SINGLE MOST SHOCKING LINE IN THE WHOLE EPISODE. Its theme is THE UNEXPECTED — the "did they really just say that?" line that stops a bored scroller cold: a raw taboo opinion, a violent confession, a stunning admission, a jaw-dropping number. Pick the biggest emotional gut-punch even if it is the most controversial or vulnerable thing said — put it FIRST, do not save it for the middle. It MUST land emotionally ON ITS OWN with zero setup: if it only makes sense once the NEXT line explains it, it is NOT your hook. NEVER open on an abstract thesis, a topic-definition, a "here's what this is about" framing, or a scene-setting statement — those are what you put AFTER the shock, never before it. (E.g. open on "The modern woman, I hate." — NOT on "There's a conspiracy to turn men and women against each other.")
-- IDENTITY CARD (conditional, HIGH BAR): Only include an identity-card moment if the transcript contains a line with real DRAMATIC WEIGHT about who the guest is — a specific achievement, a striking credential, a track record, a title that signals authority or stakes (e.g. "21 years of counseling, tens of thousands of cases," "a globally recognized voice on AI safety"). If it clears that bar, place it as the 2nd or 3rd moment. DO NOT use a flat, listy, as-spoken roll-call introduction ("to my right I have X, to my left I have Y, we also have Z") — that is podcast housekeeping, not a hook, and it belongs in the full episode, never the trailer, even though it "introduces" someone. If there is no introduction that clears the bar, SKIP the identity card entirely — no identity card beats a boring one. Many episodes have no special guest, or no usable intro line; that is fine.
-- END ON A REAL CLIFFHANGER — the single most important ending rule, and the one most often gotten wrong. The FINAL moment must leave a BURNING, UNRESOLVED question that can ONLY be answered by watching the full episode. Do it ONE of two ways: (a) cut a line off the instant BEFORE its payoff lands — right before the answer, the number, the name, the reason, or the list (e.g. "and the number one reason men fail is—", "what you actually have to do is—", "80% of women need—"); or (b) end on an open question the guest raises but never answers on screen (e.g. "so where do you even start?"). The viewer must feel a GAP they need filled. NEVER end on a resolved, complete, or conclusive statement, however punchy it sounds — a line like "they're afraid to take that risk" ANSWERS and kills the pull; it is NOT a cliffhanger. Actively HUNT the transcript for the strongest withheld-payoff line or unanswered question and place it LAST. Only this final moment may cut mid-thought (on a word boundary); every OTHER moment ends cleanly on a sentence/clause boundary.
+- IDENTITY CARD (conditional, HIGH BAR): Only include an identity-card moment if the transcript contains a line with real DRAMATIC WEIGHT about who the guest is — a specific achievement, a striking credential, a track record, a title that signals authority or stakes (e.g. "21 years of counseling, tens of thousands of cases," "a globally recognized voice on AI safety"). If it clears that bar, place it as the 2nd or 3rd moment. DO NOT use a flat, listy, as-spoken roll-call introduction ("to my right I have X, to my left I have Y, we also have Z") — that is podcast housekeeping, not a hook. If there is no introduction that clears the bar, SKIP the identity card entirely — no identity card beats a boring one.
+- END ON A REAL CLIFFHANGER — the single most important ending rule, and the one most often gotten wrong. The FINAL moment must leave a BURNING, UNRESOLVED question that can ONLY be answered by watching the full episode. Do it ONE of two ways: (a) cut a line off the instant BEFORE its payoff lands — right before the answer, the number, the name, the reason, or the list (e.g. "and the number one reason men fail is—", "what you actually have to do is—", "80% of women need—"); or (b) end on an open question the guest raises but never answers on screen (e.g. "so where do you even start?"). The viewer must feel a GAP they need filled. NEVER end on a resolved, complete, or conclusive statement, however punchy it sounds — a line like "they're afraid to take that risk" ANSWERS and kills the pull. For (a), the final moment's text is EXACTLY the words kept, from the start of its first sentence up to the cut (e.g. "and the number one reason men fail is"). Only this final moment may stop mid-sentence.
 - EXCLUDE: sponsor reads / ads, "welcome back", "subscribe", channel housekeeping, crosstalk, throat-clearing, and trailing filler. Never cut on an ad.
 
-EMOTIONAL ARC (guidance, not a quota — do NOT scatter unrelated fragments to hit it): shocking hook -> the topic/context it opened up -> credibility or proof (a number, a named result, a hard-won lesson) -> an emotional rollercoaster of highs and lows -> a final cliffhanger. Ant Smith's rule: the trailer is an EMOTIONAL ROLLERCOASTER — alternate tension and release, controversy and payoff. The single most shocking line always leads (see THE HOOK); everything after it is arranged for MAXIMUM TENSION FIRST, coherence second. Seed unanswered questions / open loops throughout (good DOAC trailers carry several), and land the biggest one LAST as the cliffhanger. A few coherent turns beat many disjoint ones.
+For EACH moment choose ONE accent word — the single most emotionally loaded word in that moment's spoken text — and label its emotion: danger (conflict/threat/failure/stakes/fear), payoff (a win/result/money/breakthrough), power (authority/scale/expertise/dominance/certainty), curiosity (mystery/question/open loop), neutral (none). The accent_word MUST literally appear in that moment's text. Also list up to 3 power_words per moment — the words a trailer editor would blow up big on screen (numbers, names, loaded nouns and verbs; never filler like "the", "and", "really"). Each power word MUST literally appear in that moment's text.
 
-For EACH moment choose ONE accent word — the single most emotionally loaded word in that moment's spoken text — and label its emotion: danger (conflict/threat/failure/stakes/fear), payoff (a win/result/money/breakthrough), power (authority/scale/expertise/dominance/certainty), curiosity (mystery/question/open loop), neutral (none). The accent_word MUST literally appear in that moment's transcript text.
-
-TRANSCRIPT (sentences as {{i, s, e, text}} where s/e are start/end seconds): {transcript}
+TRANSCRIPT (sentences as {{i, s, e, text}} where s/e are start/end seconds; role is the selects-pass tag when present): {transcript}
 Video duration: {duration} seconds.
 
-Return ONLY valid JSON, no prose, no markdown fences, with this shape: an object with key script (string — the full assembled trailer read from step 1, for review) and key moments_ordered (array, in PLAYBACK order, of objects each having start (sec number), end (sec number), p (int 1-5), accent_word (string), emotion (one of danger|payoff|power|curiosity|neutral), reason (string), text (the verbatim spoken text of that moment))."""
+Return ONLY valid JSON, no prose, no markdown fences, with this shape: an object with key script (string — the full assembled trailer read from step 1, for review) and key moments_ordered (array, in PLAYBACK order, of objects each having from_i (int), to_i (int), p (int 1-4, the trailer part), accent_word (string), emotion (one of danger|payoff|power|curiosity|neutral), power_words (array of strings), reason (string), text (the verbatim spoken text of that moment — for the final cliffhanger, exactly the words kept))."""
 
 # Trailer pace presets: (min_moments, max_moments, target_seconds). Moments are
 # now COMPLETE THOUGHTS (~4-10s each), so a given length needs far fewer cuts
@@ -204,6 +235,10 @@ TRAILER_JUDGE_MODEL = DEFAULT_GEMINI_MODEL
 # so we run single-shot on the better model. Bump this to re-enable best-of-N.
 TRAILER_CANDIDATES = int(os.environ.get('TRAILER_CANDIDATES', '1'))
 
+# Run the selects pass (SOUNDBITE_PROMPT_TEMPLATE) before scripting. Costs one
+# extra call over the full transcript; set TRAILER_SOUNDBITE_PASS=0 to skip it.
+TRAILER_SOUNDBITE_PASS = os.environ.get('TRAILER_SOUNDBITE_PASS', '1').lower() not in ('0', 'false', 'no')
+
 # Flash judge: pick the best of the sampled trailer candidates. Weighted toward
 # the two dims flash fails most — no filler, and a real unresolved cliffhanger.
 TRAILER_JUDGE_TEMPLATE = """You are the senior editor at 'The Diary of a CEO' choosing which of {n} cold-open trailer cuts to publish. Judge ONLY on these, in priority order:
@@ -224,10 +259,13 @@ _TRAILER_FILLER = {
 }
 
 # Single source of truth for accent colors. None == neutral (no accent applied).
+# Palette from the Imran DOAC trailer build: red for danger, green for money /
+# wins, blue for open loops. Power words stay white — they read as authority
+# through SIZE (the DOAC template sets highlighted words big), not colour.
 EMOTION_HEX = {
-    'danger': '#FF4444',
-    'payoff': '#3DD68C',
-    'power': '#FFD23F',
+    'danger': '#FF2B2B',
+    'payoff': '#3EE06E',
+    'power': None,
     'curiosity': '#4EA8FF',
     'neutral': None,
 }
@@ -237,15 +275,15 @@ EMOTION_HEX = {
 DOAC_STYLE = {
     'template': 'doac',
     'animation': 'none',
-    'fontFamily': 'Inter',
-    'fontSize': 88,
+    'fontFamily': 'Montserrat',
+    'fontSize': 150,
     'fontColor': '#FFFFFF',
     'highlightColor': '#FFFFFF',
     'borderColor': '#000000',
     'borderWidth': 0,
     'bgColor': '#000000',
     'bgOpacity': 0,
-    'fontWeight': 900,
+    'fontWeight': 800,
 }
 
 ENABLE_YOLO_FALLBACK = os.environ.get("ENABLE_YOLO_FALLBACK", "false").lower() in ("1", "true", "yes")
@@ -2207,13 +2245,29 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
         model=model_name,
     )
 
+# Sentence-final punctuation (Latin + Arabic/CJK marks), tolerating one trailing
+# quote or bracket ("victory." / 'done?'). Keep in sync with QUESTION_MARKS below
+# and transcription.SONIOX_SENTENCE_END.
+_SENTENCE_END_RE = re.compile(r'[.?!…؟۔？。！]["\'”’»)\]]?$')
+_CLAUSE_END = (',', ';', ':', '—', '–', '،', '؛')
+
+
+def _ends_sentence(token):
+    return bool(_SENTENCE_END_RE.search(str(token).strip()))
+
+
 def _build_sentence_transcript(transcript_result):
     """Group transcript words into sentences for script-first trailer selection.
 
     Returns a list of {i, s, e, text}: sentence index, start sec, end sec, and
     the verbatim joined text. A sentence ends on a word carrying terminal
-    punctuation (.?!…), after a >1.2s pause, after ~22 words (so a rambling
-    unpunctuated ASR stream still splits), or on a speaker change. When the
+    punctuation (.?!…), after a >1.2s pause, or on a speaker change. A long
+    run-on sentence is split only at a clause mark (, ; : —) once it passes
+    18 words, and hard-split at 40 (so an unpunctuated ASR stream still
+    splits). Those split pieces carry 'more': 1 — the thought continues in the
+    next sentence — so neither the model nor the cutter treats them as a full
+    stop. (The old blind 22-word split created fake "sentences" that ended
+    mid-clause, and trailer cuts inherited those endings.) When the
     transcript carries diarization labels (Soniox), each sentence also gets
     'sp' — its speaker id — so the trailer model knows who said what; a
     sentence never spans two voices. Feeding sentences instead of raw word
@@ -2223,7 +2277,7 @@ def _build_sentence_transcript(transcript_result):
     sentences = []
     cur = []
 
-    def flush():
+    def flush(more=False):
         if not cur:
             return
         text = ' '.join(w['word'].strip() for w in cur).strip()
@@ -2236,10 +2290,11 @@ def _build_sentence_transcript(transcript_result):
             }
             if cur[0].get('speaker') is not None:
                 sentence['sp'] = cur[0]['speaker']  # single-voice by construction
+            if more:
+                sentence['more'] = 1
             sentences.append(sentence)
         cur.clear()
 
-    TERM = ('.', '?', '!', '…')
     prev_end = None
     for segment in transcript_result['segments']:
         for w in segment.get('words', []):
@@ -2253,8 +2308,10 @@ def _build_sentence_transcript(transcript_result):
             cur.append(w)
             prev_end = float(w['end'])
             tok = w['word'].strip()
-            if tok.endswith(TERM) or len(cur) >= 22:
+            if _ends_sentence(tok):
                 flush()
+            elif len(cur) >= 40 or (len(cur) >= 18 and tok.endswith(_CLAUSE_END)):
+                flush(more=True)
     flush()
     return sentences
 
@@ -2338,6 +2395,162 @@ def _trailer_speaker_context(sentences):
         f"{n} distinct voice(s) detected ({stats}).\n{shape}\n")
 
 
+def _resolve_moment_bounds(moments, sentences, words):
+    """Turn sentence-index moments (from_i..to_i) into start/end seconds taken
+    straight from the transcript, so cut points are real sentence edges rather
+    than the model's guess at a timestamp. Returns a new list.
+
+    - A span that begins on the tail of a split run-on sentence (the previous
+      piece carries 'more') is widened back to where the sentence starts; a
+      non-final span ending on a 'more' piece is widened forward to where the
+      sentence ends.
+    - The FINAL moment is the cliffhanger: its end is the last word of its
+      `text` (the words the model chose to keep), so it can stop right before
+      the payoff (see _cliffhanger_end).
+    - A moment with no usable indices keeps its start/end if it has them (older
+      prompt shape, or the model ignored the indices); otherwise it is dropped.
+    """
+    if not sentences:
+        return moments
+    by_i = {s['i']: s for s in sentences}
+    ws = sorted(words, key=lambda w: float(w['start']))
+    out = []
+    n = len(moments)
+    for idx, m in enumerate(moments):
+        if not isinstance(m, dict):
+            out.append(m)  # structural check downstream reports it
+            continue
+        try:
+            fi = int(m['from_i'])
+            ti = int(m.get('to_i', fi))
+        except (KeyError, TypeError, ValueError):
+            fi = ti = None
+        if fi is None or fi not in by_i or ti not in by_i:
+            if 'start' in m and 'end' in m:
+                out.append(m)
+            else:
+                print(f"   ⚠️  Trailer moment {idx}: no valid sentence indices "
+                      f"({m.get('from_i')}..{m.get('to_i')}); dropping.")
+            continue
+        if ti < fi:
+            fi, ti = ti, fi
+        same_voice = lambda a, b: by_i[a].get('sp') == by_i[b].get('sp')
+        while (fi - 1) in by_i and by_i[fi - 1].get('more') and same_voice(fi - 1, fi):
+            fi -= 1
+        is_final = idx == n - 1
+        if not is_final:
+            while by_i[ti].get('more') and (ti + 1) in by_i and same_voice(ti, ti + 1):
+                ti += 1
+        start = float(by_i[fi]['s'])
+        end = float(by_i[ti]['e'])
+        if is_final:
+            end = _cliffhanger_end(m.get('text', ''), ws, start, end)
+        resolved = dict(m)
+        resolved['from_i'], resolved['to_i'] = fi, ti
+        resolved['start'], resolved['end'] = start, end
+        out.append(resolved)
+    return out
+
+
+def _cliffhanger_end(text, words, start, end):
+    """End time for the final moment: the last word of `text` inside
+    [start, end]. The trailer prompt asks for the final moment's text to be
+    EXACTLY the words kept, so "and the number one reason is" cuts right after
+    "is". Falls back to `end` (the full sentence) when the text does not match
+    the transcript closely enough to trust."""
+    import difflib
+    target = _norm_text(text)
+    span = [w for w in words if start - 0.01 <= float(w['start']) < end]
+    if not target or not span:
+        return end
+    guess = len(target.split())
+    best_k, best_ratio = None, 0.0
+    for k in range(max(1, guess - 4), min(len(span), guess + 4) + 1):
+        said = _norm_text(' '.join(w['word'] for w in span[:k]))
+        ratio = difflib.SequenceMatcher(None, said, target).ratio()
+        if ratio > best_ratio:
+            best_k, best_ratio = k, ratio
+    if best_k is None or best_ratio < 0.8:
+        return end
+    return min(end, float(span[best_k - 1]['end']))
+
+
+def _complete_thought_bounds(moments, words, max_back=4.0, max_fwd=6.0, pause=0.7):
+    """Last line of defence against cuts that end mid-sentence: move every
+    moment's start back to where its thought begins and every NON-final
+    moment's end forward to where the speaker finishes it. Returns a new list.
+
+    A boundary is sentence-final punctuation, a pause of >= `pause` seconds, or
+    a change of speaker (diarized transcripts). The search is capped at
+    `max_back` / `max_fwd` seconds; when no sentence end is in reach, the end
+    falls back to the first clause mark (, ; :) so the cut at least lands on a
+    breath. An extension that would run into another moment's material is
+    skipped (the trailer must never play the same words twice). The final
+    moment keeps its end: that is the deliberate cliffhanger cut.
+    """
+    if not moments or not words:
+        return moments
+    ws = sorted(words, key=lambda w: float(w['start']))
+    starts = [float(w['start']) for w in ws]
+    ends = [float(w['end']) for w in ws]
+    spk = [w.get('speaker') for w in ws]
+    last = len(ws) - 1
+
+    def boundary_between(a, b):
+        """True when a thought can end after word a and a new one start at b."""
+        return (_ends_sentence(ws[a]['word']) or starts[b] - ends[a] >= pause
+                or spk[a] != spk[b])
+
+    out = []
+    n = len(moments)
+    for idx, m in enumerate(moments):
+        s, e = float(m['start']), float(m['end'])
+        si = next((i for i in range(len(ws)) if ends[i] > s + 0.01), None)
+        ei = next((i for i in range(last, -1, -1) if starts[i] < e - 0.01), None)
+        if si is None or ei is None or ei < si:
+            out.append(m)
+            continue
+
+        new_si = si
+        j = si
+        while j > 0 and not boundary_between(j - 1, j):
+            if starts[si] - starts[j - 1] > max_back:
+                j = None
+                break
+            j -= 1
+        if j is not None:
+            new_si = j
+
+        new_ei = ei
+        if idx != n - 1:
+            k, clause = ei, None
+            while k < last and not boundary_between(k, k + 1):
+                if clause is None and ws[k]['word'].strip().endswith(_CLAUSE_END):
+                    clause = k
+                if ends[k + 1] - ends[ei] > max_fwd:
+                    k = None
+                    break
+                k += 1
+            new_ei = k if k is not None else (clause if clause is not None else ei)
+
+        ns, ne = min(s, starts[new_si]), max(e, ends[new_ei])
+        clash = any(
+            ns < float(o['end']) and ne > float(o['start'])
+            and not (s < float(o['end']) and e > float(o['start']))
+            for j2, o in enumerate(moments) if j2 != idx
+        )
+        if clash:
+            out.append(m)
+            continue
+        if abs(ns - s) > 0.05 or abs(ne - e) > 0.05:
+            print(f"   ✂️  Trailer moment {idx}: widened to a complete thought "
+                  f"[{s:.2f},{e:.2f}] -> [{ns:.2f},{ne:.2f}].")
+        widened = dict(m)
+        widened['start'], widened['end'] = ns, ne
+        out.append(widened)
+    return out
+
+
 def _refine_trailer_moments(moments, words, duration):
     """Snap AI moment boundaries to real word edges, pad into silence, and drop
     incoherent picks. Returns a new cleaned list (playback order preserved).
@@ -2349,13 +2562,15 @@ def _refine_trailer_moments(moments, words, duration):
         next sentence-ending word, else dropped. The FINAL moment (the open-loop
         cliffhanger) may stay short, down to MIN_FINAL (1.2s).
       - pad start/end outward ONLY into real silence (never into an adjacent word,
-        which would clip it), clamped to [0, duration]
+        which would clip it), clamped to [0, duration]. The tail pad is longer
+        than the head pad: ASR word end-times run early, and a clipped final
+        syllable makes even a finished sentence sound cut off.
       - drop a moment whose snapped span duplicates one already kept
     """
     MIN_DUR = 2.0
     MIN_FINAL = 1.2
-    PAD = 0.15
-    TERM = ('.', '?', '!', '…')
+    PAD_HEAD = 0.12
+    PAD_TAIL = 0.28
     if not words:
         return moments
     ws = sorted(words, key=lambda w: float(w['start']))
@@ -2388,7 +2603,7 @@ def _refine_trailer_moments(moments, words, duration):
             j = ei
             while j < len(ws) - 1 and (ends[j] - s) < MIN_DUR:
                 j += 1
-                if ws[j]['word'].strip().endswith(TERM):
+                if _ends_sentence(ws[j]['word']):
                     break
             e = ends[j]
             ei = j
@@ -2398,10 +2613,10 @@ def _refine_trailer_moments(moments, words, duration):
             continue
 
         # Pad outward into silence only.
-        left = s - PAD
+        left = s - PAD_HEAD
         prev_end = ends[si - 1] if si > 0 else 0.0
         s = max(left, prev_end, 0.0)
-        right = e + PAD
+        right = e + PAD_TAIL
         next_start = starts[ei + 1] if ei + 1 < len(starts) else duration
         e = min(right, next_start, duration)
 
@@ -2564,6 +2779,9 @@ def _generate_trailer_candidate(client, model_name, prompt, sentences,
                 raise ClipAnalysisError("Trailer response missing 'moments_ordered' array.")
             if not (lo <= len(moments) <= hi):
                 raise ClipAnalysisError(f"Trailer needs {lo}-{hi} moments, got {len(moments)}.")
+            # Sentence indices -> transcript timestamps (the model no longer
+            # guesses seconds; see _resolve_moment_bounds).
+            moments = _resolve_moment_bounds(moments, sentences, refine_words)
             for idx, m in enumerate(moments):
                 if not isinstance(m, dict):
                     raise ClipAnalysisError(f"Moment {idx} is not an object.")
@@ -2576,6 +2794,7 @@ def _generate_trailer_candidate(client, model_name, prompt, sentences,
                         f"Moment {idx} bounds out of range: start={s}, end={e}, duration={video_duration}.")
 
             moments = _verbatim_align_moments(moments, sentences, refine_words)
+            moments = _complete_thought_bounds(moments, refine_words)
             moments = _refine_trailer_moments(moments, refine_words, video_duration)
             if len(moments) < lo:
                 raise ClipAnalysisError(
@@ -2657,6 +2876,78 @@ def _judge_trailer_candidates(client, model_name, candidates):
     return _deterministic_best_trailer(candidates)
 
 
+def _select_soundbites(client, model_name, sentences, speaker_context,
+                       max_soundbites, max_retries=2):
+    """Selects pass (Anthony Smith's first step: cut the episode down to its
+    best soundbites before writing the trailer). One Gemini call over the whole
+    transcript -> (soundbites, cost_analysis), or (None, None) on any failure so
+    the caller falls back to scripting from the full transcript."""
+    speaker_note = ", sp = diarized speaker id" if any('sp' in s for s in sentences) else ""
+    prompt = SOUNDBITE_PROMPT_TEMPLATE.format(
+        transcript=json.dumps(sentences),
+        max_soundbites=max_soundbites,
+        speaker_context=speaker_context,
+        speaker_note=speaker_note,
+    )
+    valid_i = {s['i'] for s in sentences}
+    for attempt in range(1, max_retries + 1):
+        try:
+            call_started = time.perf_counter()
+            response = client.models.generate_content(
+                model=model_name, contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
+            latency_ms = int(round((time.perf_counter() - call_started) * 1000))
+            cost_analysis = _augment_attempt_metrics(
+                _trailer_cost(response, model_name), latency_ms,
+                attempts_used=attempt, max_retries=max_retries)
+            data = json.loads(_strip_json_fence(response.text))
+            raw = data.get('soundbites') if isinstance(data, dict) else None
+            bites = []
+            for b in raw or []:
+                try:
+                    fi, ti = int(b['from_i']), int(b.get('to_i', b['from_i']))
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if fi in valid_i and ti in valid_i:
+                    bites.append({'from_i': min(fi, ti), 'to_i': max(fi, ti),
+                                  'role': str(b.get('role', '')).strip().lower()})
+            if bites:
+                return bites, cost_analysis
+            print("   ⚠️  Selects pass returned no usable soundbites.")
+            return None, cost_analysis
+        except Exception as e:
+            print(f"   ⚠️  Selects pass attempt {attempt}/{max_retries} failed: {e}")
+            if not is_retryable_provider_error(e) or attempt == max_retries:
+                break
+            time.sleep(get_gemini_retry_delay(e, 5 * attempt))
+    return None, None
+
+
+def _soundbite_transcript(sentences, soundbites):
+    """The sentences covered by the selected soundbites (original indices kept,
+    each tagged with its soundbite's role), in episode order. Split run-on
+    pieces are pulled in whole so the trailer pass never sees half a sentence."""
+    by_i = {s['i']: s for s in sentences}
+    roles = {}
+    for b in soundbites:
+        fi, ti = b['from_i'], b['to_i']
+        while (fi - 1) in by_i and by_i[fi - 1].get('more'):
+            fi -= 1
+        while by_i[ti].get('more') and (ti + 1) in by_i:
+            ti += 1
+        for i in range(fi, ti + 1):
+            if i in by_i:
+                roles.setdefault(i, b['role'])
+    out = []
+    for i in sorted(roles):
+        s = dict(by_i[i])
+        if roles[i]:
+            s['role'] = roles[i]
+        out.append(s)
+    return out
+
+
 def get_trailer_moments(transcript_result, video_duration, pace='standard', max_retries=3):
     """Ask Gemini to SCRIPT+ORDER coherent moments into a DOAC cold-open trailer.
 
@@ -2703,6 +2994,7 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
                 'word': word['word'],
                 'start': word['start'],
                 'end': word['end'],
+                'speaker': word.get('speaker'),
             })
     print(f"   🧩 Grouped transcript into {len(sentences)} sentences "
           f"from {len(refine_words)} words.")
@@ -2716,8 +3008,30 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
         print("   🗣️  No speaker labels in transcript (local Whisper?) — "
               "model will infer host/guest from text alone.")
 
+    # Selects pass first (the DOAC workflow: best soundbites, THEN the script).
+    # The trailer pass then only reads the juicy material, which keeps a long
+    # episode's middle and end in play instead of the model skimming them.
+    script_sentences = sentences
+    selects_cost = None
+    if TRAILER_SOUNDBITE_PASS and len(sentences) > 60:
+        max_soundbites = max(20, max_moments * 2 + 6)
+        print(f"   🎧 Selects pass: pulling up to {max_soundbites} soundbites...")
+        bites, selects_cost = _select_soundbites(
+            client, model_name, sentences, speaker_context, max_soundbites)
+        if bites:
+            picked = _soundbite_transcript(sentences, bites)
+            if len(picked) >= max_moments:
+                script_sentences = picked
+                print(f"   🎧 {len(bites)} soundbites ({len(picked)} sentences) "
+                      f"handed to the trailer pass.")
+            else:
+                print(f"   ⚠️  Only {len(picked)} sentences selected; "
+                      f"scripting from the full transcript instead.")
+        else:
+            print("   ⚠️  Selects pass unavailable; scripting from the full transcript.")
+
     prompt = TRAILER_PROMPT_TEMPLATE.format(
-        transcript=json.dumps(sentences),
+        transcript=json.dumps(script_sentences),
         duration=video_duration,
         min_moments=min_moments,
         max_moments=max_moments,
@@ -2778,6 +3092,8 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
 
     # Aggregate cost across all sampled candidates (judge cost is negligible).
     costs = [c['cost_analysis'] for c in candidates if c.get('cost_analysis')]
+    if selects_cost:
+        costs.append(selects_cost)
     out = {'moments_ordered': moments, 'script': script, 'phrases': []}
     if costs:
         candidate_latencies = [c.get('latency_ms') for c in costs if c.get('latency_ms') is not None]
@@ -2790,8 +3106,8 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
             "model": model_name,
             "estimate_basis": "paid_standard",
             "candidates": len(candidates),
-            # Trailer cost covers usable candidate calls; the optional judge
-            # call is intentionally not included because it has no cost dict.
+            # Trailer cost covers the selects pass and usable candidate calls;
+            # the optional judge call is not included (it has no cost dict).
             "latency_ms": sum(candidate_latencies) if candidate_latencies else None,
             "attempts_used": sum(candidate_attempts) if candidate_attempts else None,
             "max_retries": max(candidate_retry_caps) if candidate_retry_caps else None,
@@ -2818,6 +3134,10 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
     For each moment's accent_word (case+punctuation-insensitive, FIRST occurrence
     within that moment) set accentColor=EMOTION_HEX[emotion], unless the emotion
     is neutral/None or no token matches. All other words get no accentColor.
+    The accent word and the moment's power_words (first occurrence each) are
+    also flagged highlight=True — the DOAC caption template sets those big, the
+    way a trailer editor blows up the key words, and every other template
+    treats them as keywords.
 
     Returns a list of CaptionWord dicts {text, startMs, endMs[, accentColor]} in
     trailer time order (monotonic by construction).
@@ -2839,6 +3159,12 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
         accent_color = EMOTION_HEX.get(emotion) if emotion else None
         accent_target = _accent_normalize(moment.get('accent_word', '')) if accent_color else ''
         accent_assigned = False
+        power_targets = {
+            _accent_normalize(p) for p in (moment.get('power_words') or [])
+            if isinstance(p, str)
+        }
+        power_targets.add(_accent_normalize(moment.get('accent_word', '')))
+        power_targets.discard('')
 
         for word in all_words:
             t_start = float(word['start'])
@@ -2870,6 +3196,10 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
                     and _accent_normalize(word['word']) == accent_target):
                 cap['accentColor'] = accent_color
                 accent_assigned = True
+            norm = _accent_normalize(word['word'])
+            if norm in power_targets:
+                cap['highlight'] = True
+                power_targets.discard(norm)
 
             captions.append(cap)
 
@@ -3185,6 +3515,11 @@ def assemble_trailer(input_video, output_dir, video_title, transcript, duration,
         'shorts': [{
             'start': 0,
             'end': total_sec,
+            # The trailer's OWN word timings (trailer time, playback order).
+            # 'transcript' below is the full episode, and start/end describe
+            # the concat, not a window into the episode — so anything that
+            # needs the trailer's words (app.get_clip_transcript) reads these.
+            'trailer_captions': captions,
             'video_title_for_youtube_short': video_title,
             'viral_hook_text': '',
             'video_description_for_tiktok': '',

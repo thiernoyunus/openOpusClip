@@ -1,6 +1,6 @@
 import React from "react";
 import { interpolate, spring, random, Easing } from "remotion";
-import type { SubtitleStyle, SubtitleAnimation } from "./types";
+import type { SubtitleStyle, SubtitleAnimation, CaptionWord } from "./types";
 import type { GroupingOptions } from "./captions";
 import { isRTL } from "./rtl";
 
@@ -28,6 +28,8 @@ export interface WordRenderArgs {
   seed: number; // stable per-word seed for deterministic randomness
   isEmphasis?: boolean; // the one "key" word in the block (drives size-contrast styles)
   accentColor?: string; // per-word color override (e.g. DOAC emotion accent)
+  role?: string; // per-word layout role from template.assignRoles (e.g. DOAC lead/big/tail)
+  blockDurationFrames?: number; // how long the block is on screen (for exit animations)
 }
 
 /** A per-template tunable surfaced as a slider in the customize panel. */
@@ -60,6 +62,13 @@ export interface CaptionTemplate {
    * emphasis-aware 3-line look; everything else uses the generic column stack.
    */
   selfStacks?: boolean;
+  /**
+   * Optional per-block pass that gives every word a layout role (passed back
+   * to renderWord as `role`). A word whose role is "big" claims its own line.
+   */
+  assignRoles?: (words: Pick<CaptionWord, "text" | "highlight" | "accentColor">[]) => string[];
+  /** Side-placed blocks (smart placement) align toward the frame edge instead of centering. */
+  sideAligns?: boolean;
   renderWord: (args: WordRenderArgs) => React.ReactNode;
 }
 
@@ -779,37 +788,90 @@ const PodcastWord: React.FC<WordRenderArgs> = ({ word, isEmphasis, frame, fps, w
   );
 };
 
-// doac — Diary-of-a-CEO podcast-trailer style: white all-caps base, the
-// emphasis word slightly bigger; the per-phrase accent word lights up in its
-// emotion color and STAYS lit from its own timestamp onward (a persistent
-// highlight, not gated on isActive). Each word springs in with a subtle scale
-// pop + quick opacity fade over a duplicated drop shadow.
-const DoACWord: React.FC<WordRenderArgs> = ({ word, isEmphasis, frame, fps, wordStartFrame, style, fontStack, uppercase, accentColor }) => {
+// doac — Diary-of-a-CEO trailer captions, ported from the Imran HyperFrames
+// build (the look the user signed off on). Captions are graphic design, not
+// subtitles: each block is a small stack that mixes three typefaces —
+//   lead: small Montserrat 800, sentence case — the run-up words ("you've already had")
+//   big:  huge Anton caps on its own line — the power word ("THREE", "ZERO"),
+//         in its emotion colour when it is the moment's accent word
+//   tail: Playfair Display italic — the words after the punch ("to anyone.")
+// Every word resolves in on its own timestamp (fade + rise + de-blur, 0.28s,
+// power3.out) and the whole block blurs out over its last 0.14s. No box, no
+// darkening of the footage: a soft shadow hugs the letters only.
+const DOAC_STOPWORDS = new Set(
+  "the a an and or but so to of in on at for with from by as is are was were be been being it its this that these those there their they them i you he she we me my your our his her not no do does did have has had just really very about into than then what when where which who how why can could would should will".split(" ")
+);
+const DOAC_SHADOW = "0 0 3px rgba(0,0,0,.5), 0 2px 10px rgba(0,0,0,.75), 0 0 34px rgba(0,0,0,.55)";
+
+function doacRoles(words: Pick<CaptionWord, "text" | "highlight" | "accentColor">[]): string[] {
+  const core = (t: string) => t.replace(/[^\p{L}\p{N}$%]/gu, "");
+  let big = words.flatMap((w, i) => (w.highlight === true || w.accentColor ? [i] : []));
+  if (big.length === 0) {
+    // No keyword marked: promote the most striking word — a number, else the
+    // longest real word of 6+ letters. Blocks of small talk get no big word.
+    let best = -1;
+    let score = 0;
+    words.forEach((w, i) => {
+      const c = core(w.text);
+      const sc = /\d/.test(c) ? 100 : c.length >= 6 && !DOAC_STOPWORDS.has(c.toLowerCase()) ? c.length : 0;
+      if (sc > score) { score = sc; best = i; }
+    });
+    if (best >= 0) big = [best];
+  }
+  if (big.length === 0) {
+    // lead-in in sans, the final word as the italic punch ("build the / store")
+    return words.map((_, i) => (i === words.length - 1 ? "tail" : "lead"));
+  }
+  const first = big[0];
+  const last = big[big.length - 1];
+  const after = words.length - 1 - last;
+  return words.map((_, i) => {
+    if (big.includes(i)) return "big";
+    if (i > last) return after <= 3 ? "tail" : "lead";
+    return i < first ? "lead" : "tail";
+  });
+}
+
+const DoACWord: React.FC<WordRenderArgs> = ({ word, role, isEmphasis, frame, fps, wordStartFrame, style, accentColor, blockDurationFrames }) => {
+  const r = role ?? (isEmphasis ? "big" : "lead");
   const t = frame - wordStartFrame;
-  const shown = t >= 0;
-  // subtle entrance: a short spring scale 0.82->1 (~0.14s) + opacity 0->1 (~0.05s)
-  const p = shown
-    ? spring({ frame: t, fps, config: { mass: 0.5, stiffness: 220, damping: 12 }, durationInFrames: Math.max(1, Math.round(0.14 * fps)) })
+  const inFrames = Math.max(1, Math.round(0.28 * fps));
+  const p = t < 0 ? 0 : interpolate(t, [0, inFrames], [0, 1], { extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
+  const outFrames = Math.max(1, Math.round(0.14 * fps));
+  const exit = blockDurationFrames && blockDurationFrames > outFrames * 2
+    ? interpolate(frame, [blockDurationFrames - outFrames, blockDurationFrames], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.in(Easing.quad) })
     : 0;
-  const scale = shown ? interpolate(p, [0, 1], [0.82, 1]) : 0.82;
-  const opacity = shown ? interpolate(t, [0, Math.max(1, Math.round(0.05 * fps))], [0, 1], { extrapolateRight: "clamp" }) : 0;
-  const size = isEmphasis ? style.fontSize : style.fontSize * 0.85;
-  // Persistent accent: once the word has appeared, it wears its emotion color
-  // for the rest of the phrase (not just while it's the active word).
-  const color = shown && accentColor ? accentColor : style.fontColor;
+  const base = style.fontSize;
+  const letters = word.replace(/[^\p{L}\p{N}]/gu, "").length;
+  let fontSize: number;
+  let typeface: React.CSSProperties;
+  if (r === "big") {
+    // Anton caps are ~0.47em wide: shrink long words so one line still fits.
+    fontSize = base * Math.max(0.55, Math.min(1, 9 / Math.max(letters, 1)));
+    typeface = { fontFamily: "'Anton', Impact, sans-serif", fontWeight: 400, textTransform: "uppercase", lineHeight: 0.95, letterSpacing: "0.005em" };
+  } else if (r === "tail") {
+    fontSize = base * 0.56;
+    typeface = { fontFamily: "'Playfair Display', Georgia, serif", fontStyle: "italic", fontWeight: 600, lineHeight: 1.05 };
+  } else {
+    fontSize = base * 0.31;
+    typeface = { fontFamily: "'Montserrat', system-ui, sans-serif", fontWeight: 800, letterSpacing: "-0.01em", lineHeight: 1.1 };
+  }
+  const color = accentColor ?? (r === "big" ? style.highlightColor || style.fontColor : style.fontColor);
+  const glow = accentColor && r === "big" ? `, 0 0 40px ${withAlpha(accentColor, 0.4)}` : "";
   return (
     <span
       style={{
-        fontFamily: fontStack,
-        fontSize: size,
-        fontWeight: style.fontWeight ?? 900,
-        textTransform: uppercase ? "uppercase" : "none",
-        lineHeight: 1,
+        ...typeface,
+        fontSize,
         display: "inline-block",
-        opacity,
-        transform: `scale(${scale.toFixed(3)})`,
+        // a big word takes its own line; lead/tail runs flow and wrap around it
+        flexBasis: r === "big" ? "100%" : "auto",
+        textAlign: "inherit",
         color,
-        textShadow: "0 3px 10px rgba(0,0,0,0.6), 0 1px 2px rgba(0,0,0,0.9)",
+        opacity: p * (1 - exit),
+        transform: `translateY(${((1 - p) * base * 0.1).toFixed(2)}px) scale(${(1.12 - 0.12 * p).toFixed(3)})`,
+        filter: `blur(${(14 * (1 - p) + 10 * exit).toFixed(2)}px)`,
+        textShadow: DOAC_SHADOW + glow,
       }}
     >
       {word}
@@ -892,10 +954,15 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     id: "doac",
     label: "Podcast (DOAC)",
     category: "effects",
-    font: "Inter",
-    uppercase: true,
-    grouping: { maxWords: 5, maxChars: 30 },
-    defaultStyle: { template: "doac", animation: "none", fontFamily: "Inter", fontSize: 88, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0, fontWeight: 900 },
+    font: "Montserrat",
+    // Phrase-sized blocks (a run-up, a punch, a tail), like the Imran edit.
+    grouping: { maxWords: 7, maxChars: 44, maxDurationMs: 2800 },
+    // Must match main.DOAC_STYLE exactly (the trailer writes it verbatim).
+    defaultStyle: { template: "doac", animation: "none", fontFamily: "Montserrat", fontSize: 150, fontColor: "#FFFFFF", highlightColor: "#FFFFFF", borderColor: "#000000", borderWidth: 0, bgColor: "#000000", bgOpacity: 0, fontWeight: 800 },
+    // Tight word spacing: the three sizes set their own rhythm.
+    containerStyle: (style) => ({ gap: `${Math.round(style.fontSize * 0.03)}px ${Math.round(style.fontSize * 0.1 * (style.wordSpacing ?? 1))}px` }),
+    assignRoles: doacRoles,
+    sideAligns: true,
     renderWord: (args) => <DoACWord {...args} />,
   },
   {

@@ -12,7 +12,7 @@ import {
 import type { SubtitleConfig, SubtitleStyle } from "../lib/types";
 import { groupCaptionsIntoBlocks, getActiveWordIndex } from "../lib/captions";
 import { dominantDir } from "../lib/rtl";
-import { getFontStack, captionFontFaces, BUNDLED_CAPTION_FONTS } from "../lib/fonts";
+import { getFontStack, captionFontFaces, CAPTION_FONT_LOAD_SPECS } from "../lib/fonts";
 import { getCaptionTemplate, resolveTemplateId } from "../lib/captionTemplates";
 import { Lottie, type LottieAnimationData } from "@remotion/lottie";
 import { animatedSlug, lottieUrl } from "../lib/animatedEmoji.ts";
@@ -533,7 +533,7 @@ const FontLoader: React.FC = () => {
   const load = useCallback(async () => {
     try {
       await Promise.all(
-        BUNDLED_CAPTION_FONTS.map((f) => document.fonts.load(`700 64px "${f}"`))
+        CAPTION_FONT_LOAD_SPECS.map((spec) => document.fonts.load(spec))
       );
     } catch {
       // fall through — render with whatever resolved rather than hanging
@@ -665,6 +665,13 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   const placeY = placement ? placement.y : config.y;
   const placePosition = placement?.position ?? position;
   const freePlaced = typeof placeX === "number" && typeof placeY === "number";
+  // A caption smart placement parked beside a speaker (maxWidthPct set) reads
+  // best hugging the frame edge, the way DOAC sets text next to a head.
+  const sideAlign: "flex-start" | "flex-end" | "center" =
+    template.sideAligns && freePlaced && placement?.maxWidthPct != null
+      ? (placeX as number) < 0.45 ? "flex-start" : (placeX as number) > 0.55 ? "flex-end" : "center"
+      : "center";
+  const textAlign = sideAlign === "flex-start" ? "left" : sideAlign === "flex-end" ? "right" : "center";
   const outerStyle: React.CSSProperties = freePlaced
     ? {
         position: "absolute",
@@ -676,7 +683,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
         // this (maxWidthPct) so a side caption fits the negative space.
         width: `${Math.round((placement?.maxWidthPct ?? config.maxWidthPct ?? 0.88) * 100)}%`,
         display: "flex",
-        justifyContent: "center",
+        justifyContent: sideAlign,
       }
     : {
         position: "absolute",
@@ -687,6 +694,8 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
         ...(POSITION_MAP[placePosition] ?? POSITION_MAP.bottom),
       };
   const containerStyle = template.containerStyle?.(style) ?? {};
+  // Per-word layout roles (DOAC: lead / big / tail), computed once per block.
+  const roles = template.assignRoles?.(block.words);
   // Generic vertical stacking: lay the words out in a centered column. Templates
   // that draw their own stack (podcast's emphasis-aware layout) opt out and keep
   // the row-wrap container.
@@ -745,8 +754,9 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           display: "flex",
           flexDirection: columnStack ? "column" : "row",
           flexWrap: "wrap",
-          justifyContent: "center",
+          justifyContent: sideAlign,
           alignItems: "center",
+          textAlign,
           direction: blockDir === "rtl" ? "rtl" : "ltr",
           gap: `${Math.round(style.fontSize * 0.12)}px ${Math.round(
             style.fontSize * 0.28 * (style.wordSpacing ?? 1)
@@ -804,6 +814,8 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
             seed: Math.round(word.startMs),
             isEmphasis: i === emphasisIndex,
             accentColor: word.accentColor,
+            role: roles?.[i],
+            blockDurationFrames: durationFrames,
           });
 
           // Compose the per-word animation onto the template's OWN element (no
@@ -826,9 +838,10 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           // When the wrapper becomes the flex item (motion/gate present), forward
           // Podcast's emphasis-word flexBasis so its vertical stack survives.
           const stackEmphasis =
-            template.selfStacks === true &&
-            i === emphasisIndex &&
-            style.verticalStack !== false;
+            (template.selfStacks === true &&
+              i === emphasisIndex &&
+              style.verticalStack !== false) ||
+            roles?.[i] === "big";
 
           return applyWordMotion(renderedWord, motion, gate, stackEmphasis, i);
         })}

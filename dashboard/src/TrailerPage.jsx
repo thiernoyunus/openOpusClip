@@ -99,9 +99,13 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
   const [file, setFile] = useState(null);
   const [aspectRatio, setAspectRatio] = useState('9:16');
   const [pace, setPace] = useState('standard');
-  const [smartPlacement, setSmartPlacement] = useState(false);
+  // On by default: captions dodge faces (the user's #1 note on the Imran edit).
+  // It's a no-op on 9:16, where captions stay at the bottom anyway.
+  const [smartPlacement, setSmartPlacement] = useState(true);
   const [whisperModel, setWhisperModel] = useState('base');
-  const [transcriptionEngine, setTranscriptionEngine] = useState('whisper');
+  // Soniox labels who is speaking, which lets the trailer editor build real
+  // host/guest back-and-forth. Default to it whenever a key is saved.
+  const [transcriptionEngine, setTranscriptionEngine] = useState(() => (sonioxKey ? 'soniox' : 'whisper'));
   const [acknowledged, setAcknowledged] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -530,9 +534,9 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
               <span>
                 <span className="block text-xs font-medium text-zinc-300">Cinematic captions</span>
                 <span className="block text-[11px] text-zinc-500 mt-0.5">
-                  Vary caption placement per shot — beside the speaker or at the bottom — for a
-                  composed, produced feel. Works on wide / square formats (16:9, 1:1); 9:16 stays at
-                  the bottom.
+                  Place captions per shot, beside the speaker or at the bottom, so they never
+                  cover a face. Works on wide / square formats (16:9, 1:1); 9:16 stays at the
+                  bottom.
                 </span>
               </span>
             </label>
@@ -559,10 +563,16 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
                     </option>
                   ))}
                 </optgroup>
-                <optgroup label="Soniox · best for mixed-language speech · needs API key">
-                  <option value="soniox">Soniox v5 - best when speakers switch between languages</option>
+                <optgroup label="Soniox · knows who is speaking · needs API key">
+                  <option value="soniox">Soniox v5 - recommended: tells host and guest apart</option>
                 </optgroup>
               </select>
+              {transcriptionEngine !== 'soniox' && (
+                <span className="block text-[11px] text-zinc-500 mt-2">
+                  Whisper can't tell who is talking, so the trailer has to guess host from guest.
+                  Soniox labels each speaker, which gives trailers a real back-and-forth.
+                </span>
+              )}
               {transcriptionEngine === 'soniox' && !sonioxKey && (
                 <span className="block text-[11px] text-amber-400/90 mt-2">
                   Add your Soniox API key in Settings (main app) to use this engine.

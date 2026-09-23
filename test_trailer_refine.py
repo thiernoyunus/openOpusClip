@@ -9,6 +9,10 @@ from main import (
     _build_sentence_transcript,
     _verbatim_align_moments,
     _deterministic_best_trailer,
+    _resolve_moment_bounds,
+    _complete_thought_bounds,
+    _soundbite_transcript,
+    retime_captions,
 )
 
 
@@ -28,7 +32,7 @@ def test_snaps_to_word_edges():
     assert len(out) == 1
     # start padded back toward silence but never before 0, end near last word end
     assert out[0]['start'] <= 1.00 and out[0]['start'] >= 0.0
-    assert 4.20 <= out[0]['end'] <= 4.36  # word end 4.20 + pad, capped by duration
+    assert 4.20 <= out[0]["end"] <= 4.50  # word end 4.20 + tail pad
 
 
 def test_drops_unusable_subsecond_fragments():
@@ -150,6 +154,128 @@ def test_deterministic_pick_prefers_clean_and_cliffhanger():
     assert _deterministic_best_trailer([cand0, cand1]) == 1
     # order-independent
     assert _deterministic_best_trailer([cand1, cand0]) == 0
+
+
+# --- complete-thought cuts (the "ends mid-sentence" fix) ---------------------
+
+def _timed(text, start=0.0, step=0.3, speaker=None):
+    """Words for a sentence string, back to back, `step` seconds each."""
+    out, t = [], start
+    for tok in text.split():
+        w = {'word': tok, 'start': round(t, 2), 'end': round(t + step - 0.02, 2)}
+        if speaker is not None:
+            w['speaker'] = speaker
+        out.append(w)
+        t += step
+    return out
+
+
+def test_long_sentence_splits_at_clause_and_marks_more():
+    # 24 words, one comma after word 19: the old builder cut blindly at word 22.
+    text = ("I spent ten years building that company from nothing and every single "
+            "night I lay awake thinking about payroll, because one bad month would sink us all.")
+    words = _timed(text)
+    sents = _build_sentence_transcript({'segments': [{'words': words}]})
+    assert len(sents) == 2
+    assert sents[0]['text'].endswith('payroll,') and sents[0].get('more') == 1
+    assert sents[1]['text'].endswith('all.') and 'more' not in sents[1]
+
+
+def test_indices_resolve_to_sentence_edges_and_absorb_continuations():
+    words = (_timed("Nobody tells you this.", 0.0)
+             + _timed("I spent ten years building that company from nothing and every single "
+                      "night I lay awake thinking about payroll, because one bad month would sink us all.", 2.0)
+             + _timed("So what did you do?", 12.0))
+    sents = _build_sentence_transcript({'segments': [{'words': words}]})
+    # model picked only the first piece of the run-on sentence (index 1)
+    moments = [{'from_i': 1, 'to_i': 1, 'text': ''}, {'from_i': 3, 'to_i': 3, 'text': 'So what did you do?'}]
+    out = _resolve_moment_bounds(moments, sents, words)
+    assert out[0]['start'] == sents[1]['s']
+    assert out[0]['end'] == sents[2]['e']  # widened through "...sink us all."
+
+
+def test_final_cliffhanger_cuts_after_its_kept_words():
+    words = _timed("And the number one reason men fail is they never ask for help.", 5.0)
+    sents = _build_sentence_transcript({'segments': [{'words': words}]})
+    m = [{'from_i': 0, 'to_i': 0, 'text': 'and the number one reason men fail is'}]
+    out = _resolve_moment_bounds(m, sents, words)
+    is_word = next(w for w in words if w['word'] == 'is')
+    assert abs(out[0]['end'] - is_word['end']) < 1e-6
+
+
+def test_bad_indices_drop_moment_but_timestamp_moments_survive():
+    words = _timed("One two three.", 0.0)
+    sents = _build_sentence_transcript({'segments': [{'words': words}]})
+    out = _resolve_moment_bounds(
+        [{'from_i': 99, 'to_i': 99}, {'start': 0.0, 'end': 0.9}], sents, words)
+    assert len(out) == 1 and out[0]['start'] == 0.0
+
+
+def test_complete_thought_extends_mid_sentence_end():
+    words = (_timed("I lost everything that year because I trusted the wrong people.", 0.0)
+             + _timed("Then it got worse.", 6.0))
+    because = next(w for w in words if w['word'] == 'because')
+    # a moment that stops on "because" (mid-sentence), then a second moment
+    m = [{'start': 0.0, 'end': because['end']}, {'start': 6.0, 'end': 7.2}]
+    out = _complete_thought_bounds(m, words)
+    people = next(w for w in words if w['word'] == 'people.')
+    assert abs(out[0]['end'] - people['end']) < 1e-6
+
+
+def test_complete_thought_pulls_start_back_to_sentence_start():
+    words = _timed("That was it. We can just double our labour force overnight.", 0.0)
+    labour = next(w for w in words if w['word'] == 'labour')
+    we = next(w for w in words if w['word'] == 'We')
+    m = [{'start': labour['start'], 'end': words[-1]['end']}, {'start': 0.0, 'end': 0.8}]
+    out = _complete_thought_bounds(m, words)
+    assert abs(out[0]['start'] - we['start']) < 1e-6
+
+
+def test_complete_thought_leaves_final_cliffhanger_end_alone():
+    words = _timed("And the number one reason men fail is they never ask for help.", 0.0)
+    is_word = next(w for w in words if w['word'] == 'is')
+    m = [{'start': 0.0, 'end': is_word['end']}]
+    out = _complete_thought_bounds(m, words)
+    assert abs(out[0]['end'] - is_word['end']) < 1e-6
+
+
+def test_complete_thought_stops_at_speaker_change():
+    words = _timed("So what happened next", 0.0, speaker='1') + _timed("I walked out.", 1.3, speaker='2')
+    m = [{'start': 0.0, 'end': words[1]['end']}, {'start': 1.3, 'end': 2.2}]
+    out = _complete_thought_bounds(m, words)
+    assert abs(out[0]['end'] - words[3]['end']) < 1e-6  # "next", not into speaker 2
+
+
+def test_complete_thought_never_replays_another_moments_words():
+    words = _timed("I lost everything that year because I trusted the wrong people.", 0.0)
+    because = next(w for w in words if w['word'] == 'because')
+    i_word = words[words.index(because) + 1]
+    # moment 1 plays "I trusted the wrong people." — moment 0 must not extend into it
+    m = [{'start': 0.0, 'end': because['end']}, {'start': i_word['start'], 'end': words[-1]['end']}]
+    out = _complete_thought_bounds(m, words)
+    assert out[0]['end'] == because['end']
+
+
+def test_soundbite_transcript_keeps_whole_sentences_and_roles():
+    sents = [
+        {'i': 0, 's': 0, 'e': 1, 'text': 'a'},
+        {'i': 1, 's': 1, 'e': 2, 'text': 'b,', 'more': 1},
+        {'i': 2, 's': 2, 'e': 3, 'text': 'c.'},
+        {'i': 3, 's': 3, 'e': 4, 'text': 'd.'},
+    ]
+    out = _soundbite_transcript(sents, [{'from_i': 2, 'to_i': 2, 'role': 'hook'}])
+    assert [s['i'] for s in out] == [1, 2] and all(s['role'] == 'hook' for s in out)
+
+
+def test_retime_flags_power_words_for_big_captions():
+    words = _timed("The market will crash by 2030.", 10.0)
+    tr = {'segments': [{'words': words}]}
+    m = [{'start': 10.0, 'end': 12.0, 'accent_word': 'crash', 'emotion': 'danger',
+          'power_words': ['2030', 'market']}]
+    caps = retime_captions(tr, m, [0], [60], 30)
+    flagged = {c['text'] for c in caps if c.get('highlight')}
+    assert flagged == {'market', 'crash', '2030.'}
+    assert next(c for c in caps if c['text'] == 'crash')['accentColor'] == '#FF2B2B'
 
 
 if __name__ == '__main__':

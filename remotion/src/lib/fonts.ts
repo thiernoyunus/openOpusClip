@@ -79,6 +79,24 @@ export const captionFontFaces = `
   font-display: block;
 }
 @font-face {
+  /* DOAC template's serif-italic accent lines (italic-only family, latin +
+     latin-ext subsets from @fontsource-variable/playfair-display, SIL OFL 1.1). */
+  font-family: 'Playfair Display';
+  src: url('${staticFile("fonts/PlayfairDisplay-Italic-latin.woff2")}') format('woff2');
+  font-weight: 400 900;
+  font-style: italic;
+  font-display: block;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Playfair Display';
+  src: url('${staticFile("fonts/PlayfairDisplay-Italic-latinext.woff2")}') format('woff2');
+  font-weight: 400 900;
+  font-style: italic;
+  font-display: block;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
   /* Arabic/RTL fallback. Bold static covers every requested weight (it's a
      fallback for non-Latin glyphs, not a primary weight-variable face). */
   font-family: 'Noto Sans Arabic';
@@ -99,10 +117,18 @@ export const BUNDLED_CAPTION_FONTS = [
   "Anton",
   "Poppins",
   "Instrument Serif",
+  // Not user-selectable: the DOAC template's italic accent face. Loaded as
+  // italic (see CAPTION_FONT_LOAD_SPECS) since it has no upright style.
+  "Playfair Display",
   // Not user-selectable; appended as the RTL fallback in getFontStack. Listed
   // here so the render service waits for it to load before rendering frames.
   "Noto Sans Arabic",
 ];
+
+/** document.fonts.load() specs that make the render wait for every bundled face. */
+export const CAPTION_FONT_LOAD_SPECS = BUNDLED_CAPTION_FONTS.map((f) =>
+  f === "Playfair Display" ? `italic 600 64px "${f}"` : `700 64px "${f}"`
+);
 
 /**
  * Map of subtitle font families to their CSS-safe stacks. The first three are

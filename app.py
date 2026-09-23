@@ -2128,6 +2128,19 @@ async def get_clip_transcript(job_id: str, clip_index: int):
         except (OSError, json.JSONDecodeError):
             pass  # fall through to transcript-derived captions
 
+    # A trailer whose captions were switched off in the editor has no injected
+    # subtitles left in its framing. Its start/end (0..length of the concat)
+    # are NOT a window into the episode, so slicing the episode transcript here
+    # would show the episode's opening minute instead of the trailer. Serve the
+    # trailer's own words saved at assembly time instead.
+    trailer_captions = clip_data.get('trailer_captions')
+    if trailer_captions:
+        return {
+            "captions": trailer_captions,
+            "durationSec": clip_end - clip_start,
+            "language": transcript.get('language', 'en'),
+        }
+
     # Extract words within clip range and convert to CaptionWord format
     captions = []
     for segment in transcript.get('segments', []):
