@@ -200,6 +200,9 @@ Before you finish, count the reasons you have given the viewer to watch the full
 
 RULES FOR MOMENTS:
 - EVERY MOMENT EXCEPT THE LAST IS A COMPLETE THOUGHT. It starts at the beginning of a sentence and ends at the END of a sentence — the listener must hear the speaker finish. Never end on "and", "but", "because", "so", or a half-said clause. If a sentence is too long, pick a different one; do not chop it. Moments are normally 3 to 10 seconds; hold up to ~15s only for one emotionally heavy story. Pace comes from dialogue volleys, not machine-gun cuts. Aim for {min_moments} to {max_moments} moments total.
+- A MOMENT IS ONE OR TWO SENTENCES. Check each moment's length with s/e before you answer: a from_i..to_i span that covers a whole monologue is wrong; find the one line inside it that lands.
+- OPEN LOOPS STAY OPEN: a question in the trailer is either answered in the very next moment (a volley) or not answered at all. The question you end on is never answered anywhere in the trailer; if its answer is a great line, leave it for the episode.
+- NO REPEATS: never use two moments that say the same line or make the same point.
 - LENGTH IS A HARD LIMIT: add up (e - s) of every moment. The total must land between {target_seconds} and {max_seconds} seconds. If it runs over, cut your weakest moment; never go over.
 - BACK-AND-FORTH: the DOAC rhythm is a volley between host and guest — a short, sharp host question, then the guest's answer. QUESTION -> ANSWER STAY TOGETHER: if you include a host question, the guest's ACTUAL answer must be the very next moment. Never leave a question with no answer, or an answer with no question.
 - THE HOOK (first moment) IS THE SINGLE MOST SHOCKING LINE IN THE WHOLE EPISODE. Its theme is THE UNEXPECTED — the "did they really just say that?" line that stops a bored scroller cold: a raw taboo opinion, a violent confession, a stunning admission, a jaw-dropping number. Pick the biggest emotional gut-punch even if it is the most controversial or vulnerable thing said — put it FIRST, do not save it for the middle. It MUST land emotionally ON ITS OWN with zero setup: if it only makes sense once the NEXT line explains it, it is NOT your hook. NEVER open on an abstract thesis, a topic-definition, a "here's what this is about" framing, or a scene-setting statement — those are what you put AFTER the shock, never before it. (E.g. open on "The modern woman, I hate." — NOT on "There's a conspiracy to turn men and women against each other.")
@@ -2302,7 +2305,9 @@ def _build_sentence_transcript(transcript_result):
 
     Returns a list of {i, s, e, text}: sentence index, start sec, end sec, and
     the verbatim joined text. A sentence ends on a word carrying terminal
-    punctuation (.?!…), after a >1.2s pause, or on a speaker change. A long
+    punctuation (.?!…), after a >1.2s pause, or on a speaker change. A pause
+    that lands mid-sentence (no terminal punctuation) marks the piece 'more'.
+    A long
     run-on sentence is split only at a clause mark (, ; : —) once it passes
     18 words, and hard-split at 40 (so an unpunctuated ASR stream still
     splits). Those split pieces carry 'more': 1 — the thought continues in the
@@ -2342,7 +2347,10 @@ def _build_sentence_transcript(transcript_result):
             if w.get('start') is None or w.get('end') is None:
                 continue  # skip words with missing timestamps (bad ASR output)
             if cur and prev_end is not None and float(w['start']) - prev_end > 1.2:
-                flush()
+                # A pause mid-sentence ("it's not a purely ... selfless
+                # mission.") is not a full stop: keep 'more' so the cutter
+                # joins the pieces instead of cutting on the fragment.
+                flush(more=not _ends_sentence(cur[-1]['word']))
             if cur and w.get('speaker') is not None and cur[-1].get('speaker') is not None \
                     and w['speaker'] != cur[-1]['speaker']:
                 flush()
@@ -2807,8 +2815,9 @@ def _fit_trailer_budget(moments, words, target_seconds,
        inside the cap (so it still finishes a thought); left alone if none.
     2. While the total is over target*slack, drop a middle moment: never the
        hook (first) or the cliffhanger (last). Rollercoaster moments (p=3) go
-       first, longest first; a dropped question takes its answer with it and
-       a dropped answer takes its question, so no volley is left half-said.
+       first, longest first; in a volley (a question answered in another
+       voice) a dropped question takes its answer and a dropped answer takes
+       its question, so no volley is left half-said.
     """
     if not moments:
         return moments
@@ -2841,8 +2850,19 @@ def _fit_trailer_budget(moments, words, target_seconds,
     def total(ms):
         return sum(float(x['end']) - float(x['start']) for x in ms)
 
-    def is_question(m):
-        return str(m.get('text', '')).rstrip().endswith('?')
+    def speaker_at(t):
+        for w in ws:
+            if float(w['end']) > t:
+                return w.get('speaker')
+        return None
+
+    def volley(a, b):
+        """a is a question answered by b in a different voice (a real volley).
+        Without speaker labels, any question counts."""
+        if not str(a.get('text', '')).rstrip().endswith('?'):
+            return False
+        sa, sb = speaker_at(float(a['start'])), speaker_at(float(b['start']))
+        return sa is None or sb is None or sa != sb
 
     limit = target_seconds * slack
     while total(out) > limit and len(out) > min_keep:
@@ -2853,9 +2873,9 @@ def _fit_trailer_budget(moments, words, target_seconds,
         rolls = [i for i in middle if out[i].get('p') == 3]
         pick = max(rolls or middle, key=dur)
         drop = {pick}
-        if is_question(out[pick]) and pick + 1 < len(out) - 1:
+        if pick + 1 < len(out) - 1 and volley(out[pick], out[pick + 1]):
             drop.add(pick + 1)
-        if pick - 1 >= 1 and is_question(out[pick - 1]):
+        if pick - 1 >= 1 and volley(out[pick - 1], out[pick]):
             drop.add(pick - 1)
         if len(out) - len(drop) < min_keep:
             drop = {pick}
@@ -2863,6 +2883,36 @@ def _fit_trailer_budget(moments, words, target_seconds,
               f"moment(s) {sorted(drop)}.")
         out = [m for i, m in enumerate(out) if i not in drop]
     return out
+
+
+def _trailer_length_problems(moments, target_seconds, slack=TRAILER_BUDGET_SLACK,
+                             max_moment=TRAILER_MAX_MOMENT):
+    """Plain-language list of what breaks the length rules (empty = fine)."""
+    problems = []
+    n = len(moments)
+    for idx, m in enumerate(moments):
+        d = float(m['end']) - float(m['start'])
+        if idx < n - 1 and d > max_moment:
+            problems.append(f"Moment {idx} (sentences {m.get('from_i')}..{m.get('to_i')}) "
+                            f"runs {d:.0f}s; keep only its strongest one or two sentences.")
+    total = sum(float(m['end']) - float(m['start']) for m in moments)
+    limit = target_seconds * slack
+    if total > limit:
+        problems.append(f"The trailer runs {total:.0f}s; it must be {target_seconds}-{limit:.0f}s.")
+    return problems
+
+
+def _repair_prompt(prompt, moments, problems):
+    """The original prompt plus the model's own answer and what is wrong with
+    it, so the fix keeps the story and only tightens the cuts."""
+    previous = [{'from_i': m.get('from_i'), 'to_i': m.get('to_i'),
+                 'seconds': round(float(m['end']) - float(m['start']), 1),
+                 'text': str(m.get('text', ''))[:160]} for m in moments]
+    return (prompt + "\n\nYOUR PREVIOUS ANSWER (summarised): " + json.dumps(previous)
+            + "\nIT BREAKS THE LENGTH RULES:\n- " + "\n- ".join(problems)
+            + "\nReturn the corrected trailer in the same JSON shape. Keep the story and the"
+              " order where you can; shorten long moments to their best line, and drop the"
+              " weakest moments until the total fits.")
 
 
 def _generate_trailer_candidate(client, model_name, prompt, sentences,
@@ -3196,6 +3246,28 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
     else:
         best = _judge_trailer_candidates(client, model_name, candidates)
     winner = candidates[best]
+    # The prompt asks for 3-10s moments and a total near the target, but the
+    # model sometimes maps one "moment" onto a whole minute-long monologue.
+    # Give it one chance to fix its own cut; the deterministic trim below is
+    # only the backstop (it can't know which line inside a monologue lands).
+    repair_cost = None
+    problems = _trailer_length_problems(winner['moments_ordered'], target_seconds)
+    if problems:
+        print("   📏 Trailer breaks the length rules; asking the model to tighten it:")
+        for line in problems:
+            print(f"      - {line}")
+        try:
+            fixed = _generate_trailer_candidate(
+                client, model_name,
+                _repair_prompt(prompt, winner['moments_ordered'], problems),
+                sentences, refine_words, video_duration, lo, hi, max_retries)
+            repair_cost = fixed.get('cost_analysis')
+            left = _trailer_length_problems(fixed['moments_ordered'], target_seconds)
+            if len(left) <= len(problems):
+                winner = fixed
+                print(f"   📏 Tightened trailer accepted ({len(left)} issue(s) left).")
+        except ClipAnalysisError as e:
+            print(f"   ⚠️  Tightening pass failed ({e}); trimming instead.")
     moments = _fit_trailer_budget(winner['moments_ordered'], refine_words, target_seconds)
     script = winner['script']
 
@@ -3209,6 +3281,8 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
     costs = [c['cost_analysis'] for c in candidates if c.get('cost_analysis')]
     if selects_cost:
         costs.append(selects_cost)
+    if repair_cost:
+        costs.append(repair_cost)
     out = {'moments_ordered': moments, 'script': script, 'phrases': []}
     if costs:
         candidate_latencies = [c.get('latency_ms') for c in costs if c.get('latency_ms') is not None]

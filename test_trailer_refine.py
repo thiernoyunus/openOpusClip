@@ -15,6 +15,7 @@ from main import (
     retime_captions,
     save_transcript,
     _fit_trailer_budget,
+    _trailer_length_problems,
 )
 import json
 import os
@@ -324,6 +325,34 @@ def test_budget_trims_long_moment_to_last_sentence_end():
                      ('things.', 4.6, 12.0), ('Three', 12.2, 13.0), ('more', 13.0, 20.0)])
     out = _fit_trailer_budget([_mk(0, 20), _mk(30, 32, 4)], ws, 60)
     assert 12.0 <= out[0]['end'] <= 12.2
+
+
+def test_budget_keeps_answer_when_question_is_same_voice():
+    ws = words_from([('Right?', 40.0, 44.0), ('Because.', 50.0, 80.0)])
+    for w in ws:
+        w['speaker'] = '1'
+    moments = [_mk(0, 30, 1), _mk(40, 44, 3, 'Right?'), _mk(50, 80, 3, 'Because.'),
+               _mk(90, 100, 2), _mk(110, 120, 2), _mk(130, 132, 4)]
+    texts = [m['text'] for m in _fit_trailer_budget(moments, ws, 60)]
+    assert 'Right?' in texts and 'Because.' not in texts
+
+
+def test_pause_mid_sentence_marks_more():
+    tr = {'segments': [{'words': [
+        {'word': "it's", 'start': 0.0, 'end': 0.3}, {'word': 'purely', 'start': 0.3, 'end': 0.8},
+        {'word': 'selfless', 'start': 2.5, 'end': 3.0}, {'word': 'mission.', 'start': 3.0, 'end': 3.5},
+        {'word': 'Done.', 'start': 6.0, 'end': 6.5}]}]}
+    sents = _build_sentence_transcript(tr)
+    assert sents[0]['text'] == "it's purely" and sents[0].get('more') == 1
+    assert sents[1].get('more') is None
+
+
+def test_length_problems_flags_monologue_and_total():
+    probs = _trailer_length_problems([_mk(0, 65, 1), _mk(70, 75, 3), _mk(80, 82, 4)], 60)
+    assert len(probs) == 1 and 'Moment 0' in probs[0]
+    probs = _trailer_length_problems([_mk(0, 15), _mk(20, 35), _mk(40, 55), _mk(60, 75),
+                                      _mk(80, 95), _mk(100, 102)], 60)
+    assert probs[-1].startswith('The trailer runs')
 
 
 if __name__ == '__main__':
