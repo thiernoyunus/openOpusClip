@@ -3061,10 +3061,16 @@ def _trailer_brief(title='', notes='', stage='trailer'):
             lines.append("- Favour soundbites that prove, dramatise or push back on the title's "
                          "claim; tag the strongest proof of the title as hook or proof.")
         else:
-            lines.append("- The hook lands the title's core claim or its most provocative proof. "
-                         "Most moments back the title up; pushback against it is welcome as "
+            lines.append("- The hook lands the title's core claim: the first moment is a speaker "
+                         "saying it in their own words. If the title quotes a line that is in the "
+                         "transcript, open on that exact line.")
+            lines.append("- Every key noun or number in the title is heard within the first ~30 "
+                         "seconds.")
+            lines.append("- If the title teases an answer (#1, sign, secret, why, how), raise the "
+                         "question but never give the answer; build to it and end on it.")
+            lines.append("- Most moments back the title up; pushback against it is welcome as "
                          "tension, but the title's side must be the one the viewer leaves wanting "
-                         "to hear. A trailer that would fit a different title is wrong.")
+                         "to hear. Never fake it: only use what the transcript actually says.")
     if notes:
         lines.append(f'- Creator instructions: "{notes}"')
     return "\n".join(lines) + "\n"

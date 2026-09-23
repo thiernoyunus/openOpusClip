@@ -360,7 +360,7 @@ def test_trailer_brief_empty_and_filled():
     assert _trailer_brief('', '') == ''
     b = _trailer_brief("Don't Buy Real Estate", '  open on   Dubai ')
     assert "Don't Buy Real Estate" in b and 'Creator instructions: "open on Dubai"' in b
-    assert 'hook lands' in b
+    assert 'hook lands' in b and 'first ~30' in b
     assert 'Favour soundbites' in _trailer_brief('T', stage='selects')
 
 
