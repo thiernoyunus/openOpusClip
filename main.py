@@ -160,7 +160,7 @@ The virality_score MUST be consistent with the ordering (higher score = earlier 
 # the transcript itself (see _resolve_moment_bounds / _complete_thought_bounds).
 # See docs/trailer-doac-alignment-plan.md for the research behind the rules.
 # Format placeholders (trailer): {transcript} {duration} {min_moments}
-# {max_moments} {target_seconds} {speaker_context}. speaker_context is the
+# {max_moments} {target_seconds} {max_seconds} {speaker_context}. speaker_context is the
 # diarization-aware SPEAKERS block from _trailer_speaker_context ('' when the
 # transcript has no speaker labels, e.g. local Whisper). JSON shapes are
 # described in words (no literal braces) so .format() can never raise KeyError.
@@ -200,6 +200,7 @@ Before you finish, count the reasons you have given the viewer to watch the full
 
 RULES FOR MOMENTS:
 - EVERY MOMENT EXCEPT THE LAST IS A COMPLETE THOUGHT. It starts at the beginning of a sentence and ends at the END of a sentence — the listener must hear the speaker finish. Never end on "and", "but", "because", "so", or a half-said clause. If a sentence is too long, pick a different one; do not chop it. Moments are normally 3 to 10 seconds; hold up to ~15s only for one emotionally heavy story. Pace comes from dialogue volleys, not machine-gun cuts. Aim for {min_moments} to {max_moments} moments total.
+- LENGTH IS A HARD LIMIT: add up (e - s) of every moment. The total must land between {target_seconds} and {max_seconds} seconds. If it runs over, cut your weakest moment; never go over.
 - BACK-AND-FORTH: the DOAC rhythm is a volley between host and guest — a short, sharp host question, then the guest's answer. QUESTION -> ANSWER STAY TOGETHER: if you include a host question, the guest's ACTUAL answer must be the very next moment. Never leave a question with no answer, or an answer with no question.
 - THE HOOK (first moment) IS THE SINGLE MOST SHOCKING LINE IN THE WHOLE EPISODE. Its theme is THE UNEXPECTED — the "did they really just say that?" line that stops a bored scroller cold: a raw taboo opinion, a violent confession, a stunning admission, a jaw-dropping number. Pick the biggest emotional gut-punch even if it is the most controversial or vulnerable thing said — put it FIRST, do not save it for the middle. It MUST land emotionally ON ITS OWN with zero setup: if it only makes sense once the NEXT line explains it, it is NOT your hook. NEVER open on an abstract thesis, a topic-definition, a "here's what this is about" framing, or a scene-setting statement — those are what you put AFTER the shock, never before it. (E.g. open on "The modern woman, I hate." — NOT on "There's a conspiracy to turn men and women against each other.")
 - IDENTITY CARD (conditional, HIGH BAR): Only include an identity-card moment if the transcript contains a line with real DRAMATIC WEIGHT about who the guest is — a specific achievement, a striking credential, a track record, a title that signals authority or stakes (e.g. "21 years of counseling, tens of thousands of cases," "a globally recognized voice on AI safety"). If it clears that bar, place it as the 2nd or 3rd moment. DO NOT use a flat, listy, as-spoken roll-call introduction ("to my right I have X, to my left I have Y, we also have Z") — that is podcast housekeeping, not a hook. If there is no introduction that clears the bar, SKIP the identity card entirely — no identity card beats a boring one.
@@ -2791,6 +2792,79 @@ def _augment_attempt_metrics(cost_analysis, latency_ms, attempts_used, max_retri
     return cost_analysis
 
 
+TRAILER_BUDGET_SLACK = 1.2   # a "60s" trailer may run to 72s, never 2:37
+TRAILER_MAX_MOMENT = 15.0    # one heavy story at most; the prompt asks for 3-10s
+
+
+def _fit_trailer_budget(moments, words, target_seconds,
+                        slack=TRAILER_BUDGET_SLACK, max_moment=TRAILER_MAX_MOMENT,
+                        min_keep=4):
+    """Hold the trailer to its pace target. The prompt only ASKS for ~N
+    seconds, and complete-thought widening adds a few seconds per cut, so
+    without this a 60s trailer came out at 2:37.
+
+    1. A non-final moment over max_moment is cut back to its last sentence end
+       inside the cap (so it still finishes a thought); left alone if none.
+    2. While the total is over target*slack, drop a middle moment: never the
+       hook (first) or the cliffhanger (last). Rollercoaster moments (p=3) go
+       first, longest first; a dropped question takes its answer with it and
+       a dropped answer takes its question, so no volley is left half-said.
+    """
+    if not moments:
+        return moments
+    PAD_TAIL = 0.28
+    ws = sorted(words or [], key=lambda w: float(w['start']))
+    out = [dict(m) for m in moments]
+    n = len(out)
+
+    for idx, m in enumerate(out):
+        if idx == n - 1:
+            continue
+        s, e = float(m['start']), float(m['end'])
+        if e - s <= max_moment:
+            continue
+        cut = None
+        for j, w in enumerate(ws):
+            we = float(w['end'])
+            if we <= s + 3.0:
+                continue
+            if we > s + max_moment:
+                break
+            if _ends_sentence(w['word']):
+                nxt = float(ws[j + 1]['start']) if j + 1 < len(ws) else we + PAD_TAIL
+                cut = min(we + PAD_TAIL, max(we, nxt - 0.02))
+        if cut is not None:
+            print(f"   ✂️  Moment {idx} ran {e - s:.1f}s; ending it at its last "
+                  f"full sentence ({cut - s:.1f}s).")
+            m['end'] = round(cut, 3)
+
+    def total(ms):
+        return sum(float(x['end']) - float(x['start']) for x in ms)
+
+    def is_question(m):
+        return str(m.get('text', '')).rstrip().endswith('?')
+
+    limit = target_seconds * slack
+    while total(out) > limit and len(out) > min_keep:
+        middle = list(range(1, len(out) - 1))
+        if not middle:
+            break
+        dur = lambda i: float(out[i]['end']) - float(out[i]['start'])
+        rolls = [i for i in middle if out[i].get('p') == 3]
+        pick = max(rolls or middle, key=dur)
+        drop = {pick}
+        if is_question(out[pick]) and pick + 1 < len(out) - 1:
+            drop.add(pick + 1)
+        if pick - 1 >= 1 and is_question(out[pick - 1]):
+            drop.add(pick - 1)
+        if len(out) - len(drop) < min_keep:
+            drop = {pick}
+        print(f"   ✂️  Trailer {total(out):.0f}s is over {limit:.0f}s; dropping "
+              f"moment(s) {sorted(drop)}.")
+        out = [m for i, m in enumerate(out) if i not in drop]
+    return out
+
+
 def _generate_trailer_candidate(client, model_name, prompt, sentences,
                                 refine_words, video_duration, lo, hi, max_retries):
     """One flash selection call (with transient-error retries) -> a validated,
@@ -3076,6 +3150,7 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
         min_moments=min_moments,
         max_moments=max_moments,
         target_seconds=target_seconds,
+        max_seconds=int(target_seconds * TRAILER_BUDGET_SLACK),
         speaker_context=speaker_context,
     )
 
@@ -3121,7 +3196,7 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
     else:
         best = _judge_trailer_candidates(client, model_name, candidates)
     winner = candidates[best]
-    moments = winner['moments_ordered']
+    moments = _fit_trailer_budget(winner['moments_ordered'], refine_words, target_seconds)
     script = winner['script']
 
     print("   📜 Trailer script (winner):")

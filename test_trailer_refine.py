@@ -14,6 +14,7 @@ from main import (
     _soundbite_transcript,
     retime_captions,
     save_transcript,
+    _fit_trailer_budget,
 )
 import json
 import os
@@ -295,6 +296,34 @@ def test_save_transcript_writes_json_and_speaker_turns():
         with open(os.path.join(d, 'Ep_speakers.txt')) as f:
             assert f.read() == ("[0:00:00] Speaker 1: Welcome back. Great to have you.\n\n"
                                 "[0:01:05] Speaker 2: Thanks for having me.\n\n")
+
+
+def _mk(start, end, p=3, text='A line.'):
+    return {'start': start, 'end': end, 'p': p, 'text': text}
+
+
+def test_budget_drops_middle_moments_keeps_hook_and_cliffhanger():
+    moments = [_mk(0, 10, 1, 'Hook.'), _mk(20, 32), _mk(40, 50, 2),
+               _mk(60, 74), _mk(80, 90), _mk(100, 112), _mk(120, 122, 4, 'So the answer is')]
+    out = _fit_trailer_budget(moments, [], 60)
+    total = sum(m['end'] - m['start'] for m in out)
+    assert total <= 72
+    assert out[0]['text'] == 'Hook.' and out[-1]['text'] == 'So the answer is'
+
+
+def test_budget_drops_question_with_its_answer():
+    moments = [_mk(0, 30, 1), _mk(40, 44, 3, 'Why?'), _mk(50, 80, 3, 'Because.'),
+               _mk(90, 100, 2), _mk(110, 120, 2), _mk(130, 132, 4)]
+    out = _fit_trailer_budget(moments, [], 60)
+    texts = [m['text'] for m in out]
+    assert 'Why?' not in texts and 'Because.' not in texts
+
+
+def test_budget_trims_long_moment_to_last_sentence_end():
+    ws = words_from([('One', 0.0, 0.5), ('thing.', 0.5, 4.0), ('Two', 4.2, 4.6),
+                     ('things.', 4.6, 12.0), ('Three', 12.2, 13.0), ('more', 13.0, 20.0)])
+    out = _fit_trailer_budget([_mk(0, 20), _mk(30, 32, 4)], ws, 60)
+    assert 12.0 <= out[0]['end'] <= 12.2
 
 
 if __name__ == '__main__':
