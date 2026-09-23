@@ -15,7 +15,7 @@ Read `reference/editorial.md` before choosing anything. It holds the rules that 
 ## Defaults (unless the person asks otherwise)
 - 16:9, the full two-shot: no zoom and no crop, so both people are always in view.
 - 60-95 s, 12-16 bites, ending on 1.2 s of black.
-- Imran captions in the lower third, never over a face.
+- Imran captions in the lower third, never over a face, with a coloured word (red, yellow, green, or a red box) in almost every block.
 - Finishing: HyperFrames when it's installed (the person can tweak it themselves), otherwise the Python renderer. Both read the same plan and look the same.
 
 ## Steps
@@ -51,7 +51,7 @@ Work in a folder of its own, e.g. `trailer-<episode>/`. `S` is this skill's fold
    Both paths read the same plan and give the same picture. The HyperFrames mix comes out about 0.7 dB quieter, because it limits peaks to -1 dB.
 8. **Review before sharing**: `python3 $S/scripts/review.py trailer.mp4 plan.json`. It makes a time-labelled sheet and prints the captions exactly as they appear on screen. Look at the sheet, and at 5+ full-size frames (the sheet catches words mid-animation). Check that:
    - in a guest episode, the first voice is the guest's, and the guest's share (printed by `review.py`) is at least 50%, spread through the trailer
-   - captions never cover a face
+   - captions never cover a face, and nearly every block has a coloured word
    - the running order reads as one conversation
    - every bite starts and ends on a complete sentence
    - the last line is left unanswered
@@ -68,6 +68,7 @@ Change the plan, not the scripts.
 | "Bad opening" | Pick a new hook from the candidate list. Never open with an answer. |
 | "Stay on the topic" | Drop every bite that fails the on-topic test. |
 | Caption wording | Use `fix`, `drop` or `big`. |
+| Highlights / colours | Use `accent` with a colour per word (`{"not": "red"}`). |
 | Framing | Use `aspect` or per-bite `zoom`. |
 
 Re-run from step 5.

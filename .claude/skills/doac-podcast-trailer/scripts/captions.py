@@ -10,7 +10,11 @@ import re
 
 # ---- style (both renderers read these) ----
 FPS = 30
-ACCENT_RGB = (255, 196, 64)   # gold for accent words (plan "accent_rgb" overrides)
+# accent colours: DOAC colours a word in almost every caption block, picked by what the word means
+COLORS = {"red": (237, 41, 57), "yellow": (255, 214, 0), "green": (46, 204, 113), "pink": (255, 79, 163), "gold": (255, 196, 64)}
+BOX_RGB = (226, 35, 45)       # "box": a white word on a red box, for the two or three strongest words
+BOX_PAD = 0.10                # box padding left, right and above the capitals, as a fraction of the word's font size
+BOX_DROP = {"big": 0.10, "lead": 0.26, "tail": 0.26}   # how far the box reaches below the baseline (room for g, y, p)
 LEAD_SCALE, TAIL_SCALE = 0.34, 0.58   # font size = BASE * scale
 GAP_SCALE = 0.12              # space between words = BASE * GAP_SCALE
 TOP_FRAC = {True: 0.64, False: 0.60}    # caption block top, fraction of frame height (wide, tall)
@@ -123,9 +127,46 @@ def display_text(w, role):
     return w["w"].strip('.,;:!"').upper() if role == "big" else w["w"]
 
 
-def is_accent(block, w, role):
-    acc = {core(x).lower() for x in block["bite"].get("accent", [])}
-    return role == "big" and core(w["w"]).lower() in acc
+# words whose meaning picks their colour; anything else is yellow
+RED_WORDS = set("""not no never nothing nobody zero lose losing lost loss fail failed failing failure hate hated wrong worst
+waste wasting wasted risk risky broke broken banned ban scam dead die dying death fear scared afraid stop quit lie lies fake
+greed ego debt fired crash war danger dangerous problem problems less can't don't won't isn't aren't shouldn't bad hard
+struggle pain poor burning burn replaced replace angry mistake mistakes""".split())
+GREEN_WORDS = set("""money millionaire millionaires rich wealth wealthy profit profits profitable win winning won success
+successful results growth grow grew more free best better sold selling sales revenue income paid earn earning earned yes
+good great solution solutions help works worked working opportunity freedom invest investment asset asset-class""".split())
+PINK_WORDS = set("love loved loving heart family wife husband kids children mother father mum mom dad beautiful".split())
+
+
+def mood(word):
+    c = core(word).lower()
+    return "red" if c in RED_WORDS else "green" if c in GREEN_WORDS else "pink" if c in PINK_WORDS else "yellow"
+
+
+def accents(block, rs):
+    """Colour name per word (None = white), for one caption block with roles rs.
+    A bite's "accent" colours those words in any role: a list picks each colour by meaning, a dict {"word": "red"} sets it
+    (red, yellow, green, pink, gold, box). A block with none of them gets one automatic accent on a big word, unless the bite
+    has "auto_accent": false: the first big word with a red/green/pink meaning, else the first big word, in yellow."""
+    b = block["bite"]
+    acc = b.get("accent") or {}
+    if isinstance(acc, list): acc = {x: None for x in acc}
+    acc = {core(k).lower(): v for k, v in acc.items()}
+    out = [(acc[c] or mood(w["w"])) if (c := core(w["w"]).lower()) in acc else None for w in block["words"]]
+    if any(out) or not b.get("auto_accent", True): return out
+    bigs = [i for i, r in enumerate(rs) if r == "big"]
+    if bigs:
+        i = next((i for i in bigs if mood(block["words"][i]["w"]) != "yellow"), bigs[0])
+        out[i] = mood(block["words"][i]["w"])
+    return out
+
+
+def box_rows(font, role):
+    """Where a "box" word's box sits, as (top, height) in px from the top of the word's line (PIL font, text drawn at the
+    line top): from BOX_PAD above the capitals to BOX_DROP below the baseline."""
+    asc, s = font.getmetrics()[0], font.size
+    cap = -font.getbbox("H", anchor="ls")[1]
+    return asc - cap - BOX_PAD * s, cap + (BOX_PAD + BOX_DROP[role]) * s
 
 
 def flow_lines(items, maxw, gap):
@@ -158,7 +199,7 @@ if __name__ == "__main__":
     timeline, total = place_bites(plan["bites"])
     for bl in build_blocks(timeline, words(plan["transcript"])):
         rs = roles(bl)
-        acc = ["*" if is_accent(bl, w, r) else "" for w, r in zip(bl["words"], rs)]
+        cs = accents(bl, rs)
         print(f"{bl['s']:5.1f}s  bite {bl['bite'].get('id'):>3}  " +
-              " ".join(f"[{display_text(w, r)}{a}]" if r == "big" else w["w"] for w, r, a in zip(bl["words"], rs, acc)))
-    print(f"total {total:.1f}s   ([WORD] = huge word, * = gold)")
+              " ".join((f"[{display_text(w, r)}]" if r == "big" else w["w"]) + (f"<{c}>" if c else "") for w, r, c in zip(bl["words"], rs, cs)))
+    print(f"total {total:.1f}s   ([WORD] = huge word, <red> = that word's colour)")

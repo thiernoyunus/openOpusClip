@@ -1,7 +1,7 @@
 # Approved trailers (worked examples)
 
 Two trailers Yunus called "perfect" / "the absolute best". Study the *shape*, not the words: a new episode needs its own lines.
-Their plan files live in the project's shared files (`doac-trailer-benchmark/scripts/bites_v3s.json`, `doac-podcast-trailer/test-ai-episode/plan-v3-guest-led.json`).
+Their plan files live in the project's shared files (`doac-trailer-benchmark/scripts/bites_v3s.json`, `doac-podcast-trailer/test-ai-episode/plan-v4-colour.json` (v3 with the colour highlights)).
 
 ## 1. Guest episode: "Is AI actually making you money?" (81 s, guest 65%)
 
@@ -30,6 +30,7 @@ Their plan files live in the project's shared files (`doac-trailer-benchmark/scr
 - **The trailer gives away something useful.** The 10-80-10 rule is a whole framework, and it runs 17 s, the one long bite.
 - **The ending is the host's central question, and the guest starting to answer.** It cuts to black before the answer lands.
 - **Every cut sits on a real pause.** The full "2018" plays, and no word is clipped at the end.
+- **Almost every caption block has a coloured word, chosen by meaning.** Red "not" and a red box on "MONEY" in the hook, green "MILLIONAIRE" and "MORE", red "LESS" and "REPS", yellow "2018" and "10-80-10", a red box on "VETERAN" and "WASTING". The first render had only two gold words, and Yunus called the highlighting too rare.
 
 ## 2. Panel-style episode with a featured guest: "Is e-commerce an asset class?" (91 s)
 

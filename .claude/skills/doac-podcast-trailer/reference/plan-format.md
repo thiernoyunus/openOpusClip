@@ -13,6 +13,7 @@ Editorial choices live here and nowhere else, so changing the trailer means edit
   "guest": "Jamal",                  // guest episodes only: exactly the label used in the bites' "speaker"; review.py checks their share
   "music": "track.mp3",              // optional licensed track; without it a quiet synth pad is used
   "music_db": -24,
+  "colors": {"red": [237, 41, 57]},   // optional: retune a highlight colour (red, yellow, green, pink, gold, box)
   "bites": [ { ... }, ... ]          // in trailer order
 }
 ```
@@ -34,7 +35,8 @@ Editorial choices live here and nowhere else, so changing the trailer means edit
 | `auto_big` | no | `false`: blocks in this bite with none of your `big` words get no huge word (instead of an automatic pick) |
 | `lock` | no | `true`: `snap.py` leaves this bite's start/end alone (use after placing a cut by hand) |
 | `big` | no | Words shown huge (Anton caps). One per caption line is ideal: numbers, the topic word, the emotional word. If missing, the longest non-filler word is picked |
-| `accent` | no | Big words shown in gold. Use for the episode's topic word and the stakes. Two or three in the whole trailer |
+| `accent` | no | Coloured words, any role: `{"not": "red", "money": "box"}`. Colours: `red`, `yellow`, `green`, `pink`, `gold`, `box` (white word on a red box). A list (`["money"]`) picks each colour by meaning. Colour a word in almost every block (see editorial.md, Captions) |
+| `auto_accent` | no | `false`: blocks in this bite with no `accent` word stay white (otherwise their big word gets an automatic colour) |
 | `gap` | no | Pause (seconds) that starts a new caption block (default 0.5). Raise it if a slow speaker's lines get split |
 | `fade_in`, `fade_out` | no | Edge fade in seconds (default 0.025). Use 0.08-0.12 when another voice starts right on top of the last word |
 | `boom` | no | `true`: sub hit at the bite's first frame. Use on 2-4 turns (the hook, the guest reveal, the stakes) |
@@ -42,7 +44,7 @@ Editorial choices live here and nowhere else, so changing the trailer means edit
 | `zoom` | no | `[1.0, 1.06]` slow push-in on this bite. Off by default. Don't use unless asked: people want both faces in shot |
 | `cx`, `cy` | 9:16 only | Where the speaker sits (0-1). `track.py` fills in `track` from this |
 
-Preview the captions without rendering: `python3 scripts/captions.py plan.json` prints every block, with BIG words in caps and gold ones marked `*`.
+Preview the captions without rendering: `python3 scripts/captions.py plan.json` prints every block, with BIG words in caps and each coloured word followed by its colour, like `[MONEY]<box>`.
 
 ## Rules the renderer enforces for you
 - Captions only ever sit in the lower third, below faces in a normal podcast shot.

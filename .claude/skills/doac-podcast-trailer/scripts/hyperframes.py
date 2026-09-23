@@ -120,6 +120,12 @@ def block_html(i, bl, measure, wide, prev_end):
     for w, r in zip(bl["words"], rs):
         shown = C.display_text(w, r)
         items.append(dict(w=w, r=r, shown=shown, iw=measure.width(shown, r)))
+    for it, c in zip(items, C.accents(bl, rs)):
+        it["c"] = c
+        if c == "box":   # the box's side padding widens the word, as in render.py
+            px = (C.big_size(len(re.sub(r"\W", "", it["shown"])), measure.base) if it["r"] == "big"
+                  else int(measure.base * (C.LEAD_SCALE if it["r"] == "lead" else C.TAIL_SCALE)))
+            it["iw"] += 2 * round(px * C.BOX_PAD)
     lines = C.flow_lines(items, C.MAXW[wide], int(measure.base * C.GAP_SCALE))
     start = max(bl["s"] - 0.01, prev_end)       # render.py shows a block from 10 ms before its first word
     out = [f'    <div id="cap-{i:03d}" class="clip caption-group" data-start="{num(start)}" data-duration="{num(bl["e"] - start)}" data-track-index="0">'
@@ -128,7 +134,7 @@ def block_html(i, bl, measure, wide, prev_end):
         spans = []
         for it in ln:
             cls = ["caption-word", it["r"]]
-            if C.is_accent(bl, it["w"], it["r"]): cls.append("accent")
+            if it["c"]: cls.append(f"c-{it['c']}")
             style = ""
             if it["r"] in measure.mean:
                 (ol, orr), (ml, mr) = measure.overhang(it["w"]["w"], it["r"]), measure.mean[it["r"]]
@@ -150,7 +156,7 @@ def block_html(i, bl, measure, wide, prev_end):
 CAPTIONS = """<!-- Captions for the DOAC trailer (made by hyperframes.py; regenerating overwrites this file).
      Each .caption-group is one caption block: data-start / data-duration in seconds on the trailer timeline.
      Each .caption-word appears at its data-at time. Word roles: lead (small bold), big (huge caps), tail (italic);
-     .accent = gold. Edit the words freely; restyle everything in the CAPTION STYLE block below. -->
+     Colour: c-red, c-yellow, c-green, c-pink, c-gold, c-box (white on a red box); no class = white. Edit the words freely; restyle everything in the CAPTION STYLE block below. -->
 <template>
   <!-- ======================= CAPTION STYLE: fonts, colours, sizes, placement, motion ======================= -->
   <style id="caption-style">
@@ -166,7 +172,8 @@ CAPTIONS = """<!-- Captions for the DOAC trailer (made by hyperframes.py; regene
       --cap-max-width: %(maxw)spx;
       /* colour */
       --cap-color: #ffffff;
-      --cap-accent: rgb(%(accent)s);   /* gold, for the big words listed in a bite's "accent" */
+      %(colors)s   /* accent colours, one class per colour (c-red...) */
+      --cap-box: rgb(%(box)s);   /* c-box: a white word on this box */
       --cap-shadow: 0 0 3px rgba(0, 0, 0, 0.8), 0 2px 10px rgba(0, 0, 0, 1), 0 0 30px rgba(0, 0, 0, 0.8);   /* soft, hugs the letters; no box */
       /* placement: lower third, below the faces */
       --cap-top: %(top)spx;       /* top of each block (%(top_pct)s%% of the frame height) */
@@ -196,7 +203,10 @@ CAPTIONS = """<!-- Captions for the DOAC trailer (made by hyperframes.py; regene
                          line-height: var(--cap-big-line); margin-bottom: var(--cap-big-after); text-transform: uppercase; }
     .caption-word.tail { font-family: var(--cap-tail-font); font-style: italic; font-weight: var(--cap-tail-weight);
                          font-size: var(--cap-tail-size); line-height: var(--cap-tail-line); margin-bottom: var(--cap-tail-after); }
-    .caption-word.accent { color: var(--cap-accent); }
+%(color_rules)s
+    .caption-word.c-box { color: var(--cap-color); text-shadow: none; padding: 0 %(box_pad)sem;
+                          background: linear-gradient(var(--cap-box), var(--cap-box)) 0 var(--box-top) / 100%% var(--box-h) no-repeat; }
+%(box_rules)s
   </style>
   <!-- ======================= end of caption style ======================= -->
 
@@ -373,6 +383,17 @@ def main():
 
     lead_px, tail_px = int(base_px * C.LEAD_SCALE), int(base_px * C.TAIL_SCALE)
     gap = int(base_px * C.GAP_SCALE)
+    colors = {**C.COLORS, **{k: v for k, v in plan.get("colors", {}).items() if k != "box"}}
+
+    def box_em():   # captions.box_rows per role, in em of the word's own font size (so it follows a shrunk big word)
+        out = {}
+        for role, f, px, var in (("lead", "Montserrat.ttf", lead_px, "ExtraBold"), ("big", "Anton-Regular.ttf", base_px, None),
+                                 ("tail", "PlayfairDisplay-Italic.ttf", tail_px, "SemiBold Italic")):
+            font = ImageFont.truetype(f"{FONTS}/{f}", px)
+            if var: font.set_variation_by_name(var)
+            t, h = C.box_rows(font, role)
+            out[role] = (t / px, h / px)
+        return out
 
     def role_gap(role):   # the CSS gap that gives render.py's gap between the letters, on average
         return f"{round((gap + sum(measure.mean[role])) * 2) / 2:g}"
@@ -381,7 +402,10 @@ def main():
         **dict(zip(("lead_line", "lead_after"), line_ratio("Montserrat.ttf", lead_px, C.LINE_OTHER, "ExtraBold"))),
         **dict(zip(("tail_line", "tail_after"), line_ratio("PlayfairDisplay-Italic.ttf", tail_px, C.LINE_OTHER, "SemiBold Italic"))),
         **dict(zip(("big_line", "big_after"), line_ratio("Anton-Regular.ttf", base_px, C.LINE_BIG))),
-        accent=", ".join(str(c) for c in plan.get("accent_rgb", C.ACCENT_RGB)),
+        colors="  ".join(f"--cap-{k}: rgb({', '.join(map(str, v))});" for k, v in colors.items()),
+        color_rules="\n".join(f"    .caption-word.c-{k} {{ color: var(--cap-{k}); }}" for k in colors),
+        box=", ".join(map(str, plan.get("colors", {}).get("box", C.BOX_RGB))), box_pad=f"{C.BOX_PAD:g}",
+        box_rules="\n".join(f"    .caption-word.{r}.c-box {{ --box-top: {t:.4f}em; --box-h: {h:.4f}em; }}" for r, (t, h) in box_em().items()),
         top=int(H * C.TOP_FRAC[wide]), top_pct=round(C.TOP_FRAC[wide] * 100), limit=f"{H * C.LIMIT_FRAC[wide]:g}",
         maxw=C.MAXW[wide], gap=gap, lead_gap=role_gap("lead"), tail_gap=role_gap("tail"),
         enter=C.ENTER_S, escale=C.ENTER_SCALE, rise=f"{base_px * C.RISE:g}",

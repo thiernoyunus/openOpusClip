@@ -75,7 +75,14 @@ Role names are free labels: `hook`, `challenge`, `premise`, `frame`, `sell-guest
 
 ## 5. Captions
 - One `big` word per caption line: the number, the topic word, or the emotional word.
-- `accent` (gold) goes on the topic word and on the highest-stakes word. Use it 2-4 times in the whole trailer.
+- **Colour a word in almost every caption block.** DOAC trailers do: red "HATE", yellow "AI", green "RESULTS", a red box behind "replaced". A trailer with only a few coloured words looks flat (Yunus's feedback). Pick the colour by what the word means:
+  - **red**: danger, loss, negatives, pushback ("not", "wasting", "lose", "never", "reps" when it's a put-down)
+  - **green**: money, results, wins, the positive answer ("money", "selling", "80%", "solutions")
+  - **yellow**: the topic word, names, numbers, and emphasis that's neither good nor bad ("AI", "2018", "even")
+  - **pink**: love, family, heart
+  - **box** (white on a red box): the two or three strongest words in the whole trailer, usually the hook, the guest's credential and the stakes
+- The coloured word can be any word, not only a big one: a small word like "not" or "even" in red or yellow is very DOAC. One or two colours per block; leave a block white now and then (a quiet setup line) so the colour keeps meaning something.
+- Set colours with `accent` in each bite, e.g. `{"not": "red", "money": "box"}`. Blocks you don't set get an automatic colour on their big word, chosen from word lists, which is mostly yellow. So choose them yourself.
 - Fix the transcript's mistakes with `fix`: names, brand words, and missing question marks.
 
 ## 6. Sound

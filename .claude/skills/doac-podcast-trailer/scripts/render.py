@@ -25,7 +25,8 @@ sw0, sh0, _, _ = probe(SRC)
 SH = min(sh0, 1080); SW = int(round(sw0 * SH / sh0 / 2)) * 2   # decode size (source aspect, at most 1080p)
 BASE = C.base(WIDE)
 END_HOLD = plan.get("end_hold", 1.2)
-ACCENT = tuple(plan.get("accent_rgb", C.ACCENT_RGB))
+COLORS = {**C.COLORS, **{k: tuple(v) for k, v in plan.get("colors", {}).items() if k != "box"}}   # plan "colors" can retune a shade
+BOX = tuple(plan.get("colors", {}).get("box", C.BOX_RGB))
 words_all = words(plan["transcript"])
 
 # ---------- timeline + caption blocks (shared with hyperframes.py, see captions.py) ----------
@@ -45,35 +46,49 @@ def big_font(n):
     return F_BIG[size]
 
 PAD = 40
-def sprite(text, font, color):
+def sprite(text, font, color, box=None):
+    """A word as an RGBA sprite with a soft shadow. box = (rgb, top, height) from captions.box_rows: the word sits on a
+    solid box, no shadow, as wide as the ink plus BOX_PAD each side (like the CSS background in hyperframes.py)."""
     l, t_, r, b_ = font.getbbox(text)
     asc, desc = font.getmetrics()
-    w, h = r - l + 2 * PAD, asc + desc + 2 * PAD
+    padx = int(round(font.size * C.BOX_PAD)) if box else 0
+    w, h = r - l + 2 * PAD + 2 * padx, asc + desc + 2 * PAD
     mask = Image.new("L", (w, h), 0)
-    ImageDraw.Draw(mask).text((PAD - l, PAD), text, font=font, fill=255)
+    ImageDraw.Draw(mask).text((PAD + padx - l, PAD), text, font=font, fill=255)
     m = np.asarray(mask, np.float32) / 255
-    # soft shadow hugging the letters (no box, no darkening of footage)
+    shape = m
+    if box:
+        bm = np.zeros_like(m)
+        y0 = int(round(PAD + box[1]))
+        bm[max(0, y0):y0 + int(round(box[2])), PAD:w - PAD] = 1
+        shape = np.maximum(m, bm)
+    # soft shadow hugging the letters (none on a box); no box or darkening of the footage elsewhere
     sh = np.zeros_like(m)
-    for rad, a, dy in ((3, .5, 0), (10, .75, 2), (30, .5, 0)):
-        k = cv2.GaussianBlur(np.roll(m, dy, 0), (0, 0), rad / 2)
+    for rad, a, dy in (() if box else ((3, .5, 0), (10, .75, 2), (30, .5, 0))):
+        k = cv2.GaussianBlur(np.roll(shape, dy, 0), (0, 0), rad / 2)
         sh = 1 - (1 - sh) * (1 - np.clip(k * a * 1.6, 0, 1))
-    alpha = 1 - (1 - sh) * (1 - m)
+    alpha = 1 - (1 - sh) * (1 - shape)
     rgb = np.zeros((h, w, 3), np.float32)
     col = np.array(color[::-1], np.float32)  # frames are BGR
-    rgb[:] = col * (m / np.maximum(alpha, 1e-4))[..., None]
+    if box:
+        bg = np.array(box[0][::-1], np.float32)
+        fill = bg * (1 - m[..., None]) + col * m[..., None]    # letters over the box
+        rgb[:] = fill * (shape / np.maximum(alpha, 1e-4))[..., None]
+    else:
+        rgb[:] = col * (m / np.maximum(alpha, 1e-4))[..., None]
     return np.dstack([rgb, alpha * 255]).astype(np.float32), asc
 
 def layout(block):
     ws = block["words"]; rs = roles(block)
     items = []
-    for w, r in zip(ws, rs):
+    for w, r, c in zip(ws, rs, C.accents(block, rs)):
         txt = C.display_text(w, r)
         if r == "big":
             f = big_font(len(re.sub(r"\W", "", txt)))
         else:
             f = F_LEAD if r == "lead" else F_TAIL
-        color = ACCENT if C.is_accent(block, w, r) else (255, 255, 255)
-        spr, asc = sprite(txt, f, color)
+        box = (BOX, *C.box_rows(f, r)) if c == "box" else None
+        spr, asc = sprite(txt, f, COLORS.get(c, (255, 255, 255)), box)
         items.append(dict(w=w, r=r, spr=spr, asc=asc, lh=f.getmetrics()[0] + f.getmetrics()[1], iw=spr.shape[1] - 2 * PAD))
     # flow into lines; big words own a line
     gap = int(BASE * C.GAP_SCALE)
