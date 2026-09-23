@@ -13,7 +13,11 @@ from main import (
     _complete_thought_bounds,
     _soundbite_transcript,
     retime_captions,
+    save_transcript,
 )
+import json
+import os
+import tempfile
 
 
 def words_from(spec):
@@ -276,6 +280,21 @@ def test_retime_flags_power_words_for_big_captions():
     flagged = {c['text'] for c in caps if c.get('highlight')}
     assert flagged == {'market', 'crash', '2030.'}
     assert next(c for c in caps if c['text'] == 'crash')['accentColor'] == '#FF2B2B'
+
+
+def test_save_transcript_writes_json_and_speaker_turns():
+    transcript = {'segments': [
+        {'start': 0.0, 'end': 2.0, 'text': 'Welcome back.', 'speaker': '1'},
+        {'start': 2.0, 'end': 4.0, 'text': 'Great to have you.', 'speaker': '1'},
+        {'start': 65.0, 'end': 67.0, 'text': 'Thanks for having me.', 'speaker': '2'},
+    ]}
+    with tempfile.TemporaryDirectory() as d:
+        path = save_transcript(transcript, d, 'Ep')
+        with open(path) as f:
+            assert json.load(f) == transcript
+        with open(os.path.join(d, 'Ep_speakers.txt')) as f:
+            assert f.read() == ("[0:00:00] Speaker 1: Welcome back. Great to have you.\n\n"
+                                "[0:01:05] Speaker 2: Thanks for having me.\n\n")
 
 
 if __name__ == '__main__':

@@ -1968,6 +1968,46 @@ class ClipAnalysisError(Exception):
         self.model = _safe_diagnostic_value(model)
         super().__init__(message)
 
+def _fmt_ts(seconds):
+    seconds = int(seconds or 0)
+    return f"{seconds // 3600:d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
+
+
+def save_transcript(transcript, output_dir, video_title):
+    """Write {title}_transcript.json (reusable via --transcript-file) and,
+    when diarization labels exist, {title}_speakers.txt: one line per speaker
+    turn so a person can read who said what."""
+    json_path = os.path.join(output_dir, f"{video_title}_transcript.json")
+    try:
+        with open(json_path, 'w') as f:
+            json.dump(transcript, f)
+    except OSError as e:
+        print(f"⚠️  Could not save transcript: {e}")
+        return None
+    print(f"💾 Transcript saved: {json_path}")
+
+    turns = []
+    for seg in transcript.get('segments', []):
+        spk = seg.get('speaker')
+        text = (seg.get('text') or '').strip()
+        if spk is None or not text:
+            continue
+        if turns and turns[-1][1] == spk:
+            turns[-1][2].append(text)
+        else:
+            turns.append([seg.get('start', 0), spk, [text]])
+    if turns:
+        txt_path = os.path.join(output_dir, f"{video_title}_speakers.txt")
+        try:
+            with open(txt_path, 'w') as f:
+                for start, spk, texts in turns:
+                    f.write(f"[{_fmt_ts(start)}] Speaker {spk}: {' '.join(texts)}\n\n")
+            print(f"💾 Speaker transcript saved: {txt_path} ({len(turns)} turns)")
+        except OSError as e:
+            print(f"⚠️  Could not save speaker transcript: {e}")
+    return json_path
+
+
 def is_retryable_provider_error(error):
     error_text = str(error).lower()
     retryable_markers = [
@@ -2823,7 +2863,7 @@ def _generate_trailer_candidate(client, model_name, prompt, sentences,
             if not is_retryable_provider_error(e):
                 break
             if attempt < max_retries:
-                wait = get_gemini_retry_delay(e, min(60, 5 * (2 ** (attempt - 1))))
+                wait = get_gemini_retry_delay(e, min(60, 10 * (2 ** (attempt - 1))))
                 print(f"⏳ retry {attempt + 1}/{max_retries} in {wait}s...")
                 time.sleep(wait)
     raise ClipAnalysisError(
@@ -2877,7 +2917,7 @@ def _judge_trailer_candidates(client, model_name, candidates):
 
 
 def _select_soundbites(client, model_name, sentences, speaker_context,
-                       max_soundbites, max_retries=2):
+                       max_soundbites, max_retries=3):
     """Selects pass (Anthony Smith's first step: cut the episode down to its
     best soundbites before writing the trailer). One Gemini call over the whole
     transcript -> (soundbites, cost_analysis), or (None, None) on any failure so
@@ -2920,7 +2960,7 @@ def _select_soundbites(client, model_name, sentences, speaker_context,
             print(f"   ⚠️  Selects pass attempt {attempt}/{max_retries} failed: {e}")
             if not is_retryable_provider_error(e) or attempt == max_retries:
                 break
-            time.sleep(get_gemini_retry_delay(e, 5 * attempt))
+            time.sleep(get_gemini_retry_delay(e, 10 * attempt))
     return None, None
 
 
@@ -2948,7 +2988,7 @@ def _soundbite_transcript(sentences, soundbites):
     return out
 
 
-def get_trailer_moments(transcript_result, video_duration, pace='standard', max_retries=3):
+def get_trailer_moments(transcript_result, video_duration, pace='standard', max_retries=5):
     """Ask Gemini to SCRIPT+ORDER coherent moments into a DOAC cold-open trailer.
 
     Script-first: the model drafts a readable trailer from verbatim sentence
@@ -3563,7 +3603,7 @@ if __name__ == '__main__':
     parser.add_argument('--trailer-pace', choices=sorted(TRAILER_PACE_PRESETS), default='standard', help="Trailer length/cut-density preset (trailer mode): punchy ~35s, standard ~60s, extended ~90s.")
     parser.add_argument('--smart-placement', action='store_true', help="Trailer mode: auto-position captions to avoid the speaker's face (DOAC smart placement; effective on wide/square output).")
 
-    parser.add_argument('--transcript-file', type=str, default=None, help="More-clips mode: load the transcript from this JSON file instead of transcribing (requires -i). Skips download + transcription; re-runs viral detection on a completed job's saved transcript.")
+    parser.add_argument('--transcript-file', type=str, default=None, help="Load the transcript from this JSON file instead of transcribing (requires -i). Used by More-clips mode, and to rerun a trailer/clips job from the {title}_transcript.json it saved.")
     parser.add_argument('--exclude-ranges', type=str, default=None, help="More-clips mode: path to a JSON file holding [[start,end],...] ranges already turned into clips. New moments must not overlap these.")
     parser.add_argument('--num-clips', type=int, default=None, help="More-clips mode: OPTIONAL cap on how many new moments to request. Default: the AI decides (like the normal pipeline).")
 
@@ -3648,7 +3688,7 @@ if __name__ == '__main__':
     if args.transcript_file:
         with open(args.transcript_file) as f:
             transcript = json.load(f)
-        print(f"📄 More-clips mode: loaded transcript from {args.transcript_file} (skipped download + transcription).")
+        print(f"📄 Loaded saved transcript from {args.transcript_file} (skipped transcription).")
     else:
         report_stage("transcribe", "start")
         transcribe_start = time.monotonic()
@@ -3668,6 +3708,10 @@ if __name__ == '__main__':
               f"lang={transcript.get('language', 'unknown')}, "
               f"elapsed={time.monotonic() - transcribe_start:.2f}s.")
         report_stage("transcribe", "done")
+        # Save it now, before any Gemini call: if analysis fails (e.g. a 503),
+        # a rerun can pass this file to --transcript-file instead of paying
+        # for download + transcription again.
+        save_transcript(transcript, output_dir, video_title)
 
     # Get duration (guard against a corrupt/unreadable video reporting fps 0)
     cap = cv2.VideoCapture(input_video)
