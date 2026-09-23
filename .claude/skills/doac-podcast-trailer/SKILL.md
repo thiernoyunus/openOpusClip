@@ -9,6 +9,7 @@ Turns one full podcast episode into a 60-95 second trailer. The trailer is built
 
 The editing judgment is yours. The scripts do the mechanics.
 Read `reference/editorial.md` before choosing anything. It holds the rules that made our best trailer, and the mistakes to avoid.
+`reference/examples.md` shows the two approved trailers bite by bite, and why they work.
 `reference/plan-format.md` describes the plan file every step reads.
 
 ## Defaults (unless the person asks otherwise)
