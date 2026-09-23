@@ -30,7 +30,8 @@ Aim for 60-95 seconds and 12-16 bites. Most bites run 2-15 s.
 
 **Guest episodes are guest-led.** The guest is why people click. DOAC weights the guest at about 50% of what makes an episode work.
 - The guest's own voice fills **at least half the trailer's running time**, spread across the whole trailer rather than one run of bites together.
-- The guest should own the big moments: the hook claim (or the answer to the challenge in it), the moment of value, the proof or story, and the stakes.
+- **The guest speaks first.** Cold-open on the guest's single boldest claim: no host intro and no "welcome" before it. This is how DOAC trailers open. Then comes the back-and-forth (the host challenges or reacts, the guest pushes further), then the introduction of who the guest is, then the rest of the arc.
+- The guest should own the big moments: the opening claim, the moment of value, the proof or story, and the stakes.
 - The host and co-hosts do the job a DOAC host does. They introduce the guest, ask the questions, push back, react, and usually ask the closing question.
 - A good rhythm is host question or pushback (short), then the guest's answer (longer), then host reaction or challenge, then the guest again.
 - Check with `review.py`, which prints each speaker's share of the running time. If the guest is under 50%, swap host lines for guest lines that make the same point.
@@ -41,7 +42,8 @@ Role names are free labels: `hook`, `challenge`, `premise`, `frame`, `sell-guest
 
 | Part | Time | What it does |
 |------|------|--------------|
-| **Hook** | 0-20 s | A bold, specific claim about the topic, then a reaction or challenge from the other side ("what gives you so much confidence?"). It must make you want the answer, and must not give it away. The strongest hook is usually the claim nobody expects from that speaker: the AI expert saying "AI is not going to make you money", or the investor saying "your investment can go to zero". Rank your hook candidates on surprise, specificity and the topic word, and open with the winner. |
+| **Hook** | 0-20 s | In a guest episode, the guest's boldest claim, as the very first line. Otherwise the strongest bold claim. A bold, specific claim about the topic, then a reaction or challenge from the other side ("what gives you so much confidence?"). It must make you want the answer, and must not give it away. The strongest hook is usually the claim nobody expects from that speaker: the AI expert saying "AI is not going to make you money", or the investor saying "your investment can go to zero". Rank your hook candidates on surprise, specificity and the topic word, and open with the winner. |
+| **Back-and-forth** | | Guest episodes: one or two quick exchanges after the opening claim (host pushback, guest doubles down) before the introduction. |
 | **Frame** | by ~30 s | The premise, in the host's words if possible, so a stranger knows what the conversation is. |
 | **Sell the guest** | by ~40 s | Credentials with numbers. It's best when someone else says them (the host introducing them). Everyone who speaks twice or carries the conflict needs to be introduced: a guest, a co-host, a skeptic. Use one short line each ("manages a quarter of a billion", "20 years in construction"). If there's no such line for someone, give their bites to someone else or cut them. An unknown voice arguing carries no weight. |
 | **The question** | | The central question, asked out loud. This turns the setup into the debate. |
