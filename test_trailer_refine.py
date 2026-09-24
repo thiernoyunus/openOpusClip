@@ -24,6 +24,7 @@ from main import (
     _code_ending,
     _slot_trailer,
     _match_label,
+    _same_point,
     _drop_inner_fillers,
     _guess_guest,
     _host_label,
@@ -663,6 +664,53 @@ def test_slot_trailer_builds_guest_led_arc_ending_on_question_and_first_line():
     assert texts[-2] == 'Do we actually need engineers like you?'
     assert texts[-1].startswith('Systems thinking')
     assert any(t.startswith('this brother') for t in texts)  # "So" trimmed, host intro kept
+    assert _trailer_story_problems(ms, words, '3', selects, sents) == []
+
+
+def test_same_point_catches_a_repeat_but_not_a_new_point():
+    value = {'text': 'My AI brain summarizes every client channel for me daily.', 'start': 60, 'end': 64}
+    repeat = {'text': 'And all the meeting notes with clients get summarized daily.', 'start': 300, 'end': 304}
+    new = {'text': 'We lost our biggest client when the system broke once.', 'start': 66, 'end': 70}
+    assert _same_point(value, repeat)
+    assert not _same_point(value, new)
+    # Two shared words count only when the lines sit close together.
+    near = {'text': 'The brain pulls every client call too.', 'start': 66, 'end': 69}
+    assert _same_point(value, near) and not _same_point(value, dict(near, start=200, end=203))
+
+
+def test_slot_trailer_tops_up_a_short_trailer_with_a_new_guest_line():
+    lines = [
+        ("So this brother runs fifty clients and consulted for Google and Amazon for years.", 0, '1',
+         'credentials'),
+        ("I run fifty clients with AI on maybe four meetings a week, all optional.", 20, '3', 'hook'),
+        ("Are you sure he is the real deal?", 40, '1', 'challenge'),
+        ("My AI brain summarizes every client channel for me daily, so nothing gets missed.", 70, '3',
+         'lesson'),
+        ("Hiring more people will never fix a broken process in any growing agency.", 90, '3', 'emotion'),
+        ("The results speak louder than any pitch deck ever could, and I have seen them.", 100, '1',
+         'proof'),
+        ("Do we actually need engineers like you?", 120, '1', 'question'),
+        ("Systems thinking is the most important skill for any founder.", 124, '3', None),
+        ("All the meeting notes with my clients get summarized for me daily as well.", 200, '3',
+         'emotion'),
+        ("We lost our biggest account when the system broke once, and it hurt badly.", 240, '3',
+         'emotion'),
+        ("Most agencies will be gone in five years if they never build real systems.", 280, '3', 'emotion'),
+    ]
+    words, sents, selects = [], [], []
+    for i, (t, at, sp, role) in enumerate(lines):
+        w = said(t, at, sp)
+        words += w
+        sents.append({'i': i, 's': w[0]['start'], 'e': w[-1]['end'], 'text': t, 'sp': sp})
+        if role:
+            selects.append({'from_i': i, 'to_i': i, 'role': role})
+    out = _slot_trailer(_SlotClient(), 'm', sents, words, set(), selects,
+                        'Ex-Amazon Engineer Running 50 Clients With AI', '', 45, 'SPEAKERS')
+    ms = out['moments_ordered']
+    texts = [m['text'] for m in ms]
+    assert not any('meeting notes' in t for t in texts)  # repeats the value line
+    assert any(m['reason'] == 'more proof / stakes' for m in ms)
+    assert texts[-2] == 'Do we actually need engineers like you?'
     assert _trailer_story_problems(ms, words, '3', selects, sents) == []
 
 

@@ -3277,6 +3277,41 @@ def _title_words(title):
             if t and t not in _TITLE_STOP}
 
 
+# Words that carry no point of their own, for spotting two lines that say
+# the same thing.
+_PLAIN_WORDS = {'have', 'has', 'had', 'get', 'got', 'all', 'those', 'these', 'them', 'there', 'just',
+                'really', 'very', 'so', 'then', 'than', 'about', 'into', 'out', 'up', 'one', 'thing',
+                'going', 'gonna', 'know', 'mean', 'think', 'would', 'could', 'will', 'me', 'us',
+                'if', 'when', 'where', 'which', 'who', 'some', 'every', 'any', 'more', 'most'}
+
+
+_SHORT_PLAIN = {'go', 'so', 'no', 'oh', 'up', 'ok', 'us', 'me', 'if', 'am', 'ah', 'uh', 'um', 'ya', 'yo'}
+
+
+def _root(t):
+    """Rough word root, so summarizes / summarized / summarize match."""
+    for end in ('ing', 'ed', 'es', 's'):
+        if len(t) - len(end) >= 4 and t.endswith(end):
+            t = t[:-len(end)]
+            break
+    return t[:-1] if len(t) > 4 and t.endswith('e') else t
+
+
+def _content_words(text):
+    ws = {t for t in (_accent_normalize(x) for x in re.split(r"[\s\-–—/]+", str(text)))
+          if len(t) > 1 and t not in _TITLE_STOP and t not in _SHORT_PLAIN}
+    return {_root(t) for t in ws - _PLAIN_WORDS - _REPLY_FILLER - _FIRST_PERSON}
+
+
+def _same_point(a, b):
+    """Two trailer moments that make the same point: 3+ shared content words,
+    or 2+ when they sit within 15s of each other in the episode (the same run
+    of talk)."""
+    shared = len(_content_words(a['text']) & _content_words(b['text']))
+    near = max(float(a['start']), float(b['start'])) - min(float(a['end']), float(b['end'])) <= 15
+    return shared >= 3 or (shared >= 2 and near)
+
+
 class _WordIndex:
     """Transcript words sorted by time, with fast range lookups and a builder
     for trailer moments cut on word edges (padded into silence only)."""
@@ -4004,7 +4039,9 @@ def _slot_trailer(client, model_name, sentences, words, skip, selects, title, no
 
     def score(i, j, body):
         toks = {_stem(_accent_normalize(w['word'])) for w in body}
-        return 2 * len(title_words & toks) + (role_at.get(i) is not None)
+        # A line that opens "And then... / So... / But..." leans on what came before.
+        leans = bool(body) and _accent_normalize(body[0]['word']) in ('and', 'so', 'but', 'then')
+        return 2 * len(title_words & toks) + (role_at.get(i) is not None) - leans
 
     def pick(slot, cands, many=False):
         """Ask the model to choose among cands [(label_dict, value)], check the
@@ -4127,6 +4164,7 @@ def _slot_trailer(client, model_name, sentences, words, skip, selects, title, no
     # 6. The moment of value, in the guest's voice.
     values = ranked(_slot_spans(sentences, ix, guest, skip, 4.0, 15.0, role_at,
                                 {'lesson', 'answer', 'proof', 'premise'}), guest, 15, 2, 'value', used)
+    values = [r for r in values if not any(_same_point(u, r[1]) for u in used)]
     value = pick('value', values)
     used += value
 
@@ -4134,6 +4172,8 @@ def _slot_trailer(client, model_name, sentences, words, skip, selects, title, no
     stakes_c = ranked(_slot_spans(sentences, ix, guest, skip, 3.0, 12.0, role_at,
                                   {'hook', 'lesson', 'emotion', 'proof', 'premise', 'cliffhanger'}),
                       guest, 15, 3, 'stakes', used)
+    # ...a new point, not the value line (or any earlier pick) said again.
+    stakes_c = [r for r in stakes_c if not any(_same_point(u, r[1]) for u in used)]
     stakes = pick('stakes', stakes_c)
     used += stakes
 
@@ -4144,7 +4184,8 @@ def _slot_trailer(client, model_name, sentences, words, skip, selects, title, no
                                      {'proof', 'emotion', 'premise', 'hook', 'cliffhanger'}),
                          sp, 10, 3, 'proof / stakes', used)
     proofs.sort(key=lambda r: -score(r[1]['from_i'], r[1]['to_i'], ix.words_in(r[1]['start'], r[1]['end'])))
-    proofs = [r for r in proofs if not _mumbles(ix.words_in(r[1]['start'], r[1]['end']))]
+    proofs = [r for r in proofs if not _mumbles(ix.words_in(r[1]['start'], r[1]['end']))
+              and not any(_same_point(u, r[1]) for u in used)]
     proof = pick('proof', proofs[:15], many=True)
 
     # 8. Assemble in the fixed order, then hold rhythm and length in code.
@@ -4211,6 +4252,29 @@ def _slot_trailer(client, model_name, sentences, words, skip, selects, title, no
             break
         if m in order:
             order.remove(m)
+
+    # A trailer well under target gets one more guest line (a spare stakes or
+    # proof pick) before the ending, where it keeps the rhythm and the share.
+    def triple_at(ms, k):
+        voices = [speaker(m) for m in ms]
+        return any(0 <= a and a + 2 < len(ms) and len(set(voices[a:a + 3])) == 1
+                   for a in range(k - 2, k + 1))
+
+    extras = [m for _, m in stakes_c + proofs if m not in order and speaker(m) == guest
+              and '?' not in m['text']]  # a self-asked question leans on what came before
+    for m in extras:
+        if total(order) >= 0.9 * target_seconds:
+            break
+        dur = float(m['end']) - float(m['start'])
+        if total(order) + dur > limit or not _clear_of(order, float(m['start']), float(m['end'])) \
+                or any(_same_point(o, m) for o in order):
+            continue
+        for at in range(len(order) - len(ending), 0, -1):
+            trial = order[:at] + [m] + order[at:]
+            if not triple_at(trial, at) and voice_share(trial, guest) <= 0.7:
+                m['reason'] = 'more proof / stakes'
+                order = trial
+                break
 
     # Accent words for the captions (one small call; captions still colour
     # most blocks by meaning without it).
