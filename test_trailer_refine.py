@@ -20,6 +20,8 @@ from main import (
     _trailer_story_problems,
     _trim_lead_ins,
     _select_soundbites,
+    _text_is_question,
+    _code_ending,
 )
 import json
 import os
@@ -290,16 +292,20 @@ def test_retime_flags_power_words_for_big_captions():
 
 def test_retime_boxes_hook_stakes_and_credential_accents():
     words = (_timed("AI will not pay.", 0.0) + _timed("He sold three brands.", 10.0)
-             + _timed("My account got banned.", 20.0) + _timed("Is it worth it?", 30.0))
+             + _timed("My account got banned.", 20.0) + _timed("He founded Liberate Labs.", 30.0)
+             + _timed("is it worth it?", 40.0))
     tr = {'segments': [{'words': words}]}
-    m = [{'start': 0.0, 'end': 2.0, 'accent_word': 'pay', 'emotion': 'payoff'},
-         {'start': 10.0, 'end': 12.0, 'accent_word': 'three', 'emotion': 'power'},
+    m = [{'start': 0.0, 'end': 2.0, 'accent_word': 'pay', 'emotion': 'danger'},
+         {'start': 10.0, 'end': 12.0, 'accent_word': 'brands', 'emotion': 'power'},
          {'start': 20.0, 'end': 22.0, 'accent_word': 'banned', 'emotion': 'danger'},
-         {'start': 30.0, 'end': 32.0, 'accent_word': 'worth', 'emotion': 'curiosity'}]
-    caps = retime_captions(tr, m, [0, 60, 120, 180], [60, 60, 60, 60], 30)
+         {'start': 30.0, 'end': 32.0, 'accent_word': 'Liberate', 'emotion': 'power'},
+         {'start': 40.0, 'end': 42.0, 'accent_word': 'worth', 'emotion': 'curiosity'}]
+    caps = retime_captions(tr, m, [0, 60, 120, 180, 240], [60] * 5, 30)
     boxed = {c['text'] for c in caps if c.get('box')}
-    assert boxed == {'pay.', 'three', 'banned.'}
-    assert next(c for c in caps if c['text'] == 'three')['accentColor'] == '#FFD21F'
+    assert boxed == {'pay.', 'banned.', 'Liberate'}
+    # "three brands" is a count: a win, green and never boxed.
+    assert next(c for c in caps if c['text'] == 'brands.')['accentColor'] == '#3EE06E'
+    assert caps[-4]['text'] == 'Is'  # a cut that starts lowercase is capitalised
 
 
 def test_save_transcript_writes_json_and_speaker_turns():
@@ -407,7 +413,7 @@ def test_story_flags_answered_last_question():
 
 def test_story_allows_question_plus_guest_lead_in():
     hook = said("E-commerce is the new real estate.", 0, '1')
-    last = said("Does it actually help me? So firstly, people need to", 10, '2')
+    last = said("Does it actually help me? So firstly, people need to have a mindset", 10, "2")
     last[5:] = [dict(w, speaker='1') for w in last[5:]]
     assert _trailer_story_problems([span(hook), span(last)], hook + last) == []
 
@@ -548,6 +554,64 @@ def test_budget_keeps_the_ending_question_with_its_reply():
     ms = [dict(m, text=' '.join(w['word'] for w in p), p=3) for m, p in zip(ms, per)]
     out = _fit_trailer_budget(ms, _flat(per), target_seconds=5, slack=1.0, min_keep=4)
     assert out[-2]['text'].endswith('?') and out[-1]['text'].startswith('Systems')
+
+
+def test_tag_endings_are_statements():
+    assert not _text_is_question("It relates to delegation, right?")
+    assert not _text_is_question("That's the whole game, you know?")
+    assert _text_is_question("Is that right?")
+    assert _text_is_question("So what do you know?")
+
+
+def test_story_guest_reply_must_be_a_claim_not_filler():
+    per, ms = _guest_trailer()
+    mumble = said("This is, I think, like, related to delegation, right?", 505, '3')
+    probs = _trailer_story_problems(ms[:-1] + [span(mumble)], _flat(per[:-1]) + mumble, guest_sp='3')
+    assert any('filler, not a claim' in p for p in probs)
+
+
+def test_code_ending_picks_title_question_and_guests_first_line():
+    lines = [("You know what I'm saying?", 0, '1'), ("It is literally the best time.", 3, '3'),
+             ("They think, \"Why is he not performing?\"", 50, '1'), ("It is not the tools at all.", 53, '3'),
+             ("Do we actually need engineers like you?", 100, '1'),
+             ("Systems thinking is the most important skill.", 104, '3')]
+    words, sents = [], []
+    for i, (t, at, sp) in enumerate(lines):
+        w = said(t, at, sp)
+        words += w
+        sents.append({'i': i, 's': w[0]['start'], 'e': w[-1]['end'], 'text': t, 'sp': sp})
+    built = _code_ending([], words, sents, '3', [], 'Ex-Amazon Engineer Running 50 Clients')
+    assert built[0]['text'] == 'Do we actually need engineers like you?'
+    assert built[1]['text'].startswith('Systems thinking')
+    # Nothing clean left once the good exchange is taken.
+    assert _code_ending(built, words, sents, '3', [], 'Engineer') is None
+
+
+def test_story_flags_swearing_and_one_off_third_voice():
+    per, ms = _guest_trailer()
+    omar = said("Behind the scenes it is a shit show.", 700, '2')
+    sents = [{'i': 0, 's': 100.0, 'e': 102.0, 'text': "Are you sure he's the real deal?", 'sp': '1'},
+             {'i': 1, 's': 700.0, 'e': 702.0, 'text': 'Behind the scenes it is a shit show.', 'sp': '2'}]
+    ms2 = ms[:4] + [span(omar)] + ms[4:]
+    probs = _trailer_story_problems(ms2, _flat(per) + omar, '3', [], sents)
+    assert any('swearing' in p for p in probs)
+    assert any('never introduces' in p for p in probs)
+
+
+def test_story_prefers_the_hosts_intro_as_credentials():
+    per, ms = _guest_trailer()
+    sents = [{'i': 0, 's': 200.0, 'e': 202.5, 'text': 'I was at Amazon for eight years.', 'sp': '3'},
+             {'i': 1, 's': 900.0, 'e': 903.0, 'text': 'This brother consulted for Y Combinator.', 'sp': '1'},
+             {'i': 2, 's': 100.0, 'e': 101.9, 'text': "Are you sure he's the real deal?", 'sp': '1'}]
+    creds = [{'from_i': 0, 'to_i': 0, 'role': 'credentials'}, {'from_i': 1, 'to_i': 1, 'role': 'credentials'}]
+    probs = _trailer_story_problems(ms, _flat(per), '3', creds, sents)
+    assert any("host's introduction" in p for p in probs)
+
+
+def test_trim_reported_question_to_the_question():
+    a = said("Abu Jihad, like are you sure he's the real deal?", 0)
+    out = _trim_lead_ins([span(a)], a)
+    assert out[0]['text'].startswith("are you sure")
 
 
 if __name__ == '__main__':

@@ -1,4 +1,5 @@
 import time
+import bisect
 import cv2
 import scenedetect
 import subprocess
@@ -220,9 +221,9 @@ RULES FOR MOMENTS:
 - LENGTH IS A HARD LIMIT: add up (e - s) of every moment. The total must land between {target_seconds} and {max_seconds} seconds. If it runs over, cut your weakest moment; never go over.
 - BACK-AND-FORTH: the DOAC rhythm is a volley between host and guest — a short, sharp host question, then the guest's answer. QUESTION -> ANSWER STAY TOGETHER: if you include a host question, the guest's ACTUAL answer must be the very next moment. Never leave a question with no answer, or an answer with no question.
 - THE HOOK (first moment) IS THE SINGLE MOST SHOCKING LINE IN THE WHOLE EPISODE. Its theme is THE UNEXPECTED — the "did they really just say that?" line that stops a bored scroller cold: a raw taboo opinion, a violent confession, a stunning admission, a jaw-dropping number. Pick the biggest emotional gut-punch even if it is the most controversial or vulnerable thing said — put it FIRST, do not save it for the middle. It MUST land emotionally ON ITS OWN with zero setup: if it only makes sense once the NEXT line explains it, it is NOT your hook. The strongest hook is usually the claim nobody expects from THAT speaker (a doctor: "most of what you eat for health does nothing"; an AI expert: "AI is not going to make you money"), and it is about the episode's one topic. NEVER open on an abstract thesis, a topic-definition, a "here's what this is about" framing, or a scene-setting statement — those are what you put AFTER the shock, never before it. (E.g. open on "The modern woman, I hate." — NOT on "There's a conspiracy to turn men and women against each other.")
-- SELL THE PEOPLE (within the first ~40 seconds): the viewer must know why each side is worth listening to. Credentials come from the host's real introduction or the guest's own words, NEVER from a sponsor read. Use short lines with SPECIFIC numbers and results ("three exits, two of them multi-seven figure", "manages a quarter of a billion dollars") for the main guest AND for the skeptic or other side, so both are characters. A line lifted out of the host's introduction is fine when it carries a specific credential; a flat roll-call ("to my right I have X, to my left Y") or a vague compliment is not. If no line has a specific credential, skip it.
+- SELL THE PEOPLE (within the first ~40 seconds): the viewer must know why each side is worth listening to. Credentials come from the host's real introduction or the guest's own words, NEVER from a sponsor read; in a guest episode the host's introduction of the guest ("So this brother, his name is...") is the first choice. Use short lines with SPECIFIC numbers and results ("three exits, two of them multi-seven figure", "manages a quarter of a billion dollars") for the main guest AND for the skeptic or other side, so both are characters. A line lifted out of the host's introduction is fine when it carries a specific credential; a flat roll-call ("to my right I have X, to my left Y") or a vague compliment is not. If no line has a specific credential, skip it.
 - END ON A REAL CLIFFHANGER — the single most important ending rule, and the one most often gotten wrong. The FINAL moment must leave a BURNING, UNRESOLVED question that can ONLY be answered by watching the full episode. In a GUEST episode there is only ONE way to end, way (2) below: the last two moments are the host's (or another voice's) central question, then the guest's FIRST sentence of the reply to that same question (the guest's very next words after it), then black; a bare question with no reply is wrong. Otherwise there are exactly TWO ways to end: (1) an OPEN QUESTION that the trailer never answers — the guest's own ("so where do you even start?") or the host's central question ("Can my investment go to zero?") — and the final moment ends on its question mark; or (2) the DOAC move: the host asks the central question and the guest STARTS to answer with a lead-in that gives nothing away ("So firstly, people need to have a mindset shift...", "Here's the thing...", "Do you really want to know?"); the question and the guest's first sentence of the reply (never more than that sentence, and never a "yes", "no" or the answer itself) are the last moments, and it cuts to black before the answer lands. Look for the guest's first sentence after each big question. NEVER end on the answer itself (a "yes", a "no", the point, the number), on a finished statement however punchy ("they're afraid to take that risk" ANSWERS and kills the pull), or on a half-said line with no question before it ("it's like automated 80%," is not a cliffhanger, it is a broken cut). Only this final moment may stop mid-sentence, and only in way (2).
-- EXCLUDE: sponsor reads / ads, "welcome back", "subscribe", channel housekeeping, crosstalk, throat-clearing, and trailing filler. Never cut on an ad.
+- EXCLUDE: swearing and profanity (this channel keeps trailers clean), a third voice who speaks once and is never introduced, sponsor reads / ads, "welcome back", "subscribe", channel housekeeping, crosstalk, throat-clearing, and trailing filler. Never cut on an ad.
 
 For EACH moment choose ONE accent word — the single most emotionally loaded word in that moment's spoken text — and label its emotion: danger (conflict/threat/failure/stakes/fear), payoff (a win/result/money/breakthrough), power (authority/scale/expertise/dominance/certainty), curiosity (mystery/question/open loop), neutral (none). The accent_word MUST literally appear in that moment's text. Also list up to 3 power_words per moment — the words a trailer editor would blow up big on screen (numbers, names, loaded nouns and verbs; never filler like "the", "and", "really"). Each power word MUST literally appear in that moment's text.
 
@@ -2882,7 +2883,7 @@ def _fit_trailer_budget(moments, words, target_seconds,
     def volley(a, b):
         """a is a question answered by b in a different voice (a real volley).
         Without speaker labels, any question counts."""
-        if not str(a.get('text', '')).rstrip().endswith('?'):
+        if not _text_is_question(a.get('text', '')):
             return False
         sa, sb = speaker_at(float(a['start'])), speaker_at(float(b['start']))
         return sa is None or sb is None or sa != sb
@@ -2945,20 +2946,61 @@ _ANSWER_OPENERS = {'yes', 'no', 'nope', 'yeah', 'yep', 'absolutely', 'definitely
                    'never', 'correct', 'exactly', 'sure', 'of'}
 
 
-def _ends_question(w):
-    return w['word'].strip().rstrip('"\'”’»)]').endswith(QUESTION_MARKS)
+# A tag on the end of a statement ("...related to delegation, right?") is not
+# a question: nobody is waiting for the answer.
+_TAG_QUESTIONS = {('right',), ('okay',), ('ok',), ('yeah',), ('no',), ('correct',), ('huh',),
+                  ('innit',), ('yes',), ('you', 'know'), ('isnt', 'it'), ('aint', 'it'),
+                  ('you', 'see'), ('agreed',)}
+
+
+def _is_question_tokens(tokens):
+    """tokens: the raw words of a line up to and including its last word."""
+    if not tokens or not str(tokens[-1]).strip().rstrip('"\'”’»)]').endswith(QUESTION_MARKS):
+        return False
+    # Only after a comma: "..., right?" is a tag, "Is that right?" is asked.
+    for n in (1, 2):
+        tag = tuple(_accent_normalize(t) for t in tokens[-n:])
+        if len(tokens) > n and tag in _TAG_QUESTIONS and str(tokens[-n - 1]).strip().endswith(','):
+            return False
+    return True
+
+
+def _ends_question(ws, j=None):
+    """True when word j of ws (default: the last) closes a real question."""
+    j = len(ws) - 1 if j is None else j
+    return _is_question_tokens([w['word'] for w in ws[max(0, j - 2):j + 1]])
+
+
+def _text_is_question(text):
+    return _is_question_tokens(str(text).split())
+
+
+# Hedges and fillers that make a reply's first sentence mumble instead of land.
+_REPLY_FILLER = {'um', 'uh', 'erm', 'like', 'right', 'yeah', 'yep', 'yup', 'mhm', 'okay', 'ok',
+                 'basically', 'actually', 'literally', 'so'}
+_REPLY_HEDGES = {('i', 'think'), ('i', 'mean'), ('you', 'know'), ('kind', 'of'), ('sort', 'of'),
+                 ('i', 'guess')}
 
 
 def _reply_problem(tail):
-    """Why `tail` is not the start of a reply (None when it is): at most the
-    first sentence, a few seconds, and not the answer itself ("No, ...")."""
+    """Why `tail` is not a strong start of a reply (None when it is): after its
+    lead-in, at most the first sentence, a few seconds, 5+ words, a claim (not
+    the answer itself, not a mumble ending on "right?")."""
     if not tail:
         return "there is no reply after the question"
-    if _accent_normalize(tail[0]['word']) in _ANSWER_OPENERS:
-        return f"the reply opens on the answer itself (\"{_quote(tail, 6)}\")"
-    if any(_ends_sentence(w['word']) for w in tail[:-1]) \
-            or float(tail[-1]['end']) - float(tail[0]['start']) > 8.0:
-        return f"the reply runs past its first sentence (\"{_quote(tail, 8, True)}\")"
+    body = tail[_lead_in_len(tail):] or tail
+    if _accent_normalize(body[0]['word']) in _ANSWER_OPENERS:
+        return f"the reply opens on the answer itself (\"{_quote(body, 6)}\")"
+    if any(_ends_sentence(w['word']) for w in body[:-1]) \
+            or float(body[-1]['end']) - float(body[0]['start']) > 10.0:
+        return f"the reply runs past its first sentence (\"{_quote(body, 8, True)}\")"
+    norm = [_accent_normalize(w['word']) for w in body]
+    filler = sum(1 for t in norm if t in _REPLY_FILLER) + 2 * sum(
+        1 for pair in zip(norm, norm[1:]) if pair in _REPLY_HEDGES)
+    tag = body[-1]['word'].strip().endswith(QUESTION_MARKS) and not _ends_question(body)
+    if len(body) < 5 or tag or filler > 0.2 * len(body):
+        return (f"the guest's first sentence is filler, not a claim (\"{_quote(body, 12)}\"); "
+                "pick a question whose answer opens on a clear, strong line")
     return None
 
 
@@ -2974,12 +3016,12 @@ def _ending_problem(per, words=None, guest_sp=None):
     g = str(guest_sp) if guest_sp is not None else None
     # In a guest episode the reply is another voice, so a question the same
     # voice keeps talking after ("Is it X? Is it Y?") is not the ending's question.
-    qj = max((j for j, w in enumerate(last[:-1]) if _ends_question(w)
+    qj = max((j for j, w in enumerate(last[:-1]) if _ends_question(last, j)
               and (g is None or str(last[j + 1].get('speaker')) != str(w.get('speaker')))),
              default=None)
     if qj is not None:
         question, tail = last[:qj + 1], last[qj + 1:]
-    elif len(per) > 1 and per[-2] and _ends_question(per[-2][-1]):
+    elif len(per) > 1 and per[-2] and _ends_question(per[-2]):
         question, tail = per[-2], last
     else:
         question, tail = None, last
@@ -2988,10 +3030,10 @@ def _ending_problem(per, words=None, guest_sp=None):
            "End on an open question, or on the host's central question plus the guest's "
            "first sentence of the reply.")
 
-    if g is None and question is None and _ends_question(last[-1]):
+    if g is None and question is None and _ends_question(last):
         return None  # an open question
     if question is None:
-        if g is not None and _ends_question(last[-1]):
+        if g is not None and _ends_question(last):
             return (f"The trailer ends on a bare question (\"{_quote(last, 10, True)}\") with no "
                     f"reply. {fix}")
         if not _ends_sentence(last[-1]['word']):
@@ -3003,14 +3045,17 @@ def _ending_problem(per, words=None, guest_sp=None):
     why = _reply_problem(tail)
     if why is None and g is not None:
         q_end, t_start = float(question[-1]['end']), float(tail[0]['start'])
+        # Guest words between the question and the kept reply; a trimmed
+        # lead-in ("So, ...") may sit there, anything else was skipped.
+        gap = [w for w in (words or []) if q_end <= float(w['start']) < t_start - 0.05
+               and str(w.get('speaker')) == g]
         if str(question[-1].get('speaker')) == g:
             why = "the question is the guest's own; the host (or another voice) asks it"
         elif str(tail[0].get('speaker')) != g:
             why = f"the reply is speaker {tail[0].get('speaker')}, not the guest"
         elif not 0 <= t_start - q_end <= 60:
             why = "the reply is not from the same exchange as the question"
-        elif any(str(w.get('speaker')) == g and q_end <= float(w['start']) < t_start - 0.05
-                 for w in (words or [])):
+        elif any(str(w.get('speaker')) == g for w in gap) and _lead_in_len(gap) < len(gap):
             why = "it skips the guest's first words after the question"
     if why is None:
         return None
@@ -3024,6 +3069,27 @@ def _speaker_of(ws):
         sp = str(w.get('speaker'))
         talk[sp] = talk.get(sp, 0.0) + float(w['end']) - float(w['start'])
     return max(talk, key=talk.get) if talk else None
+
+
+# Words that keep a trailer off a family channel (matched on normalized tokens;
+# the stems catch "bullshit", "fucking").
+_SWEAR_STEMS = ('fuck', 'shit')
+_SWEARS = {'bitch', 'bitches', 'damn', 'dammit', 'goddamn', 'ass', 'asshole', 'bastard', 'crap',
+           'dick', 'piss', 'pissed', 'cunt', 'wtf', 'bloody'}
+
+
+def _is_profane(token):
+    return token in _SWEARS or any(stem in token for stem in _SWEAR_STEMS)
+
+
+def _host_label(sentences, guest_sp):
+    """The host: the non-guest voice asking the most questions."""
+    asked = {}
+    for s in sentences or []:
+        sp = s.get('sp')
+        if sp is not None and str(sp) != str(guest_sp):
+            asked[str(sp)] = asked.get(str(sp), 0) + (2 if _text_is_question(s['text']) else 0) + 0.01
+    return max(asked, key=asked.get) if asked else None
 
 
 def _trailer_story_problems(moments, words, guest_sp=None, selects=None, sentences=None):
@@ -3112,13 +3178,32 @@ def _trailer_story_problems(moments, words, guest_sp=None, selects=None, sentenc
                             f"at least {need} host or other-voice moments (a question, a challenge, "
                             "a reaction) for the back-and-forth.")
 
+    swears = [idx for idx, p in enumerate(per)
+              if any(_is_profane(_accent_normalize(w['word'])) for w in p)]
+    for idx in swears:
+        problems.append(f"{name(idx)} contains swearing (\"{_quote(per[idx], 10)}\"); this channel "
+                        "keeps trailers clean, so use a different line.")
+
     by_i = {s['i']: s for s in (sentences or [])}
+    host = _host_label(sentences, guest_sp) if guest_sp is not None else None
+    if guest_sp is not None and host is not None:
+        voices = [_speaker_of(p) for p in per]
+        for v in {v for v in voices if v not in (None, str(guest_sp), host)}:
+            idxs = [i for i, x in enumerate(voices) if x == v]
+            if len(idxs) == 1:
+                problems.append(f"{name(idxs[0])} is speaker {v}, a voice the trailer never "
+                                "introduces and never hears again; give the point to the guest or "
+                                "the host instead.")
 
     def overlap(m, a, b):
         return min(float(m['end']), b) - max(float(m['start']), a)
 
     creds = [b for b in (selects or []) if b.get('role') == 'credentials'
              and b['from_i'] in by_i and b['to_i'] in by_i]
+    # In a guest episode the host's introduction sells the guest best ("So this
+    # brother, his name is Jihad... Y Combinator"); require it when there is one.
+    host_creds = [b for b in creds if host is not None and str(by_i[b['from_i']].get('sp')) == host]
+    creds = host_creds or creds
     if creds and n:
         half, t, early = total / 2, 0.0, []
         for idx, m in enumerate(moments):
@@ -3128,13 +3213,14 @@ def _trailer_story_problems(moments, words, guest_sp=None, selects=None, sentenc
         if not any(overlap(m, by_i[b['from_i']]['s'], by_i[b['to_i']]['e']) > 0.5
                    for m in early for b in creds):
             spans = ', '.join(f"{b['from_i']}..{b['to_i']}" for b in creds[:3])
-            problems.append("Nothing in the first half says who the guest is; use a credentials "
-                            f"soundbite (sentences {spans}).")
+            who = "the host's introduction of the guest" if host_creds else "a credentials soundbite"
+            problems.append(f"Nothing in the first half says who the guest is; use {who} "
+                            f"(sentences {spans}).")
     for b in (selects or []):
         if b.get('role') != 'challenge' or b['from_i'] not in by_i or b['to_i'] not in by_i:
             continue
         qs = [by_i[i] for i in range(b['from_i'], b['to_i'] + 1)
-              if i in by_i and by_i[i]['text'].rstrip().endswith(QUESTION_MARKS)]
+              if i in by_i and _text_is_question(by_i[i]['text'])]
         if not qs:
             continue
         for idx, m in enumerate(moments):
@@ -3143,6 +3229,107 @@ def _trailer_story_problems(moments, words, guest_sp=None, selects=None, sentenc
                 problems.append(f"{name(idx)} uses the challenge without its question "
                                 f"(\"{qs[-1]['text'][:80]}\"); include the question.")
     return problems
+
+
+# A real question to end on opens like one ("Is that something we can do
+# ourselves...?"), which rules out "You know what I'm saying?".
+_QUESTION_OPENERS = {'is', 'are', 'was', 'were', 'do', 'does', 'did', 'can', 'could', 'would',
+                     'should', 'will', 'have', 'has', 'how', 'what', 'why', 'where', 'who',
+                     'which', 'when', 'whats', 'hows', 'isnt', 'arent', 'dont', 'doesnt'}
+_RHETORICAL_RE = re.compile(r'\bwhat (im|i am) saying\b|\bwhat i mean\b|\bmake sense\b'
+                            r'|\byou (get|see) (it|me|that)\b|\bknow what i mean\b')
+_TITLE_STOP = set("the a an of to and in on for is are was it its this that you i we my your our "
+                  "with how what why do does can be at as by from or not he she they his her".split())
+
+
+def _code_ending(keep, words, sentences, guest_sp, selects=None, title=''):
+    """The DOAC ending built without the model, for when its own endings keep
+    failing: a question from a non-guest voice, then the guest's first clean
+    sentence of the reply (the guest's next words, within 60s). Questions
+    that share words with the title and ones the selects pass tagged as a
+    question or challenge rank first. Nothing may overlap the kept moments.
+    Returns [question_moment, reply_moment] or None."""
+    g = str(guest_sp)
+    ws = sorted(words or [], key=lambda w: float(w['start']))
+    stem = lambda t: t[:-1] if len(t) > 3 and t.endswith('s') else t
+    title_words = {stem(t) for t in (_accent_normalize(x) for x in str(title).split())
+                   if t and t not in _TITLE_STOP}
+    tagged = {i for b in (selects or []) if b.get('role') in ('question', 'challenge')
+              for i in range(b['from_i'], b['to_i'] + 1)}
+
+    starts = [float(w['start']) for w in ws]
+
+    def words_in(a, b):
+        lo = max(0, bisect.bisect_left(starts, a - 30))
+        hi = bisect.bisect_left(starts, b)
+        return [w for w in ws[lo:hi] if float(w['end']) > a + 0.01 and float(w['start']) < b - 0.01]
+
+    def clear(a, b):
+        return all(b <= float(m['start']) or a >= float(m['end']) for m in keep)
+
+    def moment(mw, i, text):
+        j0 = bisect.bisect_left(starts, float(mw[0]['start']))
+        j1 = bisect.bisect_left(starts, float(mw[-1]['start']))
+        start = max(float(ws[j0 - 1]['end']) if j0 else 0.0, float(mw[0]['start']) - 0.12)
+        end = min(float(ws[j1 + 1]['start']) if j1 + 1 < len(ws) else float(mw[-1]['end']) + 0.28,
+                  float(mw[-1]['end']) + 0.28)
+        return {'start': round(start, 3), 'end': round(max(end, float(mw[-1]['end'])), 3),
+                'from_i': i, 'to_i': i, 'text': text, 'p': 4, 'emotion': 'curiosity',
+                'accent_word': '', 'power_words': [], 'reason': 'ending built in code',
+                'lead_in_trimmed': True}
+
+    best, best_score = None, None
+    for k, q in enumerate(sentences):
+        # A direct question that starts its own sentence: not a quoted one
+        # ('they think, "Why is he not performing?"') or the tail of a run-on.
+        if q.get('sp') is None or str(q['sp']) == g or not _text_is_question(q['text']) \
+                or not 4 <= len(q['text'].split()) <= 25 or any(c in q['text'] for c in '"“”'):
+            continue
+        if k and sentences[k - 1].get('more'):
+            pw = words_in(sentences[k - 1]['s'], sentences[k - 1]['e'])
+            if _lead_in_len(pw) < len(pw):
+                continue  # the question is the tail of a longer sentence
+        reply = None
+        for r in sentences[k + 1:]:
+            if r['s'] - q['e'] > 20:
+                break
+            if str(r.get('sp')) == g:
+                reply = r
+                break
+        if reply is None:
+            continue
+        qw = words_in(q['s'], q['e'])
+        qb = qw[_lead_in_len(qw):] or qw
+        if not qb or _accent_normalize(qb[0]['word']) not in _QUESTION_OPENERS \
+                or _RHETORICAL_RE.search(' '.join(_accent_normalize(w['word']) for w in qb)):
+            continue
+        # The guest's first sentence, joined across pause/run-on pieces, then
+        # cut at the last clause mark inside ~10s if it runs long.
+        last_piece = reply
+        while last_piece.get('more') and last_piece['i'] + 1 < len(sentences) \
+                and str(sentences[last_piece['i'] + 1].get('sp')) == g:
+            last_piece = sentences[last_piece['i'] + 1]
+        rw = words_in(reply['s'], last_piece['e'])
+        if not rw or next((c for c in rw[0]['word'] if c.isalpha()), 'A').islower():
+            continue  # the reply starts mid-sentence
+        rw = rw[_lead_in_len(rw):] or rw
+        if rw and float(rw[-1]['end']) - float(rw[0]['start']) > 10:
+            cut = max((j for j, w in enumerate(rw)
+                       if float(w['end']) - float(rw[0]['start']) <= 10
+                       and w['word'].strip().endswith(_CLAUSE_END + ('.', '!', '?'))), default=None)
+            rw = rw[:cut + 1] if cut is not None and cut >= 4 else []
+        if not qw or not rw or _reply_problem(rw) or not clear(q['s'], float(rw[-1]['end'])) \
+                or sentences[reply['i'] - 1].get('more') and str(sentences[reply['i'] - 1].get('sp')) == g:
+            continue
+        if _accent_normalize(rw[0]['word']) in ('because', 'cause', 'and', 'but'):
+            continue  # the reply leans on something the viewer never heard
+        shared = title_words & {stem(_accent_normalize(w['word'])) for w in qw + rw}
+        score = 2 * len(shared) + (q['i'] in tagged) + (reply['i'] in tagged)
+        if best_score is None or score > best_score:
+            best_score = score
+            best = [moment(qb, q['i'], ' '.join(w['word'].strip() for w in qb)),
+                    moment(rw, reply['i'], ' '.join(w['word'].strip() for w in rw))]
+    return best
 
 
 # Openers a trailer bite never starts on: fillers and lead-ins that point back
@@ -3155,39 +3342,42 @@ _LEAD_IN_PHRASES = [
     ('great', 'question'), ('good', 'question'), ('im', 'telling', 'you'),
     ('let', 'me', 'tell', 'you'), ('to', 'be', 'honest'), ('you', 'know'), ('i', 'mean'),
     ('like', 'i', 'said'), ('what', 'i', 'mean', 'by', 'that', 'is'), ('so', 'basically'),
+    ('i', 'think'),
 ]
 _LEAD_IN_WORDS = {'yeah', 'yep', 'um', 'uh', 'erm', 'okay', 'ok', 'so', 'oh', 'actually', 'basically'}
 _LEAD_IN_COMMA = {'well', 'look', 'listen', 'right', 'honestly', 'like', 'man', 'bro'}
 
 
+def _lead_in_len(mw):
+    """How many of the leading words in mw are fillers, lead-ins or a false
+    start ending in "like" ("I'm telling you, I'm not like, actually I have"
+    -> 7; a reported question "Abu Jihad, like are you sure...?" -> 3)."""
+    norm = [_accent_normalize(w['word']) for w in mw]
+    i = 0
+    while i < len(mw):
+        step = next((len(p) for p in _LEAD_IN_PHRASES if tuple(norm[i:i + len(p)]) == p), 0)
+        if not step and norm[i] in _LEAD_IN_WORDS:
+            step = 1
+        if not step and norm[i] in _LEAD_IN_COMMA and mw[i]['word'].strip().endswith(','):
+            step = 1
+        if not step:  # a false start: a few words up to a "like" set off by a comma
+            step = next((k + 1 - i for k in range(i, min(i + 4, len(mw) - 1))
+                         if norm[k] == 'like' and (mw[k]['word'].strip().endswith(',')
+                                                   or (k > i and mw[k - 1]['word'].strip().endswith(',')))), 0)
+        if not step:
+            break
+        i += step
+    return min(i, len(mw))
+
+
 def _trim_lead_ins(moments, words, min_left=1.5):
-    """Start each moment on its first real word: drop leading fillers,
-    lead-ins and a false start ending in "like," ("I'm telling you, I'm not
-    like, actually I have..." -> "I have..."). Leaves a moment alone when too
-    little would be left. Returns a new list."""
+    """Start each moment on its first real word (see _lead_in_len). Leaves a
+    moment alone when too little would be left. Returns a new list."""
     ws = sorted(words or [], key=lambda w: float(w['start']))
     out = []
     for idx, m in enumerate(moments):
         mw = _moment_words(ws, m)
-        if idx == len(moments) - 1 and idx and out:
-            prev = _moment_words(ws, out[-1])
-            if prev and _ends_question(prev[-1]):
-                out.append(dict(m))  # the guest's reply keeps its opening ("So firstly, ...")
-                continue
-        norm = [_accent_normalize(w['word']) for w in mw]
-        i = 0
-        while i < len(mw):
-            step = next((len(p) for p in _LEAD_IN_PHRASES if tuple(norm[i:i + len(p)]) == p), 0)
-            if not step and norm[i] in _LEAD_IN_WORDS:
-                step = 1
-            if not step and norm[i] in _LEAD_IN_COMMA and mw[i]['word'].strip().endswith(','):
-                step = 1
-            if not step:  # a false start: a few words ending in "like,"
-                step = next((k + 1 - i for k in range(i, min(i + 4, len(mw)))
-                             if norm[k] == 'like' and mw[k]['word'].strip().endswith(',')), 0)
-            if not step:
-                break
-            i += step
+        i = _lead_in_len(mw)
         m = dict(m)
         if 0 < i < len(mw) and float(m['end']) - float(mw[i]['start']) >= min_left:
             new_start = max(float(mw[i - 1]['end']), float(mw[i]['start']) - 0.12)
@@ -3652,6 +3842,26 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
             break
         winner, problems = fixed, left
         print(f"   📏 Fixed trailer accepted ({len(left)} issue(s) left).")
+    # Never ship a known-bad ending in a guest episode: build the DOAC ending
+    # (question, then the guest's first line) in code when the model can't.
+    if winner.get('guest_sp') is not None:
+        ms = winner['moments_ordered']
+        per = [_moment_words(refine_words, m) for m in ms]
+        if ms and _ending_problem(per, refine_words, winner['guest_sp']):
+            keep, kept_per = ms[:-1], per[:-1]
+            # Also drop the non-guest setup the old ending hung on (its question).
+            while len(keep) > 3 and kept_per[-1] \
+                    and _speaker_of(kept_per[-1]) != str(winner['guest_sp']):
+                keep, kept_per = keep[:-1], kept_per[:-1]
+            built = _code_ending(keep, refine_words, sentences, winner['guest_sp'], bites, title)
+            if built:
+                print(f"   🎬 The ending still broke the rules; built it in code: "
+                      f"\"{built[0]['text']}\" -> \"{built[1]['text']}\"")
+                winner = dict(winner, moments_ordered=keep + built)
+                problems = rule_problems(winner)
+            else:
+                print("   ⚠️  The ending still breaks the rules and no clean question + reply "
+                      "was found to replace it.")
     moments = _fit_trailer_budget(winner['moments_ordered'], refine_words, target_seconds)
     script = winner['script']
 
@@ -3693,6 +3903,29 @@ def _accent_normalize(token):
     """Case- and punctuation-insensitive normalization for accent matching."""
     return re.sub(r'[^\w]', '', str(token).lower(), flags=re.UNICODE)
 
+_COUNT_WORDS = {'hundred', 'thousand', 'million', 'billion', 'trillion', 'dozen', 'grand', 'k',
+                'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven',
+                'twelve', 'fifteen', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy',
+                'eighty', 'ninety'}
+
+
+def _is_count_accent(moment, all_words, s_k, e_k):
+    """True when the moment's accent word is a number or money, or the word it
+    counts ("50 clients"): a win, coloured green like the DOAC edits."""
+    target = _accent_normalize(moment.get('accent_word', ''))
+    if not target:
+        return False
+    ws = [w for w in all_words if float(w['end']) > s_k and float(w['start']) < e_k]
+    for j, w in enumerate(ws):
+        if _accent_normalize(w['word']) != target:
+            continue
+        here = str(w['word'])
+        prev = str(ws[j - 1]['word']) if j else ''
+        return any(re.search(r'[\d$£€]', t) or _accent_normalize(t) in _COUNT_WORDS
+                   for t in (here, prev))
+    return False
+
+
 def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_frames, fps):
     """Map original transcript words into trailer (concat-frame) time.
 
@@ -3728,6 +3961,7 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
 
     captions = []
     accent_at = {}  # moment index -> index in captions of its accent word
+    effective_emotion = {}
     for k, moment in enumerate(moments_ordered):
         s_k = float(moment['start'])
         e_k = float(moment['end'])
@@ -3735,6 +3969,11 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
         F_k = seg_frames[k]
 
         emotion = moment.get('emotion')
+        # Money and counts ("50 clients", "$10k") are wins: green, never a red
+        # box. The hook keeps its box ("FOUR meetings a week" in the hand cut).
+        if k and emotion in ('power', 'curiosity') and _is_count_accent(moment, all_words, s_k, e_k):
+            emotion = 'payoff'
+        effective_emotion[k] = emotion
         accent_color = EMOTION_HEX.get(emotion) if emotion else None
         accent_target = _accent_normalize(moment.get('accent_word', '')) if accent_color else ''
         accent_assigned = False
@@ -3745,6 +3984,7 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
         power_targets.add(_accent_normalize(moment.get('accent_word', '')))
         power_targets.discard('')
 
+        first_in_moment = True
         for word in all_words:
             t_start = float(word['start'])
             t_end = float(word['end'])
@@ -3764,8 +4004,15 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
             start_ms = trailer_start_frame / fps * 1000
             end_ms = max(trailer_end_frame / fps * 1000, start_ms + 60)
 
+            text = word['word']
+            if first_in_moment:
+                # A cut that starts after a trimmed lead-in still opens a caption
+                # like a sentence ("How can we...", not "how can we...").
+                text = re.sub(r'^(\W*)([a-z])', lambda mt: mt.group(1) + mt.group(2).upper(),
+                              text.lstrip())
+                first_in_moment = False
             cap = {
-                'text': word['word'],
+                'text': text,
                 'startMs': start_ms,
                 'endMs': end_ms,
             }
@@ -3787,8 +4034,8 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
     # credential (power) moments after it.
     picks = [0] if 0 in accent_at else []
     for emotion in ('danger', 'power'):
-        k = next((k for k, m in enumerate(moments_ordered)
-                  if k and k in accent_at and k not in picks and m.get('emotion') == emotion), None)
+        k = next((k for k in range(1, len(moments_ordered))
+                  if k in accent_at and k not in picks and effective_emotion.get(k) == emotion), None)
         if k is not None:
             picks.append(k)
     for k in picks[:TRAILER_BOX_WORDS]:
