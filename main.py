@@ -174,7 +174,7 @@ Hunt across the WHOLE episode (beginning, middle and end). Stay on the episode's
 - premise: the line that says what the episode is arguing about (the thing, the promise, the number), so a newcomer gets the context.
 - credentials: who the guest is and why they matter — the host introducing them with a specific result ("this brother, his name is Jihad... Y Combinator") or the guest stating their own background ("I was at Amazon for eight years"). Pull one for the main guest AND one for the skeptic or other side; a flat roll-call does not count, and neither does a sponsor read.
 - proof: a number, a named result or a track record that backs up the episode's claim.
-- challenge: the host or another voice doubting the guest or pushing back ("Are you sure he's the real deal?", "That sounds too good to be true").
+- challenge: the host or another voice doubting the guest or pushing back ("Are you sure he's the real deal?", "That sounds too good to be true"). Include the question itself, not only what follows it.
 - emotion: a raw high or low — a confession, a story that hurts, a laugh, anger.
 - question: a short, punchy HOST question that sets up a great guest answer (tag the answer as answer, right after it).
 - answer: the guest's reply to the question just before it.
@@ -207,7 +207,7 @@ THE STORY SPINE (what the best cut of a real episode did, and the creator loved)
 - ONE TOPIC ALL THE WAY THROUGH. Find the episode's central question (the title's, when given) and make every moment serve it: the claim, the pushback, what could go wrong. Drop good lines that wander into general talk; a tangent breaks the thread even if it is quotable.
 - CONTEXT EARLY. Within the first ~30 seconds the viewer must know what is being argued about (the premise: what the thing is, the promise, the number), so everything after it makes sense.
 - A BOLD CLAIM, THEN A CHALLENGE. Open strong, then let someone push back or ask "what gives you the confidence to say that?" right away. Friction (a skeptic's "not yet", tough questions, a real risk, a story where it nearly went wrong) is what makes it a debate worth watching.
-- THE GUEST CARRIES IT. When the transcript introduces someone as the guest or the expert (the person the episode is built around), their points are the spine: the guest's own voice fills AT LEAST HALF of the running time, spread across the whole trailer (not one run of bites together), and owns the big moments: the opening claim, the moment of value, the proof or story, the stakes. The GUEST SPEAKS FIRST: the opening moment is the guest's boldest claim in their own voice, then one or two quick exchanges (the host challenges or reacts, the guest doubles down), then who they are (their credentials), then the premise, the central question asked out loud, the moment of value, the pushback, the stakes, and the cliffhanger. Host questions and other panelists are there to set up, challenge or react to the guest. This does not apply to a regular multi-host episode with no featured guest.
+- THE GUEST CARRIES IT. When the transcript introduces someone as the guest or the expert (the person the episode is built around), their points are the spine: the guest's own voice fills HALF TO 70% of the running time, spread across the whole trailer. NEVER more than two guest moments in a row, and no voice runs past ~20 seconds before another cuts in: after one or two guest lines, the host asks, doubts or reacts, then the guest again. A run of guest bites plays like a monologue and kills the trailer. The guest owns the big moments: the opening claim, the moment of value, the proof or story, the stakes. The GUEST SPEAKS FIRST: the opening moment is the guest's boldest claim in their own voice, then one or two quick exchanges (the host challenges or reacts, the guest doubles down), then who they are (their credentials), then the premise, the central question asked out loud, the moment of value, the pushback, the stakes, and the cliffhanger. Host questions and other panelists are there to set up, challenge or react to the guest. This does not apply to a regular multi-host episode with no featured guest.
 - EVERYONE WHO ARGUES IS INTRODUCED. Anyone who speaks twice or carries the conflict (a guest, a co-host, a skeptic) gets one short credential line; if there is none for them, give their point to someone else. An unknown voice arguing carries no weight.
 - EACH MOMENT STANDS ALONE FROM ITS FIRST WORD. Never start on a lead-in that points back to something the viewer never heard ("What I mean by that is", "Like I said", "The reason is", "So basically", "That's why"); start on the claim itself ("AI is not going to..."). "And" or "But" is fine.
 - A-B-C ARC: A = the claim and who is making it; B = the pushback and the stakes; C = the unanswered question. Order moments by this arc, not by the clock.
@@ -221,7 +221,7 @@ RULES FOR MOMENTS:
 - BACK-AND-FORTH: the DOAC rhythm is a volley between host and guest — a short, sharp host question, then the guest's answer. QUESTION -> ANSWER STAY TOGETHER: if you include a host question, the guest's ACTUAL answer must be the very next moment. Never leave a question with no answer, or an answer with no question.
 - THE HOOK (first moment) IS THE SINGLE MOST SHOCKING LINE IN THE WHOLE EPISODE. Its theme is THE UNEXPECTED — the "did they really just say that?" line that stops a bored scroller cold: a raw taboo opinion, a violent confession, a stunning admission, a jaw-dropping number. Pick the biggest emotional gut-punch even if it is the most controversial or vulnerable thing said — put it FIRST, do not save it for the middle. It MUST land emotionally ON ITS OWN with zero setup: if it only makes sense once the NEXT line explains it, it is NOT your hook. The strongest hook is usually the claim nobody expects from THAT speaker (a doctor: "most of what you eat for health does nothing"; an AI expert: "AI is not going to make you money"), and it is about the episode's one topic. NEVER open on an abstract thesis, a topic-definition, a "here's what this is about" framing, or a scene-setting statement — those are what you put AFTER the shock, never before it. (E.g. open on "The modern woman, I hate." — NOT on "There's a conspiracy to turn men and women against each other.")
 - SELL THE PEOPLE (within the first ~40 seconds): the viewer must know why each side is worth listening to. Credentials come from the host's real introduction or the guest's own words, NEVER from a sponsor read. Use short lines with SPECIFIC numbers and results ("three exits, two of them multi-seven figure", "manages a quarter of a billion dollars") for the main guest AND for the skeptic or other side, so both are characters. A line lifted out of the host's introduction is fine when it carries a specific credential; a flat roll-call ("to my right I have X, to my left Y") or a vague compliment is not. If no line has a specific credential, skip it.
-- END ON A REAL CLIFFHANGER — the single most important ending rule, and the one most often gotten wrong. The FINAL moment must leave a BURNING, UNRESOLVED question that can ONLY be answered by watching the full episode. There are exactly TWO ways to end: (1) an OPEN QUESTION that the trailer never answers — the guest's own ("so where do you even start?") or the host's central question ("Can my investment go to zero?") — and the final moment ends on its question mark; or (2) the DOAC move: the host asks the central question and the guest STARTS to answer with a lead-in that gives nothing away ("So firstly, people need to have a mindset shift...", "Here's the thing...", "Do you really want to know?"); the final moment spans the host's question and at most the guest's first few words, its text is exactly the words kept, and it cuts to black before the answer lands. Look for the guest's first sentence after each big question. NEVER end on the answer itself (a "yes", a "no", the point, the number), on a finished statement however punchy ("they're afraid to take that risk" ANSWERS and kills the pull), or on a half-said line with no question before it ("it's like automated 80%," is not a cliffhanger, it is a broken cut). Only this final moment may stop mid-sentence, and only in way (2).
+- END ON A REAL CLIFFHANGER — the single most important ending rule, and the one most often gotten wrong. The FINAL moment must leave a BURNING, UNRESOLVED question that can ONLY be answered by watching the full episode. In a GUEST episode there is only ONE way to end, way (2) below: the last two moments are the host's (or another voice's) central question, then the guest's FIRST sentence of the reply to that same question (the guest's very next words after it), then black; a bare question with no reply is wrong. Otherwise there are exactly TWO ways to end: (1) an OPEN QUESTION that the trailer never answers — the guest's own ("so where do you even start?") or the host's central question ("Can my investment go to zero?") — and the final moment ends on its question mark; or (2) the DOAC move: the host asks the central question and the guest STARTS to answer with a lead-in that gives nothing away ("So firstly, people need to have a mindset shift...", "Here's the thing...", "Do you really want to know?"); the question and the guest's first sentence of the reply (never more than that sentence, and never a "yes", "no" or the answer itself) are the last moments, and it cuts to black before the answer lands. Look for the guest's first sentence after each big question. NEVER end on the answer itself (a "yes", a "no", the point, the number), on a finished statement however punchy ("they're afraid to take that risk" ANSWERS and kills the pull), or on a half-said line with no question before it ("it's like automated 80%," is not a cliffhanger, it is a broken cut). Only this final moment may stop mid-sentence, and only in way (2).
 - EXCLUDE: sponsor reads / ads, "welcome back", "subscribe", channel housekeeping, crosstalk, throat-clearing, and trailing filler. Never cut on an ad.
 
 For EACH moment choose ONE accent word — the single most emotionally loaded word in that moment's spoken text — and label its emotion: danger (conflict/threat/failure/stakes/fear), payoff (a win/result/money/breakthrough), power (authority/scale/expertise/dominance/certainty), curiosity (mystery/question/open loop), neutral (none). The accent_word MUST literally appear in that moment's text. Also list up to 3 power_words per moment — the words a trailer editor would blow up big on screen (numbers, names, loaded nouns and verbs; never filler like "the", "and", "really"). Each power word MUST literally appear in that moment's text.
@@ -252,6 +252,10 @@ TRAILER_JUDGE_MODEL = DEFAULT_GEMINI_MODEL
 # Best-of-N only helps against random variance, not the systematic biases above,
 # so we run single-shot on the better model. Bump this to re-enable best-of-N.
 TRAILER_CANDIDATES = int(os.environ.get('TRAILER_CANDIDATES', '1'))
+
+# How many times the model may fix a trailer that breaks the length or story
+# rules (_trailer_length_problems / _trailer_story_problems). Each is one call.
+TRAILER_REPAIR_ROUNDS = int(os.environ.get('TRAILER_REPAIR_ROUNDS', '2'))
 
 # Run the selects pass (SOUNDBITE_PROMPT_TEMPLATE) before scripting. Costs one
 # extra call over the full transcript; set TRAILER_SOUNDBITE_PASS=0 to skip it.
@@ -2886,6 +2890,8 @@ def _fit_trailer_budget(moments, words, target_seconds,
     limit = target_seconds * slack
     while total(out) > limit and len(out) > min_keep:
         middle = list(range(1, len(out) - 1))
+        if len(out) > 2 and volley(out[-2], out[-1]):
+            middle.remove(len(out) - 2)  # the ending's question stays with its reply
         if not middle:
             break
         dur = lambda i: float(out[i]['end']) - float(out[i]['start'])
@@ -2939,48 +2945,95 @@ _ANSWER_OPENERS = {'yes', 'no', 'nope', 'yeah', 'yep', 'absolutely', 'definitely
                    'never', 'correct', 'exactly', 'sure', 'of'}
 
 
-def _ending_problem(per):
-    """What is wrong with the trailer's last moment, or None. It must end on an
-    open question, or on a question followed by at most the guest's first few
-    words (cut before the answer lands). per = words per moment."""
+def _ends_question(w):
+    return w['word'].strip().rstrip('"\'”’»)]').endswith(QUESTION_MARKS)
+
+
+def _reply_problem(tail):
+    """Why `tail` is not the start of a reply (None when it is): at most the
+    first sentence, a few seconds, and not the answer itself ("No, ...")."""
+    if not tail:
+        return "there is no reply after the question"
+    if _accent_normalize(tail[0]['word']) in _ANSWER_OPENERS:
+        return f"the reply opens on the answer itself (\"{_quote(tail, 6)}\")"
+    if any(_ends_sentence(w['word']) for w in tail[:-1]) \
+            or float(tail[-1]['end']) - float(tail[0]['start']) > 8.0:
+        return f"the reply runs past its first sentence (\"{_quote(tail, 8, True)}\")"
+    return None
+
+
+def _ending_problem(per, words=None, guest_sp=None):
+    """What is wrong with the trailer's last moment, or None. per = words per
+    moment. Without a known guest it may end on an open question, or on a
+    question plus the first sentence of the reply. In a guest episode it
+    must be the DOAC ending: a question from the host (or another voice),
+    then the guest's first sentence of the reply to it, then black."""
     last = per[-1]
     if not last:
         return None
-    if last[-1]['word'].strip().rstrip('"\'”’»)]').endswith(QUESTION_MARKS):
-        return None
-    q = max((j for j, w in enumerate(last) if w['word'].strip().endswith(QUESTION_MARKS)),
-            default=None)
-    if q is not None:
-        tail, question = last[q + 1:], last[:q + 1]
-    elif len(per) > 1 and per[-2] and per[-2][-1]['word'].strip().endswith(QUESTION_MARKS):
-        tail, question = last, per[-2]
+    g = str(guest_sp) if guest_sp is not None else None
+    # In a guest episode the reply is another voice, so a question the same
+    # voice keeps talking after ("Is it X? Is it Y?") is not the ending's question.
+    qj = max((j for j, w in enumerate(last[:-1]) if _ends_question(w)
+              and (g is None or str(last[j + 1].get('speaker')) != str(w.get('speaker')))),
+             default=None)
+    if qj is not None:
+        question, tail = last[:qj + 1], last[qj + 1:]
+    elif len(per) > 1 and per[-2] and _ends_question(per[-2][-1]):
+        question, tail = per[-2], last
     else:
-        tail, question = last, None
-    if question is not None:
-        opener = _accent_normalize(tail[0]['word']) if tail else ''
-        lead_in = (tail and not _ends_sentence(tail[-1]['word'])
-                   and float(tail[-1]['end']) - float(tail[0]['start']) <= 6.0
-                   and opener not in _ANSWER_OPENERS)
-        if lead_in:
-            return None
-        return (f"The final moment answers the question before it (\"{_quote(question, 10, True)}\" "
-                f"then \"{_quote(tail)}\"), so the trailer ends resolved. End on the question "
-                "itself, or on the guest's first few words after it, cut before the answer lands.")
-    if not _ends_sentence(last[-1]['word']):
-        return (f"The final moment stops mid-sentence on \"{_quote(last, 8, True)}\" with no "
-                "question to pull the viewer in. End on an open question, or on the host's "
-                "central question plus the guest's first few words.")
-    return (f"The final moment is a finished statement (\"{_quote(last, 8, True)}\"), so the "
-            "trailer ends resolved. End on an open question, or on the host's central "
-            "question plus the guest's first few words.")
+        question, tail = None, last
+    fix = ("End on the host's central question, then the guest's first sentence of the "
+           "reply, cut to black before the answer lands." if g is not None else
+           "End on an open question, or on the host's central question plus the guest's "
+           "first sentence of the reply.")
+
+    if g is None and question is None and _ends_question(last[-1]):
+        return None  # an open question
+    if question is None:
+        if g is not None and _ends_question(last[-1]):
+            return (f"The trailer ends on a bare question (\"{_quote(last, 10, True)}\") with no "
+                    f"reply. {fix}")
+        if not _ends_sentence(last[-1]['word']):
+            return (f"The final moment stops mid-sentence on \"{_quote(last, 8, True)}\" with no "
+                    f"question to pull the viewer in. {fix}")
+        return (f"The final moment is a finished statement (\"{_quote(last, 8, True)}\"), so the "
+                f"trailer ends resolved. {fix}")
+
+    why = _reply_problem(tail)
+    if why is None and g is not None:
+        q_end, t_start = float(question[-1]['end']), float(tail[0]['start'])
+        if str(question[-1].get('speaker')) == g:
+            why = "the question is the guest's own; the host (or another voice) asks it"
+        elif str(tail[0].get('speaker')) != g:
+            why = f"the reply is speaker {tail[0].get('speaker')}, not the guest"
+        elif not 0 <= t_start - q_end <= 60:
+            why = "the reply is not from the same exchange as the question"
+        elif any(str(w.get('speaker')) == g and q_end <= float(w['start']) < t_start - 0.05
+                 for w in (words or [])):
+            why = "it skips the guest's first words after the question"
+    if why is None:
+        return None
+    return (f"The ending breaks the rule: {why}. Question: \"{_quote(question, 10, True)}\". {fix}")
 
 
-def _trailer_story_problems(moments, words, guest_sp=None):
+def _speaker_of(ws):
+    """The voice holding most of the talk time in these words."""
+    talk = {}
+    for w in ws:
+        sp = str(w.get('speaker'))
+        talk[sp] = talk.get(sp, 0.0) + float(w['end']) - float(w['start'])
+    return max(talk, key=talk.get) if talk else None
+
+
+def _trailer_story_problems(moments, words, guest_sp=None, selects=None, sentences=None):
     """Plain-language list of the story rules the trailer breaks (empty =
     fine). These are the rules flash models kept ignoring when they were only
-    asked for in the prompt: a resolved ending, bites that stop mid-sentence,
-    the same line twice, and (when the guest is known) the guest not carrying
-    the trailer."""
+    asked for in the prompt: a resolved ending, bites that start or stop
+    mid-sentence, the same line twice, the guest talking in a long run like a
+    monologue (or not carrying the trailer), no credentials early, and a
+    challenge used without its question. selects/sentences are the selects
+    pass's tagged soundbites and the sentence list their indices refer to."""
     ws = sorted(words or [], key=lambda w: float(w['start']))
     per = [_moment_words(ws, m) for m in moments]
     n = len(moments)
@@ -2990,12 +3043,18 @@ def _trailer_story_problems(moments, words, guest_sp=None):
         m = moments[idx]
         return f"Moment {idx} (sentences {m.get('from_i')}..{m.get('to_i')})"
 
+    for idx in range(n):
+        first = per[idx][0]['word'].strip() if per[idx] else ''
+        letter = next((c for c in first if c.isalpha()), '')
+        if letter.islower() and not moments[idx].get('lead_in_trimmed'):
+            problems.append(f"{name(idx)} starts mid-sentence on \"{_quote(per[idx], 6)}\"; start "
+                            "where the speaker starts the sentence (with the question it answers).")
     for idx in range(n - 1):
         if per[idx] and not _ends_sentence(per[idx][-1]['word']):
             problems.append(f"{name(idx)} stops mid-sentence on \"{_quote(per[idx], 6, True)}\"; "
                             "every moment but the last must end where the sentence ends.")
     if n:
-        ending = _ending_problem(per)
+        ending = _ending_problem(per, ws, guest_sp)
         if ending:
             problems.append(ending)
 
@@ -3011,6 +3070,8 @@ def _trailer_story_problems(moments, words, guest_sp=None):
                 problems.append(f"{name(a)} and {name(b)} repeat the same words "
                                 f"(\"{' '.join(next(iter(shared)))}\"); keep only one of them.")
 
+    dur = [float(m['end']) - float(m['start']) for m in moments]
+    total = sum(dur)
     if guest_sp is not None and any(w.get('speaker') is not None for p in per for w in p):
         g = str(guest_sp)
         first = next((w for p in per for w in p), None)
@@ -3022,11 +3083,65 @@ def _trailer_story_problems(moments, words, guest_sp=None):
             for w in p:
                 sp = str(w.get('speaker'))
                 talk[sp] = talk.get(sp, 0.0) + float(w['end']) - float(w['start'])
-        total = sum(talk.values())
-        if total > 0 and talk.get(g, 0.0) / total < 0.5:
-            problems.append(f"The guest (speaker {g}) speaks for only "
-                            f"{100 * talk.get(g, 0.0) / total:.0f}% of the trailer; the guest's "
-                            "own voice must fill at least half of it.")
+        share = talk.get(g, 0.0) / (sum(talk.values()) or 1.0)
+        if sum(talk.values()) and share < 0.5:
+            problems.append(f"The guest (speaker {g}) speaks for only {100 * share:.0f}% of the "
+                            "trailer; the guest's own voice must fill at least half of it.")
+        elif share > 0.7:
+            problems.append(f"The guest (speaker {g}) speaks for {100 * share:.0f}% of the trailer, "
+                            "so it plays like a monologue; keep the guest to 50-70% and let the "
+                            "host question, challenge or react in between.")
+        voices = [_speaker_of(p) for p in per]
+        run, run_s = [], 0.0
+        for idx in range(n + 1):
+            if idx < n and run and voices[idx] == voices[run[0]]:
+                run.append(idx)
+                run_s += dur[idx]
+                continue
+            if run and voices[run[0]] == g and len(run) > 2:
+                problems.append(f"Moments {run[0]}-{run[-1]} are {len(run)} guest moments in a row "
+                                f"({run_s:.0f}s); never more than two before another voice cuts in.")
+            elif run and run_s > 22:
+                problems.append(f"Moments {run[0]}-{run[-1]} are {run_s:.0f}s of one voice "
+                                f"(speaker {voices[run[0]]}); break it up with another voice.")
+            run, run_s = ([idx], dur[idx]) if idx < n else ([], 0.0)
+        others = sum(1 for v in voices if v is not None and v != g)
+        need = max(2, round(3 * total / 60))
+        if others < need:
+            problems.append(f"Only {others} moment(s) are not the guest; a {total:.0f}s trailer needs "
+                            f"at least {need} host or other-voice moments (a question, a challenge, "
+                            "a reaction) for the back-and-forth.")
+
+    by_i = {s['i']: s for s in (sentences or [])}
+
+    def overlap(m, a, b):
+        return min(float(m['end']), b) - max(float(m['start']), a)
+
+    creds = [b for b in (selects or []) if b.get('role') == 'credentials'
+             and b['from_i'] in by_i and b['to_i'] in by_i]
+    if creds and n:
+        half, t, early = total / 2, 0.0, []
+        for idx, m in enumerate(moments):
+            if t < half:
+                early.append(m)
+            t += dur[idx]
+        if not any(overlap(m, by_i[b['from_i']]['s'], by_i[b['to_i']]['e']) > 0.5
+                   for m in early for b in creds):
+            spans = ', '.join(f"{b['from_i']}..{b['to_i']}" for b in creds[:3])
+            problems.append("Nothing in the first half says who the guest is; use a credentials "
+                            f"soundbite (sentences {spans}).")
+    for b in (selects or []):
+        if b.get('role') != 'challenge' or b['from_i'] not in by_i or b['to_i'] not in by_i:
+            continue
+        qs = [by_i[i] for i in range(b['from_i'], b['to_i'] + 1)
+              if i in by_i and by_i[i]['text'].rstrip().endswith(QUESTION_MARKS)]
+        if not qs:
+            continue
+        for idx, m in enumerate(moments):
+            if overlap(m, by_i[b['from_i']]['s'], by_i[b['to_i']]['e']) > 0.5 \
+                    and not any(overlap(m, q['s'], q['e']) > 0.3 for q in qs):
+                problems.append(f"{name(idx)} uses the challenge without its question "
+                                f"(\"{qs[-1]['text'][:80]}\"); include the question.")
     return problems
 
 
@@ -3054,6 +3169,11 @@ def _trim_lead_ins(moments, words, min_left=1.5):
     out = []
     for idx, m in enumerate(moments):
         mw = _moment_words(ws, m)
+        if idx == len(moments) - 1 and idx and out:
+            prev = _moment_words(ws, out[-1])
+            if prev and _ends_question(prev[-1]):
+                out.append(dict(m))  # the guest's reply keeps its opening ("So firstly, ...")
+                continue
         norm = [_accent_normalize(w['word']) for w in mw]
         i = 0
         while i < len(mw):
@@ -3074,6 +3194,7 @@ def _trim_lead_ins(moments, words, min_left=1.5):
             print(f"   ✂️  Moment {idx}: dropped the lead-in \"{_quote(mw[:i], 10)}\".")
             m['start'] = round(new_start, 3)
             m['text'] = ' '.join(w['word'].strip() for w in mw[i:])
+            m['lead_in_trimmed'] = True
         out.append(m)
     return out
 
@@ -3495,19 +3616,22 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
     else:
         best = _judge_trailer_candidates(client, model_name, candidates)
     winner = candidates[best]
-    # The prompt asks for 3-10s moments and a total near the target, but the
-    # model sometimes maps one "moment" onto a whole minute-long monologue.
-    # Give it one chance to fix its own cut; the deterministic trim below is
-    # only the backstop (it can't know which line inside a monologue lands).
-    repair_cost = None
-
+    # The prompt asks for all of the rules below, but flash breaks them (a
+    # minute-long monologue as one moment, an answered ending, four guest
+    # bites in a row). Show the model exactly what is broken and let it fix
+    # its own cut, up to TRAILER_REPAIR_ROUNDS times; the deterministic trim
+    # below is only the backstop for length.
     def rule_problems(c):
         return (_trailer_length_problems(c['moments_ordered'], target_seconds)
-                + _trailer_story_problems(c['moments_ordered'], refine_words, c.get('guest_sp')))
+                + _trailer_story_problems(c['moments_ordered'], refine_words, c.get('guest_sp'),
+                                          bites, sentences))
 
     problems = rule_problems(winner)
-    if problems:
-        print("   📏 Trailer breaks the rules; asking the model to fix it:")
+    repair_costs = []
+    for round_no in range(1, TRAILER_REPAIR_ROUNDS + 1):
+        if not problems:
+            break
+        print(f"   📏 Trailer breaks the rules; asking the model to fix it (round {round_no}):")
         for line in problems:
             print(f"      - {line}")
         try:
@@ -3515,17 +3639,19 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
                 client, model_name,
                 _repair_prompt(prompt, winner['moments_ordered'], problems, refine_words),
                 sentences, refine_words, video_duration, lo, hi, max_retries)
-            repair_cost = fixed.get('cost_analysis')
-            if fixed.get('guest_sp') is None:
-                fixed['guest_sp'] = winner.get('guest_sp')
-            left = rule_problems(fixed)
-            if len(left) <= len(problems):
-                winner, problems = fixed, left
-                print(f"   📏 Fixed trailer accepted ({len(left)} issue(s) left).")
-                for line in left:
-                    print(f"      - {line}")
         except ClipAnalysisError as e:
             print(f"   ⚠️  Fix pass failed ({e}); trimming instead.")
+            break
+        if fixed.get('cost_analysis'):
+            repair_costs.append(fixed['cost_analysis'])
+        if fixed.get('guest_sp') is None:
+            fixed['guest_sp'] = winner.get('guest_sp')
+        left = rule_problems(fixed)
+        if len(left) > len(problems):
+            print(f"   📏 Fix made it worse ({len(left)} issues); keeping the earlier cut.")
+            break
+        winner, problems = fixed, left
+        print(f"   📏 Fixed trailer accepted ({len(left)} issue(s) left).")
     moments = _fit_trailer_budget(winner['moments_ordered'], refine_words, target_seconds)
     script = winner['script']
 
@@ -3539,8 +3665,7 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
     costs = [c['cost_analysis'] for c in candidates if c.get('cost_analysis')]
     if selects_cost:
         costs.append(selects_cost)
-    if repair_cost:
-        costs.append(repair_cost)
+    costs.extend(repair_costs)
     out = {'moments_ordered': moments, 'script': script, 'phrases': [],
            # Saved in the metadata so a bad trailer can be traced to its step.
            'debug': {'selects': bites or [], 'ads': sorted(ads),

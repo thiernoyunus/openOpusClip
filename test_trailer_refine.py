@@ -400,7 +400,7 @@ def test_story_flags_answered_last_question():
     q = said("Can my investment go to zero?", 10, '2')
     a = said("No, your investment can't go to zero, it's a business.", 20, '1')
     probs = _trailer_story_problems([span(hook), span(q), span(a)], hook + q + a)
-    assert len(probs) == 1 and 'answers the question' in probs[0]
+    assert len(probs) == 1 and 'answer itself' in probs[0]
     # Ending on the question itself is the open loop.
     assert _trailer_story_problems([span(hook), span(q)], hook + q + a) == []
 
@@ -464,6 +464,90 @@ def test_selects_returns_ad_sentences():
     bites, _, ads = _select_soundbites(_FakeClient(reply), 'm', sentences, '', 20)
     assert bites[0]['role'] == 'credentials'
     assert ads == {4, 5, 6}  # a 3-minute "ad" is a bad tag and is ignored
+
+
+def _guest_trailer():
+    """A clean guest-episode trailer: guest 3 opens, alternates with host 1,
+    and ends on the host's question plus the guest's first sentence."""
+    lines = [("Four meetings a week, all optional.", 0, '3'),
+             ("Are you sure he's the real deal?", 100, '1'),
+             ("I was at Amazon for eight years.", 200, '3'),
+             ("He runs fifty clients from his phone.", 300, '1'),
+             ("The AI alone will not train your people.", 400, '3'),
+             ("Do we need engineers like you?", 500, '1'),
+             ("Systems thinking is the skill that matters.", 505, '3')]
+    per = [said(t, at, sp) for t, at, sp in lines]
+    return per, [span(p) for p in per]
+
+
+def _flat(per):
+    return [w for p in per for w in p]
+
+
+def test_story_guest_trailer_passes_and_bare_question_fails():
+    per, ms = _guest_trailer()
+    assert _trailer_story_problems(ms, _flat(per), guest_sp='3') == []
+    probs = _trailer_story_problems(ms[:-1], _flat(per[:-1]), guest_sp='3')
+    assert any('bare question' in p for p in probs)
+
+
+def test_story_guest_ending_must_be_guests_first_reply():
+    per, ms = _guest_trailer()
+    host_reply = [dict(w, speaker='1') for w in per[-1]]
+    probs = _trailer_story_problems(ms, _flat(per[:-1]) + host_reply, guest_sp='3')
+    assert any('not the guest' in p for p in probs)
+    skipped = said("Well, let me think.", 502.5, '3')
+    probs = _trailer_story_problems(ms, _flat(per) + skipped, guest_sp='3')
+    assert any("skips the guest's first words" in p for p in probs)
+    no = said("No, you do not need them.", 505, '3')
+    probs = _trailer_story_problems(ms[:-1] + [span(no)], _flat(per[:-1]) + no, guest_sp='3')
+    assert any('answer itself' in p for p in probs)
+
+
+def test_story_flags_guest_monologue_run():
+    per, ms = _guest_trailer()
+    runs = [said("I built this with nothing but a laptop.", 600 + 20 * k, '3') for k in range(3)]
+    order = [0, 1, 2] + ['r0', 'r1', 'r2'] + [5, 6]
+    pick = lambda k: runs[int(k[1])] if isinstance(k, str) else per[k]
+    per2 = [pick(k) for k in order]
+    probs = _trailer_story_problems([span(p) for p in per2], _flat(per) + _flat(runs), guest_sp='3')
+    assert any('guest moments in a row' in p for p in probs)
+    assert any('like a monologue' in p for p in probs)
+
+
+def test_story_credentials_early_and_challenge_with_question():
+    per, ms = _guest_trailer()
+    sents = [{'i': 0, 's': 200.0, 'e': 202.5, 'text': 'I was at Amazon for eight years.'},
+             {'i': 1, 's': 400.0, 'e': 402.7, 'text': 'The AI alone will not train your people.'},
+             {'i': 2, 's': 100.0, 'e': 101.9, 'text': "Are you sure he's the real deal?"},
+             {'i': 3, 's': 300.0, 'e': 302.2, 'text': 'He runs fifty clients from his phone.'}]
+    early = [{'from_i': 0, 'to_i': 0, 'role': 'credentials'}]
+    late = [{'from_i': 1, 'to_i': 1, 'role': 'credentials'}]
+    assert _trailer_story_problems(ms, _flat(per), '3', early, sents) == []
+    assert any('who the guest is' in p for p in _trailer_story_problems(ms, _flat(per), '3', late, sents))
+    # The challenge soundbite is a question (290s) and the line after it (300s):
+    # a moment that keeps only the line after it drops the question.
+    sents[2].update(s=290.0, e=291.9)
+    chal = [{'from_i': 2, 'to_i': 3, 'role': 'challenge'}]
+    probs = _trailer_story_problems(ms, _flat(per), '3', chal, sents)
+    assert any('Moment 3' in p and 'without its question' in p for p in probs)
+
+
+def test_story_flags_moment_starting_mid_sentence():
+    a = said("E-commerce is the new real estate.", 0, '1')
+    b = said("that's literally the proof in the pudding.", 10, '2')
+    c = said("So what do you know?", 20, '2')
+    probs = _trailer_story_problems([span(a), span(b), span(c)], a + b + c)
+    assert any('Moment 1' in p and 'starts mid-sentence' in p for p in probs)
+    trimmed = dict(span(b), lead_in_trimmed=True)
+    assert _trailer_story_problems([span(a), trimmed, span(c)], a + b + c) == []
+
+
+def test_budget_keeps_the_ending_question_with_its_reply():
+    per, ms = _guest_trailer()
+    ms = [dict(m, text=' '.join(w['word'] for w in p), p=3) for m, p in zip(ms, per)]
+    out = _fit_trailer_budget(ms, _flat(per), target_seconds=5, slack=1.0, min_keep=4)
+    assert out[-2]['text'].endswith('?') and out[-1]['text'].startswith('Systems')
 
 
 if __name__ == '__main__':
