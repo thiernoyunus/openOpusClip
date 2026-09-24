@@ -25,6 +25,8 @@ from main import (
     _slot_trailer,
     _match_label,
     _drop_inner_fillers,
+    _guess_guest,
+    _host_label,
 )
 import json
 import os
@@ -677,6 +679,38 @@ def test_drop_inner_uh_splits_the_moment():
     assert len(out) == 2 and out[0]['text'] == 'He,' and out[1]['text'].startswith('used')
     assert out[0]['end'] <= words[1]['start'] and out[1]['start'] >= words[1]['end']
     assert out[0]['accent_word'] == '' and out[1]['accent_word'] == 'Google' and out[1]['joined_prev']
+
+
+EX_AMAZON_TITLE = 'The Muslim Ex-Amazon Engineer Running 50 Clients On 4 Meetings A Week (AI Does The Rest)'
+
+
+def test_guess_guest_follows_the_title_not_talk_time():
+    # Speaker 2 talks most (sales); speaker 3 is the AI engineer the title is about.
+    sents, i = [], 0
+    for sp, text in ([('1', 'Welcome to the panel, what do you both do?')]
+                     + [('2', 'We run sales teams and train closers every week for big brands.')] * 6
+                     + [('3', 'I was an engineer at Amazon and now AI runs my agency.'),
+                        ('3', 'Our AI brain summarizes every client channel.'),
+                        ('1', 'How many clients do you run with AI?')]):
+        sents.append({'i': i, 's': i * 5.0, 'e': i * 5.0 + 4, 'text': text, 'sp': sp})
+        i += 1
+    host = _host_label(sents, None)
+    assert host == '1'
+    guest, scores, runner = _guess_guest(sents, EX_AMAZON_TITLE, host)
+    assert guest == '3' and runner == '2'
+
+
+def test_guess_guest_on_real_ex_amazon_runs():
+    import pytest
+    base = '/mnt/project-files/doac-podcast-trailer/app-runs/'
+    runs = ['ex-amazon-run5-slots-wrong-guest', 'ex-amazon-run4-oneshot-good']
+    if not all(os.path.exists(base + r + '/transcript.json') for r in runs):
+        pytest.skip('saved app runs not available')
+    for r in runs:
+        with open(base + r + '/transcript.json') as f:
+            sents = _build_sentence_transcript(json.load(f))
+        host = _host_label(sents, None)
+        assert _guess_guest(sents, EX_AMAZON_TITLE, host)[0] == '3', r
 
 
 if __name__ == '__main__':

@@ -3267,8 +3267,13 @@ def _stem(t):
     return t[:-1] if len(t) > 3 and t.endswith('s') else t
 
 
+# Title words too generic to say who the title is about.
+_TITLE_GENERIC = {'week', 'day', 'year', 'month', 'hour', 'time', 'rest', 'running', 'run', 'people',
+                  'thing', 'way', 'muslim', 'ex', 'new', 'best', 'secret', 'truth', 'why', 'every'}
+
+
 def _title_words(title):
-    return {_stem(t) for t in (_accent_normalize(x) for x in str(title).split())
+    return {_stem(t) for t in (_accent_normalize(x) for x in re.split(r"[\s\-–—/]+", str(title)))
             if t and t not in _TITLE_STOP}
 
 
@@ -3887,6 +3892,52 @@ def _slot_spans(sentences, ix, speaker, skip, min_s, max_s, role_at=None, roles=
     return out
 
 
+_FIRST_PERSON = {'i', 'im', 'ive', 'id', 'ill', 'my', 'me', 'we', 'our', 'weve'}
+
+
+def _guess_guest(sentences, title, host):
+    """Decide the featured guest in code: the non-host voice whose own words
+    and whose introduction match the title. Talk time is NOT a signal (on a
+    panel the busiest panelist is often not the guest the title is about).
+
+    1. Each title word votes for the voices that use it (first-person claims
+       count double: "I was at Amazon", "I have four meetings").
+    The host's introductions are NOT used: diarization often gives the
+    guest's first replies to another panelist's label in the busy intro (it
+    did on the ex-Amazon episode).
+    Returns (guest or None when inconclusive, {label: score}, runner-up)."""
+    tw = {t for t in _title_words(title) if _stem(t) not in _TITLE_GENERIC and t not in _TITLE_GENERIC}
+    voices = sorted({str(x['sp']) for x in sentences if 'sp' in x} - {str(host)})
+    if len(voices) == 1:
+        return voices[0], {voices[0]: 1.0}, None
+    if not tw or not voices:
+        return None, {}, None
+    # Each title word votes for the voices that say it, in proportion to how
+    # often each one does (first-person claims count double), weighted by how
+    # often the word comes up at all, so a word said once barely counts.
+    count = {t: {v: 0.0 for v in voices} for t in tw}
+    for x in sentences:
+        v = str(x.get('sp'))
+        if v not in voices:
+            continue
+        toks = [t for t in (_accent_normalize(t) for t in x['text'].split()) if t]
+        first_person = any(t in _FIRST_PERSON for t in toks[:4])
+        for t in toks:
+            st = _stem(t)
+            if st in count:
+                count[st][v] += 2 if first_person else 1
+    score = {v: 0.0 for v in voices}
+    for t, per in count.items():
+        total = sum(per.values())
+        if total:
+            for v in voices:
+                score[v] += min(total, 5) / 5 * per[v] / total
+    ranked = sorted(voices, key=lambda v: -score[v])
+    top, second = ranked[0], ranked[1]
+    clear = score[top] >= 1.0 and score[top] >= 1.5 * score[second]
+    return (top if clear else None), {v: round(score[v], 1) for v in voices}, second
+
+
 def _match_label(value, labels):
     """A speaker label from the model ("3", 3, "Speaker 3", "speaker_3"), or None."""
     if value is None:
@@ -3899,7 +3950,7 @@ def _match_label(value, labels):
 
 
 def _slot_trailer(client, model_name, sentences, words, skip, selects, title, notes,
-                  target_seconds, speaker_context, slot_debug=None):
+                  target_seconds, speaker_context, slot_debug=None, force_guest=None):
     """The slot-by-slot trailer (see TRAILER_SLOTS). Returns a winner dict
     like _generate_trailer_candidate's, or None to fall back; slot_debug gets
     'skipped' with the reason."""
@@ -3917,31 +3968,37 @@ def _slot_trailer(client, model_name, sentences, words, skip, selects, title, no
     labels = {str(x['sp']) for x in sentences if 'sp' in x}
     opening = [{'i': x['i'], 'sp': x.get('sp'), 'text': x['text']}
                for x in sentences if x['s'] < 300 and x['i'] not in skip][:120]
+    # The guest is decided in code from the title (see _guess_guest); the
+    # model only breaks a tie. Talk time is never used: on the ex-Amazon
+    # panel the busiest panelist was not the engineer the title is about.
+    host = _host_label(sentences, None)
+    code_guest, scores, runner_up = _guess_guest(sentences, title, host)
     who = _flash_json(client, model_name, SLOT_WHO_PROMPT.format(
         brief=brief, speakers=speaker_context, opening=json.dumps(opening)), costs)
-    if not isinstance(who, dict) or 'guest_sp' not in who:
-        # The call failed or answered in another shape: find the guest in code,
-        # the voice with the most talk time that isn't the host.
-        host = _host_label(sentences, None)
-        talk = {}
-        for x in sentences:
-            if 'sp' in x and str(x['sp']) != host:
-                talk[str(x['sp'])] = talk.get(str(x['sp']), 0.0) + x['e'] - x['s']
-        guest = max(talk, key=talk.get) if talk else None
-        print(f"   🧩 Slots: the who-is-who call gave no usable answer ({who!r:.120}); "
-              f"guessing guest = speaker {guest} from talk time.")
-        who = {'guest_sp': guest, 'host_sp': host, 'topic': title}
-    slot_debug['who'] = {k: who.get(k) for k in ('guest_sp', 'host_sp', 'topic')}
-    guest = _match_label(who.get('guest_sp'), labels)
-    if guest is None:
-        slot_debug['skipped'] = f"no featured guest (model said {who.get('guest_sp')!r})"
+    who = who if isinstance(who, dict) else {}
+    model_guest = _match_label(who.get('guest_sp'), labels)
+    if force_guest is not None:
+        guest, why = str(force_guest), 'forced (re-run with the other candidate)'
+    elif code_guest is not None:
+        guest, why = code_guest, 'title match'
+    elif model_guest is not None and model_guest != host:
+        guest, why = model_guest, 'model (title match inconclusive)'
+    elif scores and max(scores.values()) > 0:
+        guest = max(scores, key=scores.get)
+        why = 'best title match (inconclusive, no model answer)'
+    else:
+        guest, why = None, ''
+    slot_debug['who'] = {'guest_sp': guest, 'host_sp': host, 'why': why, 'title_scores': scores,
+                         'runner_up': runner_up, 'model': {k: who.get(k) for k in ('guest_sp', 'host_sp', 'topic')}}
+    if guest is None or guest == host:
+        slot_debug['skipped'] = f"no featured guest (model said {who.get('guest_sp')!r}, title scores {scores})"
         print(f"   🧩 Slots: {slot_debug['skipped']}; using the one-shot trailer prompt.")
         return None
-    host = _match_label(who.get('host_sp'), labels)
-    if host is None or host == guest:
-        host = _host_label(sentences, guest)
+    if model_guest is not None and model_guest != guest:
+        print(f"   🧩 Slots: the model named speaker {model_guest} as the guest, but the title "
+              f"matches speaker {guest} ({scores}); going with speaker {guest}.")
     topic = ' '.join(str(who.get('topic') or title or '').split())[:80] or 'the episode'
-    print(f"   🧩 Slots: guest = speaker {guest}, host = speaker {host}, topic = {topic!r}")
+    print(f"   🧩 Slots: guest = speaker {guest} ({why}), host = speaker {host}, topic = {topic!r}")
     header = SLOT_HEADER.format(brief=_trailer_brief(title, notes, stage='selects'),
                                 topic=topic, guest=guest, host=host)
 
@@ -4020,8 +4077,15 @@ def _slot_trailer(client, model_name, sentences, words, skip, selects, title, no
         qb = qw[_lead_in_len(qw):] or qw
         if len(qb) < 4 or _RHETORICAL_RE.search(' '.join(_accent_normalize(w['word']) for w in qb)) \
                 or (k and sentences[k - 1].get('more') and str(sentences[k - 1].get('sp')) == str(q['sp'])
-                    and not _all_lead_in(ix.words_in(sentences[k - 1]['s'], sentences[k - 1]['e']))):
+                    and not _all_lead_in(ix.words_in(sentences[k - 1]['s'], sentences[k - 1]['e']))
+                    # a reported doubt ("he was like, ... like / are you sure...?") stands alone
+                    and _accent_normalize(sentences[k - 1]['text'].split()[-1]) not in ('like', 'said', 'asked')):
             continue  # the tail of a longer sentence
+        # A question another panelist answers was asked of them, not the guest.
+        nxt = next((r for r in sentences[k + 1:k + 6] if str(r.get('sp')) != host
+                    and r['s'] - q['e'] <= 20), None)
+        if nxt is not None and str(nxt.get('sp')) != guest:
+            continue
         # The guest doubling down right after, when they do; the host's doubt
         # alone also works ("Are you sure he's the real deal?").
         reply = next((r for r in sentences[k + 1:k + 6] if str(r.get('sp')) == guest
@@ -4296,6 +4360,28 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
         try:
             slotted = _slot_trailer(client, model_name, sentences, refine_words, ads, bites or [],
                                     title, notes, target_seconds, speaker_context, slot_debug)
+            # A title's own subject flagged as "never introduced" means the
+            # wrong person was taken for the guest: build it again around them.
+            if slotted:
+                probs = _trailer_story_problems(slotted['moments_ordered'], refine_words,
+                                                slotted['guest_sp'], bites or [], sentences)
+                unknown = {mt.group(1) for p in probs
+                           for mt in [re.search(r'is speaker (\S+), a voice the trailer never', p)] if mt}
+                runner = (slot_debug.get('who') or {}).get('runner_up')
+                if runner is not None and runner in unknown:
+                    print(f"   🧩 Slots: speaker {runner} (the title's other candidate) came out as an "
+                          f"unknown voice; rebuilding with them as the guest.")
+                    retry_debug = {}
+                    retry = _slot_trailer(client, model_name, sentences, refine_words, ads, bites or [],
+                                          title, notes, target_seconds, speaker_context, retry_debug,
+                                          force_guest=runner)
+                    if retry:
+                        left = _trailer_story_problems(retry['moments_ordered'], refine_words,
+                                                       retry['guest_sp'], bites or [], sentences)
+                        if len(left) < len(probs):
+                            slotted = retry
+                            slot_debug['retried_with'] = runner
+                            slot_debug['who'] = retry_debug.get('who')
         except Exception as e:  # never lose a paid-for job to the new path
             import traceback
             slot_debug['error'] = f"{type(e).__name__}: {e}"[:300]
