@@ -17,6 +17,9 @@ from main import (
     _fit_trailer_budget,
     _trailer_length_problems,
     _trailer_brief,
+    _trailer_story_problems,
+    _trim_lead_ins,
+    _select_soundbites,
 )
 import json
 import os
@@ -376,6 +379,91 @@ def test_trailer_brief_empty_and_filled():
     assert "Don't Buy Real Estate" in b and 'Creator instructions: "open on Dubai"' in b
     assert 'hook lands' in b and 'first ~30' in b
     assert 'Favour soundbites' in _trailer_brief('T', stage='selects')
+
+
+def said(line, start, sp=None, gap=0.3):
+    """Words for a spoken line, 0.3s each, starting at `start`."""
+    out, t = [], start
+    for w in line.split():
+        out.append({'word': w, 'start': round(t, 2), 'end': round(t + 0.25, 2), 'speaker': sp})
+        t += gap
+    return out
+
+
+def span(ws):
+    return {'start': ws[0]['start'], 'end': ws[-1]['end'] + 0.2}
+
+
+def test_story_flags_answered_last_question():
+    # e-commerce: "Can my investment go to zero?" then the guest answers it.
+    hook = said("E-commerce is the new real estate.", 0, '1')
+    q = said("Can my investment go to zero?", 10, '2')
+    a = said("No, your investment can't go to zero, it's a business.", 20, '1')
+    probs = _trailer_story_problems([span(hook), span(q), span(a)], hook + q + a)
+    assert len(probs) == 1 and 'answers the question' in probs[0]
+    # Ending on the question itself is the open loop.
+    assert _trailer_story_problems([span(hook), span(q)], hook + q + a) == []
+
+
+def test_story_allows_question_plus_guest_lead_in():
+    hook = said("E-commerce is the new real estate.", 0, '1')
+    last = said("Does it actually help me? So firstly, people need to", 10, '2')
+    last[5:] = [dict(w, speaker='1') for w in last[5:]]
+    assert _trailer_story_problems([span(hook), span(last)], hook + last) == []
+
+
+def test_story_flags_broken_endings_and_repeats():
+    a = said("Give it ten years, everyone and their mother will do it.", 0, '1')
+    b = said("everyone and their mother will do it. So what do you know", 10, '2')
+    c = said("but in the back end it's like automated 80%,", 20, '1')
+    probs = _trailer_story_problems([span(a), span(b), span(c)], a + b + c)
+    assert any('Moment 1' in p and 'mid-sentence' in p for p in probs)
+    assert any('repeat the same words' in p for p in probs)
+    assert any('final moment stops mid-sentence' in p for p in probs)
+
+
+def test_story_guest_opens_and_carries_half():
+    host = said("This man has fifty clients and four meetings a week.", 0, '2')
+    guest = said("I have an AI brain?", 10, '1')
+    probs = _trailer_story_problems([span(host), span(guest)], host + guest, guest_sp='1')
+    assert any('must speak first' in p for p in probs)
+    assert any('at least half' in p for p in probs)
+    assert _trailer_story_problems([span(host), span(guest)], host + guest) == []
+
+
+def test_trim_lead_ins_drops_filler_and_false_starts():
+    a = said("I'm telling you, I'm not like, actually I have maybe four meetings a week.", 0)
+    b = said("Yeah, this is such a good point because I was at Amazon for years.", 10)
+    c = said("But give it 10, 20, 30 years, everyone will do it.", 20)
+    d = said("No, your investment can't go to zero.", 30)
+    out = _trim_lead_ins([span(a), span(b), span(c), span(d)], a + b + c + d)
+    assert out[0]['text'].startswith('I have maybe') and out[0]['start'] > a[6]['end'] - 0.01
+    assert out[1]['text'].startswith('I was at Amazon')
+    assert 'text' not in out[2] and 'text' not in out[3]
+
+
+class _FakeResponse:
+    def __init__(self, text):
+        self.text = text
+        self.usage_metadata = None
+
+
+class _FakeClient:
+    def __init__(self, text):
+        self.models = self
+        self._text = text
+
+    def generate_content(self, **kw):
+        return _FakeResponse(self._text)
+
+
+def test_selects_returns_ad_sentences():
+    sentences = [{'i': i, 's': i * 20.0, 'e': i * 20.0 + 4, 'text': 'x.'} for i in range(10)]
+    reply = json.dumps({'soundbites': [{'from_i': 1, 'to_i': 2, 'role': 'credentials'}],
+                        'ads': [{'from_i': 4, 'to_i': 6}, {'from_i': 0, 'to_i': 9}]})
+    bites, _, ads = _select_soundbites(_FakeClient(reply), 'm', sentences, '', 20)
+    assert bites[0]['role'] == 'credentials'
+    assert ads == {4, 5, 6}  # a 3-minute "ad" is a bad tag and is ignored
 
 
 if __name__ == '__main__':
