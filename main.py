@@ -16,13 +16,13 @@ import numpy as np
 from tqdm import tqdm
 import yt_dlp
 # import whisper (replaced by faster_whisper inside function)
-from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 import json
 from transcription import WHISPER_MODELS, SONIOX_MODEL, resolve_backend, transcribe
 from ffmpeg_utils import video_codec_args
-from gemini_models import DEFAULT_GEMINI_MODEL, get_gemini_model, get_gemini_pricing
+from gemini_models import DEFAULT_GEMINI_MODEL
+import llm
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module='google.protobuf')
@@ -1934,6 +1934,8 @@ def is_retryable_provider_error(error):
     error_text = str(error).lower()
     retryable_markers = [
         "503",
+        "529",
+        "overloaded",
         "unavailable",
         "high demand",
         "429",
@@ -2050,33 +2052,30 @@ def filter_excluded_overlaps(shorts, exclude_ranges, overlap_threshold=0.2):
 
 def get_viral_clips(transcript_result, video_duration, max_retries=3,
                     min_clip_length=15, max_clip_length=60, moment_prompt=""):
-    """Ask the selected Gemini model to identify timestamped viral moments."""
+    """Ask the selected AI model to identify timestamped viral moments."""
     provider = VIRAL_ANALYSIS_PROVIDER
     model_name = VIRAL_ANALYSIS_MODEL
-    print("🤖  Analyzing with Gemini...")
-    
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        print("❌ Error: GEMINI_API_KEY not found in environment variables.")
+    # The request boundary validates the setting; this keeps direct CLI runs
+    # safe too and lets diagnostics identify the actual model used.
+    try:
+        ai = llm.settings_from_env()
+    except ValueError as e:
         raise ClipAnalysisError(
-            "GEMINI_API_KEY is missing.",
+            str(e), 'provider_invalid_response', provider=provider, model=VIRAL_ANALYSIS_MODEL)
+    provider, model_name = ai.provider, ai.model
+    print(f"🤖  Analyzing with {ai.label}...")
+
+    if not ai.api_key:
+        print(f"❌ Error: no API key for {ai.label}.")
+        raise ClipAnalysisError(
+            f"API key for {ai.label} is missing.",
             'provider_missing_credentials',
             provider=provider,
             model=model_name,
         )
 
-
-    client = genai.Client(api_key=api_key)
-    # The request boundary validates the setting; this keeps direct CLI runs
-    # safe too and lets diagnostics identify the actual model used.
-
-    try:
-        model_name = get_gemini_model()
-    except ValueError as e:
-        raise ClipAnalysisError(
-            str(e), 'provider_invalid_response', provider=provider, model=VIRAL_ANALYSIS_MODEL)
-    
-    print(f"🤖  Initializing Gemini with model: {model_name}")
+    client = llm.make_client(ai)
+    print(f"🤖  Initializing {ai.label} with model: {model_name}")
 
     # Extract words as compact [word, start, end] arrays (rounded to 2dp) —
     # ~40-50% fewer prompt tokens than verbose {w,s,e} dicts, same information.
@@ -2123,14 +2122,9 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
             try:
                 usage = response.usage_metadata
                 if usage:
-                    input_price_per_million, output_price_per_million = get_gemini_pricing(model_name)
-
                     prompt_tokens = usage.prompt_token_count
                     output_tokens = usage.candidates_token_count
-
-                    input_cost = (prompt_tokens / 1_000_000) * input_price_per_million
-                    output_cost = (output_tokens / 1_000_000) * output_price_per_million
-                    total_cost = input_cost + output_cost
+                    input_cost, output_cost, total_cost, basis = llm.estimate_cost(model_name, usage)
 
                     cost_analysis = {
                         "input_tokens": prompt_tokens,
@@ -2139,16 +2133,17 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
                         "output_cost": output_cost,
                         "total_cost": total_cost,
                         "model": model_name,
-                        "estimate_basis": "paid_standard",
+                        "estimate_basis": basis,
                         "latency_ms": latency_ms,
                         "attempts_used": attempt,
                         "max_retries": max_retries,
                     }
 
                     print(f"💰 Token Usage ({model_name}):")
-                    print(f"   - Input Tokens: {prompt_tokens} (${input_cost:.6f})")
-                    print(f"   - Output Tokens: {output_tokens} (${output_cost:.6f})")
-                    print(f"   - Total Estimated Cost: ${total_cost:.6f}")
+                    print(f"   - Input Tokens: {prompt_tokens}")
+                    print(f"   - Output Tokens: {output_tokens}")
+                    if total_cost is not None:
+                        print(f"   - Total Estimated Cost: ${total_cost:.6f}")
 
             except Exception as e:
                 print(f"⚠️ Could not calculate cost: {e}")
@@ -2180,27 +2175,27 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
         except json.JSONDecodeError as e:
             last_error = e
             last_failure_code = 'provider_invalid_json'
-            print(f"❌ Gemini attempt {attempt}/{max_retries} returned invalid JSON: {e}")
+            print(f"❌ AI attempt {attempt}/{max_retries} returned invalid JSON: {e}")
             break
         except ClipAnalysisError as e:
             last_error = e
             last_failure_code = e.code
-            print(f"❌ Gemini attempt {attempt}/{max_retries} returned an invalid response: {e}")
+            print(f"❌ AI attempt {attempt}/{max_retries} returned an invalid response: {e}")
             break
         except Exception as e:
             last_error = e
             last_failure_code = classify_provider_error(e)
-            print(f"❌ Gemini attempt {attempt}/{max_retries} failed: {e}")
+            print(f"❌ AI attempt {attempt}/{max_retries} failed: {e}")
             if not is_retryable_provider_error(e):
                 break
             if attempt < max_retries:
                 fallback_wait = min(60, 5 * (2 ** (attempt - 1)))
                 wait_seconds = get_gemini_retry_delay(e, fallback_wait)
-                print(f"⏳ Gemini retry {attempt + 1}/{max_retries} in {wait_seconds}s...")
+                print(f"⏳ AI retry {attempt + 1}/{max_retries} in {wait_seconds}s...")
                 time.sleep(wait_seconds)
 
     raise ClipAnalysisError(
-        "Gemini could not identify clips after retrying. "
+        "The AI model could not identify clips after retrying. "
         f"Last error: {last_error}",
         last_failure_code,
         provider=provider,
@@ -2495,24 +2490,22 @@ def _strip_json_fence(text):
 
 
 def _trailer_cost(response, model_name):
-    """Extract token usage/cost from a Gemini response; prints and returns a dict
-    (or None). Rates use the current effective paid-tier schedule."""
+    """Extract token usage/cost from a model response; prints and returns a dict
+    (or None). Cost is None when the provider doesn't report or publish one."""
     try:
         usage = response.usage_metadata
         if not usage:
             return None
         pt = usage.prompt_token_count
         ot = usage.candidates_token_count
-        in_rate, out_rate = get_gemini_pricing(model_name)
-        input_cost = (pt / 1_000_000) * in_rate
-        output_cost = (ot / 1_000_000) * out_rate
-        total = input_cost + output_cost
-        print(f"💰 {model_name}: in={pt} out={ot} (${total:.6f})")
+        input_cost, output_cost, total, basis = llm.estimate_cost(model_name, usage)
+        cost_note = f" (${total:.6f})" if total is not None else ""
+        print(f"💰 {model_name}: in={pt} out={ot}{cost_note}")
         return {
             "input_tokens": pt, "output_tokens": ot,
             "input_cost": input_cost, "output_cost": output_cost,
             "total_cost": total, "model": model_name,
-            "estimate_basis": "paid_standard",
+            "estimate_basis": basis,
         }
     except Exception as e:
         print(f"⚠️ Could not calculate cost: {e}")
@@ -2670,26 +2663,24 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
     """
     min_moments, max_moments, target_seconds = TRAILER_PACE_PRESETS.get(
         pace, TRAILER_PACE_PRESETS['standard'])
-    print(f"🎬  Analyzing trailer moments with Gemini (pace={pace}, "
+    print(f"🎬  Analyzing trailer moments (pace={pace}, "
           f"~{target_seconds}s, {min_moments}-{max_moments} cuts)...")
 
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        print("❌ Error: GEMINI_API_KEY not found in environment variables.")
-        raise ClipAnalysisError(
-            "GEMINI_API_KEY is missing.",
-            'provider_missing_credentials',
-            provider=TRAILER_PROVIDER,
-            model=TRAILER_MODEL,
-        )
-
-    client = genai.Client(api_key=api_key)
-
     try:
-        model_name = get_gemini_model()
+        ai = llm.settings_from_env()
     except ValueError as e:
         raise ClipAnalysisError(str(e))
-    print(f"🤖  Initializing Gemini with model: {model_name}")
+    if not ai.api_key:
+        print(f"❌ Error: no API key for {ai.label}.")
+        raise ClipAnalysisError(
+            f"API key for {ai.label} is missing.",
+            'provider_missing_credentials',
+            provider=ai.provider,
+            model=ai.model,
+        )
+    client = llm.make_client(ai)
+    model_name = ai.model
+    print(f"🤖  Initializing {ai.label} with model: {model_name}")
 
     # Sentence-grouped transcript for the model (script-first selection), plus a
     # flat full-word list kept ONLY for deterministic boundary snapping afterward.
@@ -2748,14 +2739,14 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
     if not candidates:
         if last_candidate_error is not None:
             raise ClipAnalysisError(
-                "Gemini could not produce any usable trailer candidate. "
+                "The AI model could not produce any usable trailer candidate. "
                 f"Last error: {last_candidate_error}",
                 last_candidate_error.code,
                 provider=last_candidate_error.provider or TRAILER_PROVIDER,
                 model=last_candidate_error.model or TRAILER_MODEL,
             )
         raise ClipAnalysisError(
-            "Gemini could not produce any usable trailer candidate.",
+            "The AI model could not produce any usable trailer candidate.",
             'provider_invalid_response',
             provider=TRAILER_PROVIDER,
             model=TRAILER_MODEL,

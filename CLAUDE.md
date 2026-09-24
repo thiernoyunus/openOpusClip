@@ -61,6 +61,7 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 | `main.py` | Core video processing: transcription, scene detection, clip extraction, vertical reframing |
 | `app.py` | FastAPI server with async job queue and REST endpoints |
 | `editor.py` | Gemini AI integration for caption enhancement and b-roll suggestions |
+| `llm.py` | Picks the AI provider for text prompts (Gemini native; OpenRouter, Claude, OpenAI, DeepSeek, xAI, MiMo, custom OpenAI-compatible) and lists each provider's live models |
 | `s3_uploader.py` | AWS S3 upload with caching |
 | `dashboard/src/App.jsx` | Main React component with state management |
 
@@ -94,7 +95,8 @@ Async job queue with semaphore-based concurrency control. Configure via `MAX_CON
 - `VITE_API_URL` - Production API URL override
 
 **Client-side (localStorage, encrypted):**
-- `GEMINI_API_KEY` - Google Gemini API key (required)
+- `GEMINI_API_KEY` - Google Gemini API key (default AI provider; always used for thumbnails)
+- `ai_provider` / `ai_providers_v1` - chosen AI provider plus its key/model/address (optional; `dashboard/src/lib/aiSettings.js`)
 - `ZERNIO_API_KEY` - Zernio API key for social posting, scheduling & analytics (optional)
 
 > API keys are stored encrypted in the browser and sent via headers only when needed. Never stored server-side.

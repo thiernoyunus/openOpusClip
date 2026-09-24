@@ -24,6 +24,7 @@ from s3_uploader import upload_job_artifacts, delete_job_files, upload_job_file
 import transcription
 from transcription import WHISPER_MODELS
 from gemini_models import DEFAULT_GEMINI_MODEL, get_gemini_model
+import llm
 
 try:
     import keyring
@@ -193,6 +194,21 @@ def _request_gemini_model(request: Request) -> str:
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+def _request_ai(request: Request, allow_env_key: bool = False) -> "llm.LLMSettings":
+    """The AI provider/model/key chosen in Settings (X-AI-*), Gemini by default."""
+    try:
+        ai = llm.settings_from_headers(request.headers)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if allow_env_key and not ai.api_key and ai.provider == "gemini":
+        ai.api_key = os.environ.get("GEMINI_API_KEY", "")
+    # Local servers (Ollama, LM Studio) behind "Custom" don't need a key.
+    if not ai.api_key and ai.provider != "custom":
+        raise HTTPException(status_code=400, detail=f"Missing API key for {ai.label}. Add it in Settings.")
+    return ai
+
 
 def _relocate_root_job_artifacts(job_id: str, job_output_dir: str) -> bool:
     """
@@ -743,7 +759,7 @@ async def run_job(job_id, job_data):
         # The subprocess now has its own copy of env; scrub the BYO request keys
         # from the retained in-memory job object (jobs live ~1h) so they aren't
         # held server-side longer than the launch.
-        for _secret in ("GEMINI_API_KEY", "SONIOX_API_KEY"):
+        for _secret in ("GEMINI_API_KEY", "LLM_API_KEY", "SONIOX_API_KEY"):
             env.pop(_secret, None)
         
         # We need to capture logs in a thread because Popen isn't async
@@ -914,10 +930,7 @@ async def process_endpoint(
     smart_placement: Optional[str] = Form(None),
 ):
     """Validate a media job request and enqueue its isolated worker process."""
-    api_key = request.headers.get("X-Gemini-Key")
-    if not api_key:
-        raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
-    gemini_model = _request_gemini_model(request)
+    ai = _request_ai(request)
 
     ack_flag = str(acknowledged).lower() in ("1", "true", "yes")
 
@@ -1007,8 +1020,7 @@ async def process_endpoint(
     # Prepare Command
     cmd = [sys.executable, "-u", "main.py"] # -u for unbuffered
     env = os.environ.copy()
-    env["GEMINI_API_KEY"] = api_key # Override with key from request
-    env["GEMINI_MODEL"] = gemini_model
+    llm.settings_to_env(ai, env)  # Override with the key/model from the request
     if YOUTUBE_COOKIES_FILE:
         env["YOUTUBE_COOKIES_FILE"] = YOUTUBE_COOKIES_FILE
     else:
@@ -1490,7 +1502,7 @@ def _merge_more_clips(job_id: str, output_dir: str, meta_path: str, scratch_dir:
     return len(new_shorts)
 
 
-def _more_clips_worker(job_id: str, count, api_key: str, gemini_model: str):
+def _more_clips_worker(job_id: str, count, ai: "llm.LLMSettings"):
     """Blocking worker (runs in an executor thread): spawn main.py in more-clips
     mode, stream its logs into the job, then merge the new clips. Always lands
     the job back on 'completed' — a failed run must never damage existing
@@ -1544,8 +1556,7 @@ def _more_clips_worker(job_id: str, count, api_key: str, gemini_model: str):
         if count:
             cmd += ["--num-clips", str(count)]
         env = os.environ.copy()
-        env["GEMINI_API_KEY"] = api_key
-        env["GEMINI_MODEL"] = gemini_model
+        llm.settings_to_env(ai, env)
 
         _log(f"Analyzing the transcript for new viral moments (excluding {len(exclude_ranges)} existing range(s))...")
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=os.getcwd())
@@ -1591,7 +1602,7 @@ def _more_clips_worker(job_id: str, count, api_key: str, gemini_model: str):
         shutil.rmtree(scratch_dir, ignore_errors=True)
 
 
-async def _run_more_clips_task(job_id: str, count, api_key: str, gemini_model: str):
+async def _run_more_clips_task(job_id: str, count, ai: "llm.LLMSettings"):
     # Acquire the SAME asyncio semaphore that gates run_job so a more-clips run
     # counts against MAX_CONCURRENT_JOBS — a semaphore slot (vs. a bare thread)
     # is the right fit here because this is heavy ffmpeg/detection work that
@@ -1601,7 +1612,7 @@ async def _run_more_clips_task(job_id: str, count, api_key: str, gemini_model: s
     async with concurrency_semaphore:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(
-            None, _more_clips_worker, job_id, count, api_key, gemini_model
+            None, _more_clips_worker, job_id, count, ai
         )
 
 
@@ -1610,10 +1621,7 @@ async def more_clips(job_id: str, request: Request):
     """Generate additional viral clips for a COMPLETED job from its saved
     transcript, excluding ranges already used, and append them to the results.
     Returns 202 immediately; the frontend polls /api/status as usual."""
-    api_key = request.headers.get("X-Gemini-Key")
-    if not api_key:
-        raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
-    gemini_model = _request_gemini_model(request)
+    ai = _request_ai(request)
     if not _safe_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job id")
 
@@ -1667,7 +1675,7 @@ async def more_clips(job_id: str, request: Request):
     job["status"] = "processing"
     job["logs"].append("Generating more clips...")
 
-    asyncio.create_task(_run_more_clips_task(job_id, count, api_key, gemini_model))
+    asyncio.create_task(_run_more_clips_task(job_id, count, ai))
     return {"status": "processing"}
 
 
@@ -2195,6 +2203,20 @@ async def proxy_render_status(render_id: str):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Render service unavailable: {e}")
 
+@app.get("/api/ai/models")
+async def list_ai_models(request: Request):
+    """Live model list for the chosen provider, so new models appear without an update."""
+    try:
+        ai = llm.settings_from_headers(request.headers, require_model=False)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        models = await asyncio.to_thread(llm.list_models, ai)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Couldn't load models from {ai.label}: {str(e)[:300]}")
+    return {"provider": ai.provider, "models": models}
+
+
 class CaptionEnhanceRequest(BaseModel):
     words: List[str]
 
@@ -2210,18 +2232,14 @@ async def enhance_captions(
     frontend merges into the subtitle captions by index. No video upload — the
     captions are text, so this is fast and cheap.
     """
-    final_api_key = x_gemini_key or os.environ.get("GEMINI_API_KEY")
-
-    if not final_api_key:
-        raise HTTPException(status_code=400, detail="Missing Gemini API Key (Header)")
-    gemini_model = _request_gemini_model(request)
+    ai = _request_ai(request, allow_env_key=True)
 
     if not req.words:
         return {"emojis": {}, "highlights": []}
 
     try:
         def run_enhance():
-            editor = VideoEditor(api_key=final_api_key, model_name=gemini_model)
+            editor = VideoEditor(ai=ai)
             return editor.get_caption_enhancements(req.words)
 
         loop = asyncio.get_running_loop()
@@ -2251,18 +2269,14 @@ async def suggest_broll(
     The frontend turns each keyword into a Pexels stock clip and inserts it at
     the suggested moment. No video upload — captions are text, so this is fast.
     """
-    final_api_key = x_gemini_key or os.environ.get("GEMINI_API_KEY")
-
-    if not final_api_key:
-        raise HTTPException(status_code=400, detail="Missing Gemini API Key (Header)")
-    gemini_model = _request_gemini_model(request)
+    ai = _request_ai(request, allow_env_key=True)
 
     if not req.words:
         return {"suggestions": []}
 
     try:
         def run_suggest():
-            editor = VideoEditor(api_key=final_api_key, model_name=gemini_model)
+            editor = VideoEditor(ai=ai)
             words = [{"text": w.text, "startMs": w.startMs} for w in req.words]
             return editor.get_broll_suggestions(words)
 

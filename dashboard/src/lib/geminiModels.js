@@ -9,9 +9,7 @@ export const GEMINI_MODELS = [
   { value: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite', help: 'Lowest-cost stable option' },
 ];
 
-export const getStoredGeminiModel = () => {
-  const stored = localStorage.getItem(GEMINI_MODEL_STORAGE_KEY);
-  return GEMINI_MODELS.some((model) => model.value === stored)
-    ? stored
-    : DEFAULT_GEMINI_MODEL;
-};
+// Settings lists Google's live models, so any stored id is kept; GEMINI_MODELS
+// is only the fallback when that list can't be loaded.
+export const getStoredGeminiModel = () =>
+  localStorage.getItem(GEMINI_MODEL_STORAGE_KEY) || DEFAULT_GEMINI_MODEL;
