@@ -43,27 +43,9 @@ const BASE = "https://fonts.gstatic.com/s/e/notoemoji/latest";
 export const lottieUrl = (slug: string) => `${BASE}/${slug}/lottie.json`;
 /** Animated image the browser plays on its own, used for editor previews. */
 export const webpUrl = (slug: string) => `${BASE}/${slug}/512.webp`;
-
-/** Animated emoji whose search words match `query` (empty query = all of them). */
-export function searchAnimatedEmoji(query: string): AnimatedEmoji[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return ANIMATED_EMOJI;
-  return ANIMATED_EMOJI.filter((e) => e.char === q || e.search.includes(q));
-}
-
 /**
- * Matching animated emoji grouped under Google's categories, in the order they
- * first appear (Google sorts by popularity, so the useful ones lead). The emoji
- * picker shows these alongside the plain-character categories.
+ * Still vector of the same artwork (~7KB vs ~190KB for the WebP). The emoji
+ * picker grid shows these so scrolling never decodes hundreds of animations
+ * at once; the WebP only plays for the one you hover.
  */
-export function searchAnimatedEmojiByCategory(
-  query: string
-): { label: string; emojis: AnimatedEmoji[] }[] {
-  const groups = new Map<string, AnimatedEmoji[]>();
-  for (const e of searchAnimatedEmoji(query)) {
-    const bucket = groups.get(e.category);
-    if (bucket) bucket.push(e);
-    else groups.set(e.category, [e]);
-  }
-  return [...groups].map(([label, emojis]) => ({ label, emojis }));
-}
+export const stillUrl = (slug: string) => `${BASE}/${slug}/emoji.svg`;

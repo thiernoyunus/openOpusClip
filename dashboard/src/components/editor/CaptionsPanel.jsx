@@ -7,6 +7,9 @@ import { getApiUrl } from '../../config';
 import { getStoredGeminiModel } from '../../lib/geminiModels';
 import CaptionPreview from './CaptionPreview';
 import { DEFAULT_EMOJI_SIZE } from '@remotion-src/compositions/Subtitles';
+import { sourceToOutputAll } from '@remotion-src/lib/edl';
+import { EDITOR_FPS } from './EditorCanvas';
+import { normalizeEmoji } from './emojiCatalog';
 
 const POSITIONS = ['top', 'middle', 'bottom'];
 const HIGHLIGHTS = ['#FFDD00', '#3dd68c', '#FF5C5C', '#5CA8FF', '#00E5FF', '#FFD700', '#FFFFFF'];
@@ -250,7 +253,7 @@ function RangeRow({ label, value, min, max, step = 1, fmt, onChange }) {
  * Submagic-style. All edits flow through SET_SUBTITLES so the live preview updates
  * instantly and they persist with Save / are baked into the Export.
  */
-function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, captionScope = 'all', setCaptionScope, getCurrentClipId }) {
+function CaptionsPanel({ framing, captions, dispatch, captionScope = 'all', setCaptionScope, getCurrentClipId }) {
     const subs = framing.subtitles || null;
     const customPlaced = subs && typeof subs.x === 'number' && typeof subs.y === 'number';
     const [savedDefault, setSavedDefault] = useState(false);
@@ -370,8 +373,19 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
     // EditorView.handleEditWord path) so the AI result has somewhere to land.
     const enhanceWithAI = async () => {
         const base = subs || defaultSubtitleConfig(captions);
-        const words = base.captions;
-        if (!words || words.length === 0) {
+        // Only words that are still in the video with their caption showing.
+        // Sending cut or hidden words let the AI spend its few emojis on words
+        // nobody sees, so the pass looked like it did nothing.
+        const fps = framing.source.fps;
+        const origin = framing.captionsOriginFrame ?? 0;
+        const spoken = (base.captions || [])
+            .map((w, i) => ({ w, i }))
+            .filter(({ w }) => {
+                if (w.captionHidden) return false;
+                const mid = origin + Math.round(((w.startMs + w.endMs) / 2000) * fps);
+                return sourceToOutputAll(framing, mid, EDITOR_FPS).length > 0;
+            });
+        if (spoken.length === 0) {
             setEnhanceError('No caption words to enhance.');
             return;
         }
@@ -390,7 +404,7 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
                     'X-Gemini-Key': apiKey,
                     'X-Gemini-Model': getStoredGeminiModel(),
                 },
-                body: JSON.stringify({ words: words.map((w) => w.text) }),
+                body: JSON.stringify({ words: spoken.map(({ w }) => w.text) }),
             });
             if (!res.ok) {
                 const txt = await res.text();
@@ -399,17 +413,23 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
                 throw new Error(detail || `Request failed (${res.status})`);
             }
             const data = await res.json();
-            const emojis = data.emojis || {};
-            const highlights = new Set((data.highlights || []).map(Number));
-            const merged = words.map((w, i) => {
-                const next = { ...w };
-                const emoji = emojis[String(i)] ?? emojis[i];
-                if (emoji) next.emoji = emoji;
-                if (highlights.has(i)) next.highlight = true;
-                return next;
-            });
-            dispatch({ type: 'SET_SUBTITLES', subtitles: { ...base, captions: merged } });
-            onEnhanceCaptions?.(merged);
+            // Map the AI's positions back to caption indices, and keep only real
+            // single emoji in the picker's spelling ("❤" without its variation
+            // selector draws as a flat black heart; "fire" or "🔥🔥" aren't one).
+            const emojis = {};
+            for (const [j, raw] of Object.entries(data.emojis || {})) {
+                const emoji = normalizeEmoji(raw);
+                const word = spoken[Number(j)];
+                if (emoji && word) emojis[word.i] = emoji;
+            }
+            const highlights = (data.highlights || [])
+                .map((j) => spoken[Number(j)]?.i)
+                .filter((i) => i !== undefined);
+            if (Object.keys(emojis).length === 0 && highlights.length === 0) {
+                setEnhanceError('The AI found nothing to add. Try again.');
+                return;
+            }
+            dispatch({ type: 'APPLY_CAPTION_ENHANCEMENTS', emojis, highlights, fallback: subs ? undefined : base });
         } catch (e) {
             setEnhanceError(e.message || 'AI enhancement failed. Try again.');
         } finally {
@@ -422,11 +442,10 @@ function CaptionsPanel({ framing, captions, dispatch, onEnhanceCaptions, caption
     const clearEnhancements = () => {
         if (!subs) return;
         const cleaned = subs.captions.map((w) => {
-            const { emoji, highlight, ...rest } = w; // eslint-disable-line no-unused-vars
+            const { emoji, emojiAnimated, emojiAuto, highlight, ...rest } = w; // eslint-disable-line no-unused-vars
             return rest;
         });
         dispatch({ type: 'SET_SUBTITLES', subtitles: { ...subs, captions: cleaned } });
-        onEnhanceCaptions?.(cleaned);
         setEnhanceError(null);
     };
 

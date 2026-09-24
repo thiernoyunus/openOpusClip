@@ -8,6 +8,7 @@
     "build": "vite build",
     "lint": "eslint src --report-unused-disable-directives",
     "test:analytics": "node src/analyticsSanitizer.selfcheck.mjs",
+    "test:emoji": "node src/components/editor/emojiCatalog.selfcheck.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

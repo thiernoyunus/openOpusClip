@@ -202,6 +202,36 @@ export const editorReducer = (state, action) => {
             }
             return withHistory(nextFraming);
         }
+        case 'APPLY_CAPTION_ENHANCEMENTS': {
+            // AI emoji + keyword pass. Merged into the captions as they are NOW,
+            // not as they were when the request went out (it takes seconds, and
+            // edits made meanwhile must survive). A re-run replaces the previous
+            // AI picks instead of piling more on; emojis chosen by hand stay.
+            const subs = state.framing.subtitles ?? action.fallback;
+            if (!subs) return state;
+            const highlights = new Set(action.highlights);
+            const captions = subs.captions.map((w, i) => {
+                const next = { ...w };
+                if (next.emojiAuto) {
+                    delete next.emoji;
+                    delete next.emojiAnimated;
+                    delete next.emojiAuto;
+                }
+                delete next.highlight;
+                const emoji = action.emojis[i];
+                if (emoji && !next.emoji) {
+                    next.emoji = emoji;
+                    next.emojiAuto = true;
+                }
+                if (highlights.has(i)) next.highlight = true;
+                return next;
+            });
+            return withHistory({
+                ...state.framing,
+                subtitles: { ...subs, captions },
+                captionsInitialized: true,
+            });
+        }
         case 'EDIT_CAPTION_WORD': {
             const subs = state.framing.subtitles;
             if (!subs) return state;
