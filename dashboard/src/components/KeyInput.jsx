@@ -119,15 +119,15 @@ export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMI
     };
 
     const geminiKeyBlock = (
-        <div className={isGemini ? '' : 'mt-6 pt-6 border-t border-white/5'}>
-            <label className="block text-sm text-zinc-300 mb-2">
-                {isGemini ? 'Gemini API key' : 'Gemini API key (optional, for thumbnails)'}
-            </label>
+        <div>
+            <label className="block text-sm text-zinc-300 mb-2">Gemini API key</label>
             <SecretField savedValue={savedKey} onSave={onKeySet} placeholder="AIzaSy..." dataTour="gemini-key-input" />
         </div>
     );
 
     const inList = shown.some((m) => m.id === model);
+    // The typed-name box sits under the dropdown, so the list is always one click away.
+    const customModel = typingModel || (!!model && !inList);
 
     return (
         <div data-tour="settings-page" className="bg-surface border border-white/5 rounded-2xl p-6 mb-8 animate-[fadeIn_0.5s_ease-out]">
@@ -184,41 +184,45 @@ export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMI
 
             <div className="mt-6">
                 <label htmlFor="ai-model" className="block text-sm text-zinc-300 mb-2">Model</label>
-                {typingModel || (!shown.length && !models) ? (
+                <select
+                    id="ai-model"
+                    value={customModel ? TYPE_OWN : model}
+                    onChange={(e) => {
+                        const value = e.target.value;
+                        setTypingModel(value === TYPE_OWN);
+                        if (value !== TYPE_OWN) setModel(value);
+                    }}
+                    className="input-field w-full"
+                >
+                    {!shown.length && (
+                        <option value="" disabled>{key ? 'Loading models…' : 'Add your key to load models'}</option>
+                    )}
+                    {shown.map((m) => (
+                        <option key={m.id} value={m.id}>
+                            {m.recommended ? '★ ' : ''}{m.label}{m.free ? ' · Free' : ''}
+                        </option>
+                    ))}
+                    <option value={TYPE_OWN}>Custom model name…</option>
+                </select>
+                {customModel && (
                     <input
-                        id="ai-model"
-                        defaultValue={model}
+                        key={provider}
+                        aria-label="Custom model name"
+                        defaultValue={inList ? '' : model}
                         onBlur={(e) => e.target.value.trim() && setModel(e.target.value.trim())}
-                        placeholder={isGemini ? DEFAULT_GEMINI_MODEL : 'e.g. anthropic/claude-sonnet-5'}
-                        className="input-field w-full font-mono"
+                        placeholder={isGemini ? DEFAULT_GEMINI_MODEL : 'Type the exact model name, e.g. deepseek-v4-pro'}
+                        className="input-field w-full font-mono mt-3"
                     />
-                ) : (
-                    <select
-                        id="ai-model"
-                        value={model}
-                        onChange={(e) => (e.target.value === TYPE_OWN ? setTypingModel(true) : setModel(e.target.value))}
-                        className="input-field w-full"
-                    >
-                        {model && !inList && <option value={model}>{model}</option>}
-                        {shown.map((m) => (
-                            <option key={m.id} value={m.id}>
-                                {m.recommended ? '★ ' : ''}{m.label}{m.free ? ' · Free' : ''}
-                            </option>
-                        ))}
-                        <option value={TYPE_OWN}>Type a model name…</option>
-                    </select>
                 )}
                 {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
                 <p className="mt-2 text-xs text-zinc-500 leading-relaxed">
                     The list comes live from {info.label}, so new models show up on their own. ★ marks our picks; Free means it works on a free key.
-                    This model handles clip detection, trailers, captions and b-roll. Thumbnails and title ideas always use Gemini.
+                    This model handles clip detection, trailers, captions and b-roll.
                 </p>
             </div>
 
-            {!isGemini && geminiKeyBlock}
-
             <p className="mt-3 text-sm text-zinc-400">
-                Your keys stay local. The app stores them in the browser and syncs the Gemini key to your OS keychain for the local MCP.
+                Your keys stay local. The app stores them in the browser{isGemini ? ' and syncs the Gemini key to your OS keychain for the local MCP' : ''}.
                 {info?.keyUrl && (
                     <>
                         <br />
