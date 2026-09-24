@@ -3345,13 +3345,16 @@ def _clear_of(moments, a, b):
 
 
 def _ending_candidates(keep, words, sentences, guest_sp, selects=None, title='', skip=(),
-                       index=None):
+                       index=None, host_sp=None):
     """Every clean DOAC ending in the episode, best first: a direct question
     from a non-guest voice, then the guest's first clean sentence of the
     reply (the guest's next words, within 20s). Questions that share words
     with the title and ones the selects pass tagged as a question or
     cliffhanger rank first. Nothing may overlap the kept moments or use a
-    sentence in `skip` (sponsor reads). Returns [(score, [question, reply])]."""
+    sentence in `skip` (sponsor reads). Returns [(score, [question, reply])].
+    With no guest (panel mode), pass host_sp: the host's question, then the
+    first line of whoever answers it."""
+    panel = guest_sp is None and host_sp is not None
     g = str(guest_sp)
     ix = index or _WordIndex(words)
     title_words = _title_words(title)
@@ -3361,7 +3364,8 @@ def _ending_candidates(keep, words, sentences, guest_sp, selects=None, title='',
     for k, q in enumerate(sentences):
         # A direct question that starts its own sentence: not a quoted one
         # ('they think, "Why is he not performing?"') or the tail of a run-on.
-        if q.get('sp') is None or str(q['sp']) == g or q['i'] in skip \
+        if q.get('sp') is None or (str(q['sp']) != str(host_sp) if panel else str(q['sp']) == g) \
+                or q['i'] in skip \
                 or not _text_is_question(q['text']) \
                 or not 4 <= len(q['text'].split()) <= 25 or any(c in q['text'] for c in '"“”'):
             continue
@@ -3373,11 +3377,12 @@ def _ending_candidates(keep, words, sentences, guest_sp, selects=None, title='',
         for r in sentences[k + 1:]:
             if r['s'] - q['e'] > 20:
                 break
-            if str(r.get('sp')) == g:
+            if str(r.get('sp')) == g or (panel and r.get('sp') is not None and str(r['sp']) != str(host_sp)):
                 reply = r
                 break
         if reply is None or reply['i'] in skip:
             continue
+        rs = str(reply['sp'])
         qw = ix.words_in(q['s'], q['e'])
         qb = qw[_lead_in_len(qw):] or qw
         if not qb or _accent_normalize(qb[0]['word']) not in _QUESTION_OPENERS \
@@ -3389,7 +3394,7 @@ def _ending_candidates(keep, words, sentences, guest_sp, selects=None, title='',
         # than stopping two words early.
         last_piece = reply
         while last_piece.get('more') and last_piece['i'] + 1 < len(sentences) \
-                and str(sentences[last_piece['i'] + 1].get('sp')) == g:
+                and str(sentences[last_piece['i'] + 1].get('sp')) == rs:
             last_piece = sentences[last_piece['i'] + 1]
         rw = ix.words_in(reply['s'], last_piece['e'])
         if not rw or next((c for c in rw[0]['word'] if c.isalpha()), 'A').islower():
@@ -3401,7 +3406,7 @@ def _ending_candidates(keep, words, sentences, guest_sp, selects=None, title='',
                        and w['word'].strip().endswith(_CLAUSE_END + ('.', '!', '?'))), default=None)
             rw = rw[:cut + 1] if cut is not None and cut >= 4 else []
         if not qw or not rw or _reply_problem(rw) or not _clear_of(keep, q['s'], float(rw[-1]['end'])) \
-                or sentences[reply['i'] - 1].get('more') and str(sentences[reply['i'] - 1].get('sp')) == g:
+                or sentences[reply['i'] - 1].get('more') and str(sentences[reply['i'] - 1].get('sp')) == rs:
             continue
         if _accent_normalize(rw[0]['word']) in ('because', 'cause', 'and', 'but'):
             continue  # the reply leans on something the viewer never heard
@@ -3419,10 +3424,10 @@ def _ending_candidates(keep, words, sentences, guest_sp, selects=None, title='',
     return out
 
 
-def _code_ending(keep, words, sentences, guest_sp, selects=None, title=''):
+def _code_ending(keep, words, sentences, guest_sp, selects=None, title='', host_sp=None):
     """The DOAC ending built without the model, for when its own endings keep
     failing: the best of _ending_candidates, or None."""
-    found = _ending_candidates(keep, words, sentences, guest_sp, selects, title)
+    found = _ending_candidates(keep, words, sentences, guest_sp, selects, title, host_sp=host_sp)
     return found[0][1] if found else None
 
 
@@ -3973,6 +3978,155 @@ def _guess_guest(sentences, title, host):
     return (top if clear else None), {v: round(score[v], 1) for v in voices}, second
 
 
+# How a host opens and introduces people in the first minutes.
+_HOST_INTRO_RE = re.compile(
+    r"\b(?:welcome|joined by|to my (?:left|right)|across (?:from )?me|on the panel|we have|"
+    r"we've got|today'?s guests?|my guests?|our guests?|introduce|(?:his|her) name is|say hello)\b",
+    re.I)
+# ...and the words right before the name of someone introduced.
+_NAME_TRIGGER_RE = re.compile(
+    r"\b(?:we have|we've got|joined by|(?:his|her|their) name is|welcome|say hello to|introduce|"
+    r"with me is|guests? (?:is|are))\s+", re.I)
+_HONORIFICS = {'brother', 'sister', 'dr', 'doctor', 'sheikh', 'shaykh', 'imam', 'ustadh', 'ustadha',
+               'mr', 'mrs', 'ms', 'miss', 'professor', 'prof', 'sir', 'mister', 'coach'}
+_NOT_NAMES = {'the', 'a', 'an', 'this', 'that', 'today', 'guys', 'everyone', 'everybody', 'you',
+              'my', 'our', 'back', 'to', 'i', 'we', 'he', 'she', 'they'}
+# Share of all words a voice needs to count as a main voice (not a cameo).
+MAIN_VOICE_SHARE = 0.10
+EPISODE_INTRO_S = 180.0
+
+
+def _introduced_names(text):
+    """Names the host introduces in `text` ("we have Brother Sam and Brother
+    Mohammed Souq", "his name is Jihad"), lower-cased."""
+    names = set()
+    for m in _NAME_TRIGGER_RE.finditer(text):
+        cur, closed = [], False
+        for raw in text[m.end():].split()[:12]:
+            w = raw.strip('.,;:!?"“”()')
+            low = _accent_normalize(w)
+            if closed and low != 'and':
+                break
+            if low == 'and':
+                if cur:
+                    names.add(' '.join(cur))
+                cur, closed = [], False
+                continue
+            if low in _HONORIFICS:
+                pass
+            elif w[:1].isupper() and not w.isupper() and low not in _NOT_NAMES:
+                cur.append(low)
+            else:
+                break
+            if raw[-1:] in '.,;:!?' and cur:
+                names.add(' '.join(cur))
+                cur, closed = [], True
+                if raw[-1:] in '.!?':
+                    break
+        if cur:
+            names.add(' '.join(cur))
+    return names
+
+
+def _find_host(sentences, window=EPISODE_INTRO_S):
+    """The host: the voice that opens the episode and does the introductions
+    in its first minutes. Real questions asked (tags like ", right?" do not
+    count) only break a tie."""
+    voices = {str(x['sp']) for x in sentences if x.get('sp') is not None}
+    if not voices:
+        return None
+    early = [x for x in sentences if x.get('sp') is not None and x['s'] < window]
+    intro = {}
+    for x in early:
+        intro[str(x['sp'])] = intro.get(str(x['sp']), 0) + 2 * len(_HOST_INTRO_RE.findall(x['text']))
+    first = next((str(x['sp']) for x in early if len(x['text'].split()) >= 5), None)
+    if first is not None:
+        intro[first] = intro.get(first, 0) + 1
+    asked = {}
+    for x in sentences:
+        if x.get('sp') is not None and _text_is_question(x['text']):
+            asked[str(x['sp'])] = asked.get(str(x['sp']), 0) + 1
+    return max(sorted(voices), key=lambda v: (intro.get(v, 0), asked.get(v, 0)))
+
+
+def _episode_type(sentences, title='', notes=''):
+    """Interview, focused panel or panel, decided with or without a title
+    (the skill's "guest episode or panel/regular one" step):
+      1. host = the voice that opens and introduces (see _find_host);
+      2. main voices = the other voices with MAIN_VOICE_SHARE of the words;
+         one main voice is an interview and that person is the guest;
+      3. two or more is a panel; it has a guest only when the title or the
+         trailer instructions point at one panelist (their words match);
+      4. otherwise panel mode: no guest, time shared.
+    Fewer speaker labels than the people the host introduces means the
+    diarization merged voices: panel mode, whatever the labels say.
+    Returns a dict saved in the trailer debug."""
+    host = _find_host(sentences)
+    talk = {}
+    for x in sentences:
+        if x.get('sp') is not None:
+            talk[str(x['sp'])] = talk.get(str(x['sp']), 0) + len(x['text'].split())
+    total = sum(talk.values()) or 1
+    share = {v: round(n / total, 3) for v, n in talk.items()}
+    main = sorted((v for v in talk if v != host and share[v] >= MAIN_VOICE_SHARE),
+                  key=lambda v: -share[v])
+    names = set()
+    for x in sentences:
+        if x['s'] < EPISODE_INTRO_S and str(x.get('sp')) == host:
+            names |= _introduced_names(x['text'])
+    unreliable = len(talk) < len(names) + 1
+    info = {'host_sp': host, 'main_voices': main, 'talk_share': share,
+            'introduced': sorted(names), 'labels_unreliable': unreliable,
+            'guest_sp': None, 'title_scores': {}, 'runner_up': None}
+    focus = ' '.join(t for t in (title, notes) if t).strip()
+    if unreliable:
+        info['type'] = 'panel'
+        info['why'] = (f"{len(talk)} speaker label(s) for {len(names) + 1} people the host "
+                       f"introduces ({', '.join(sorted(names))}); labels are merged")
+    elif not main:
+        info['type'], info['why'] = 'solo', 'no other voice with a real share of the talk'
+    elif len(main) == 1:
+        info['type'], info['guest_sp'] = 'interview', main[0]
+        info['why'] = f"one main voice besides the host ({share[main[0]]:.0%} of the words)"
+    else:
+        guest, scores, runner = _guess_guest(
+            [x for x in sentences if str(x.get('sp')) in main + [host]], focus, host) \
+            if focus else (None, {}, None)
+        info.update(title_scores=scores, runner_up=runner)
+        if guest is not None:
+            info['type'], info['guest_sp'] = 'panel-focused', guest
+            info['why'] = 'the title/instructions match one panelist\'s own words'
+        else:
+            info['type'] = 'panel'
+            info['why'] = ('the title/instructions match no one panelist clearly' if focus
+                           else 'a panel and no title or instructions pointing at one panelist')
+    info['ask_model'] = info['type'] == 'panel' and bool(focus) and not unreliable
+    return info
+
+
+def _episode_note(episode):
+    """The code's who-is-who decision, for the one-shot prompt (it overrides
+    the talk-time stats above it)."""
+    host, guest = episode['host_sp'], episode['guest_sp']
+    note = (f"WHO IS WHO (decided from the opening; this overrides the stats above): the host is "
+            f"speaker {host}.")
+    if episode['labels_unreliable']:
+        note += (f" There are {len(episode['introduced']) + 1} people on the show (the host "
+                 f"introduces {len(episode['introduced'])}) but fewer speaker labels, so one label "
+                 f"can hold several people: never rely on the labels to tell the panelists apart.")
+    if guest is not None:
+        return note + (f" The featured guest is speaker {guest} ({episode['type']}); set guest_sp "
+                       f"to \"{guest}\".")
+    if episode['type'] == 'solo':
+        return note + (" No other voice has a real share of the talk, so there is no featured guest: "
+                       "set guest_sp to null and build the trailer from the host's own lines.")
+    return note + (" PANEL MODE: this episode has no featured guest. Set guest_sp to null. Share the "
+                   "time between the panelists, introduce every panelist who speaks, the hook can "
+                   "come from any panelist, and the guest rules (guest first, guest share, the "
+                   "guest's ending) do not apply. End on an open question, or on the host's "
+                   "question plus the first line of whoever answers it.")
+
+
 def _match_label(value, labels):
     """A speaker label from the model ("3", 3, "Speaker 3", "speaker_3"), or None."""
     if value is None:
@@ -3985,7 +4139,7 @@ def _match_label(value, labels):
 
 
 def _slot_trailer(client, model_name, sentences, words, skip, selects, title, notes,
-                  target_seconds, speaker_context, slot_debug=None, force_guest=None):
+                  target_seconds, speaker_context, slot_debug=None, force_guest=None, episode=None):
     """The slot-by-slot trailer (see TRAILER_SLOTS). Returns a winner dict
     like _generate_trailer_candidate's, or None to fall back; slot_debug gets
     'skipped' with the reason."""
@@ -4003,35 +4157,36 @@ def _slot_trailer(client, model_name, sentences, words, skip, selects, title, no
     labels = {str(x['sp']) for x in sentences if 'sp' in x}
     opening = [{'i': x['i'], 'sp': x.get('sp'), 'text': x['text']}
                for x in sentences if x['s'] < 300 and x['i'] not in skip][:120]
-    # The guest is decided in code from the title (see _guess_guest); the
-    # model only breaks a tie. Talk time is never used: on the ex-Amazon
-    # panel the busiest panelist was not the engineer the title is about.
-    host = _host_label(sentences, None)
-    code_guest, scores, runner_up = _guess_guest(sentences, title, host)
+    # Who is who is decided in code (see _episode_type): an interview's one
+    # other main voice, or the panelist the title/instructions point at. The
+    # model only names the guest on a panel whose title or instructions
+    # match no one panelist clearly. Talk time never picks the guest.
+    episode = episode or _episode_type(sentences, title, notes)
+    host = episode['host_sp']
     who = _flash_json(client, model_name, SLOT_WHO_PROMPT.format(
         brief=brief, speakers=speaker_context, opening=json.dumps(opening)), costs)
     who = who if isinstance(who, dict) else {}
     model_guest = _match_label(who.get('guest_sp'), labels)
+    runner_up = episode.get('runner_up')
     if force_guest is not None:
         guest, why = str(force_guest), 'forced (re-run with the other candidate)'
-    elif code_guest is not None:
-        guest, why = code_guest, 'title match'
-    elif model_guest is not None and model_guest != host:
-        guest, why = model_guest, 'model (title match inconclusive)'
-    elif scores and max(scores.values()) > 0:
-        guest = max(scores, key=scores.get)
-        why = 'best title match (inconclusive, no model answer)'
+    elif episode['guest_sp'] is not None:
+        guest, why = episode['guest_sp'], episode['why']
+    elif episode.get('ask_model') and model_guest in episode['main_voices']:
+        guest, why = model_guest, 'model (the title/instructions match no one panelist clearly)'
     else:
-        guest, why = None, ''
-    slot_debug['who'] = {'guest_sp': guest, 'host_sp': host, 'why': why, 'title_scores': scores,
-                         'runner_up': runner_up, 'model': {k: who.get(k) for k in ('guest_sp', 'host_sp', 'topic')}}
+        guest, why = None, episode['why']
+    kind = episode['type'] if guest is None or episode['guest_sp'] == guest else 'panel-focused'
+    slot_debug['who'] = {'episode_type': kind, 'guest_sp': guest, 'host_sp': host, 'why': why,
+                         'main_voices': episode['main_voices'], 'talk_share': episode['talk_share'],
+                         'introduced': episode['introduced'],
+                         'labels_unreliable': episode['labels_unreliable'],
+                         'title_scores': episode['title_scores'], 'runner_up': runner_up,
+                         'model': {k: who.get(k) for k in ('guest_sp', 'host_sp', 'topic')}}
     if guest is None or guest == host:
-        slot_debug['skipped'] = f"no featured guest (model said {who.get('guest_sp')!r}, title scores {scores})"
+        slot_debug['skipped'] = f"{episode['type']} mode, no featured guest ({why})"
         print(f"   🧩 Slots: {slot_debug['skipped']}; using the one-shot trailer prompt.")
         return None
-    if model_guest is not None and model_guest != guest:
-        print(f"   🧩 Slots: the model named speaker {model_guest} as the guest, but the title "
-              f"matches speaker {guest} ({scores}); going with speaker {guest}.")
     topic = ' '.join(str(who.get('topic') or title or '').split())[:80] or 'the episode'
     print(f"   🧩 Slots: guest = speaker {guest} ({why}), host = speaker {host}, topic = {topic!r}")
     header = SLOT_HEADER.format(brief=_trailer_brief(title, notes, stage='selects'),
@@ -4361,10 +4516,17 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
           f"from {len(refine_words)} words.")
 
     speaker_context = _trailer_speaker_context(sentences)
+    episode = None
     if speaker_context:
         n_speakers = len({s['sp'] for s in sentences if 'sp' in s})
         print(f"   🗣️  Diarization: {n_speakers} speaker(s) detected — "
               f"using speaker-aware trailer rules.")
+        # Interview, focused panel or panel, decided in code from the opening
+        # (not from the title alone, and never from talk time).
+        episode = _episode_type(sentences, title, notes)
+        print(f"   🗣️  Episode: {episode['type']}, host = speaker {episode['host_sp']}, "
+              f"guest = {episode['guest_sp']} ({episode['why']}).")
+        speaker_context += "\n" + _episode_note(episode)
     else:
         print("   🗣️  No speaker labels in transcript (local Whisper?) — "
               "model will infer host/guest from text alone.")
@@ -4423,7 +4585,8 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
         print("   🧩 Building the trailer slot by slot (TRAILER_SLOTS=0 for the one-shot prompt)...")
         try:
             slotted = _slot_trailer(client, model_name, sentences, refine_words, ads, bites or [],
-                                    title, notes, target_seconds, speaker_context, slot_debug)
+                                    title, notes, target_seconds, speaker_context, slot_debug,
+                                    episode=episode)
             # A title's own subject flagged as "never introduced" means the
             # wrong person was taken for the guest: build it again around them.
             if slotted:
@@ -4438,7 +4601,7 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
                     retry_debug = {}
                     retry = _slot_trailer(client, model_name, sentences, refine_words, ads, bites or [],
                                           title, notes, target_seconds, speaker_context, retry_debug,
-                                          force_guest=runner)
+                                          force_guest=runner, episode=episode)
                     if retry:
                         left = _trailer_story_problems(retry['moments_ordered'], refine_words,
                                                        retry['guest_sp'], bites or [], sentences)
@@ -4483,6 +4646,18 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
             model=TRAILER_MODEL,
         )
 
+    # Who the guest is was decided in code; the model's guest_sp only counts
+    # on a panel the code could not settle (and only for a main voice).
+    def set_guest(c):
+        if episode is None or c is slotted:
+            return c
+        if episode['guest_sp'] is not None:
+            c['guest_sp'] = episode['guest_sp']
+        elif not (episode.get('ask_model') and str(c.get('guest_sp')) in episode['main_voices']):
+            c['guest_sp'] = None
+        return c
+    candidates = [set_guest(c) for c in candidates]
+
     if len(candidates) == 1:
         best = 0
         print("   🧑‍⚖️ Only one usable candidate; skipping judge.")
@@ -4517,8 +4692,7 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
             break
         if fixed.get('cost_analysis'):
             repair_costs.append(fixed['cost_analysis'])
-        if fixed.get('guest_sp') is None:
-            fixed['guest_sp'] = winner.get('guest_sp')
+        fixed['guest_sp'] = winner.get('guest_sp')
         left = rule_problems(fixed)
         if len(left) > len(problems):
             print(f"   📏 Fix made it worse ({len(left)} issues); keeping the earlier cut.")
@@ -4545,6 +4719,18 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
             else:
                 print("   ⚠️  The ending still breaks the rules and no clean question + reply "
                       "was found to replace it.")
+    elif episode is not None and episode['type'] == 'panel':
+        # Panel mode: an open question, or the host's question plus the first
+        # line of whoever answers; built in code when the model's ending fails.
+        ms = winner['moments_ordered']
+        per = [_moment_words(refine_words, m) for m in ms]
+        if ms and _ending_problem(per, refine_words, None):
+            built = _code_ending(ms[:-1], refine_words, sentences, None, bites, title,
+                                 host_sp=episode['host_sp'])
+            if built:
+                print(f"   🎬 Panel ending built in code: \"{built[0]['text']}\" -> \"{built[1]['text']}\"")
+                winner = dict(winner, moments_ordered=ms[:-1] + built)
+                problems = rule_problems(winner)
     moments = _fit_trailer_budget(winner['moments_ordered'], refine_words, target_seconds)
     moments = _drop_inner_fillers(moments, refine_words)
     script = winner['script']
@@ -4564,6 +4750,7 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
            # Saved in the metadata so a bad trailer can be traced to its step.
            'debug': {'selects': bites or [], 'ads': sorted(ads),
                      'guest_sp': winner.get('guest_sp'), 'problems_left': problems,
+                     'episode': episode,
                      'mode': 'slots' if slotted else 'one-shot', 'slots': slot_debug}}
     if costs:
         candidate_latencies = [c.get('latency_ms') for c in costs if c.get('latency_ms') is not None]

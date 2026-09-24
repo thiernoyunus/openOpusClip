@@ -28,6 +28,9 @@ from main import (
     _drop_inner_fillers,
     _guess_guest,
     _host_label,
+    _episode_type,
+    _introduced_names,
+    _ending_candidates,
 )
 import json
 import os
@@ -759,6 +762,81 @@ def test_guess_guest_on_real_ex_amazon_runs():
             sents = _build_sentence_transcript(json.load(f))
         host = _host_label(sents, None)
         assert _guess_guest(sents, EX_AMAZON_TITLE, host)[0] == '3', r
+
+
+
+def _episode(lines):
+    """lines: [(speaker, text)], one sentence every 5s."""
+    return [{'i': i, 's': i * 5.0, 'e': i * 5.0 + 4, 'text': t, 'sp': sp}
+            for i, (sp, t) in enumerate(lines)]
+
+
+def test_introduced_names_reads_panel_intros():
+    assert _introduced_names("On the panel, alhamdulillah, we have Brother Sam and Brother Mohammed "
+                             "Souq, who both manage a real estate fund.") == {'sam', 'mohammed souq'}
+    assert _introduced_names("And across from me, we have Brother Jamal, Allahumma barik, who's "
+                             "here.") == {'jamal'}
+    assert _introduced_names("So this brother, his name is Jihad. He's a mujahid in AI.") == {'jihad'}
+    assert _introduced_names("Guys, welcome back to another episode. Today we have a conversation.") == set()
+
+
+def test_one_on_one_is_an_interview_even_when_the_guest_talks_less():
+    lines = [('A', "Welcome back to the show, today I'm joined by Sarah Lee, a heart surgeon.")]
+    lines += [('A', 'I remember when I first got into medicine it felt like a whole new world to me.')] * 8
+    lines += [('B', 'Yes, I operate on hearts every single day.'), ('A', 'How did you start?'),
+              ('B', 'I started in a small clinic in Leeds.')] * 3
+    ep = _episode_type(_episode(lines))  # no title, no instructions
+    assert ep['host_sp'] == 'A' and ep['type'] == 'interview' and ep['guest_sp'] == 'B'
+    assert ep['talk_share']['B'] < ep['talk_share']['A']
+
+
+def test_panel_without_a_title_has_no_guest_and_skips_the_slots():
+    lines = [('1', 'Welcome back, to my left we have Omar and across me we have Jihad.')]
+    lines += [('2', 'We train sales teams for big brands every week, right?'),
+              ('3', 'I run my agency with AI and four meetings a week.'),
+              ('1', 'How does that work for clients?')] * 5
+    sents = _episode(lines)
+    ep = _episode_type(sents)
+    assert ep['type'] == 'panel' and ep['guest_sp'] is None and set(ep['main_voices']) == {'2', '3'}
+    assert _episode_type(sents, 'The AI Agency Run On Four Meetings A Week')['guest_sp'] == '3'
+    words = []
+    for x in sents:
+        words += said(x['text'], x['s'], x['sp'], gap=0.25)
+    debug = {}
+    assert _slot_trailer(_SlotClient(), 'm', sents, words, set(), [], '', '', 60, 'S', debug) is None
+    assert debug['who']['episode_type'] == 'panel' and 'panel mode' in debug['skipped']
+    # Its ending: the host's question, then the first line of whoever answers.
+    found = _ending_candidates([], words, sents, None, host_sp='1')
+    assert found and all(q['text'].startswith('How does') for _, (q, r) in found)
+
+
+def test_fewer_labels_than_people_introduced_means_panel_mode():
+    lines = [('1', 'On the panel we have Brother Sam and Brother Mohammed Souq, and across from me '
+                   'we have Brother Jamal, who builds stores.')]
+    lines += [('2', 'We build e-commerce stores that make ten thousand a month.'),
+              ('1', 'What makes it an asset class?')] * 6
+    ep = _episode_type(_episode(lines))
+    assert ep['labels_unreliable'] and ep['type'] == 'panel' and ep['guest_sp'] is None
+
+
+def test_episode_type_on_real_runs():
+    import pytest
+    base = '/mnt/project-files/doac-podcast-trailer/app-runs/'
+    runs = ['ex-amazon-run5-slots-wrong-guest', 'e-commerce-run1']
+    if not all(os.path.exists(base + r + '/transcript.json') for r in runs):
+        pytest.skip('saved app runs not available')
+    sents = {}
+    for r in runs:
+        with open(base + r + '/transcript.json') as f:
+            sents[r] = _build_sentence_transcript(json.load(f))
+    ex = sents['ex-amazon-run5-slots-wrong-guest']
+    focused = _episode_type(ex, EX_AMAZON_TITLE)
+    assert focused['type'] == 'panel-focused' and focused['guest_sp'] == '3' and focused['host_sp'] == '1'
+    bare = _episode_type(ex)
+    assert bare['type'] == 'panel' and bare['guest_sp'] is None
+    # 4 people (host, Jamal, Sam, Muhammad) but Soniox gave only 2 labels.
+    ecom = _episode_type(sents['e-commerce-run1'])
+    assert ecom['labels_unreliable'] and ecom['type'] == 'panel' and ecom['host_sp'] == '1'
 
 
 if __name__ == '__main__':
