@@ -3,8 +3,7 @@ import { Clock, FileText, Scissors, Smile, Wand2, X, Plus, Loader2, Pencil, EyeO
 import { EDITOR_FPS } from './EditorCanvas';
 import { wordSourceToOutput, sourceToOutputAll } from '@remotion-src/lib/edl';
 import { detectFillerCuts, detectPauseCuts, visibleTranscriptPauses } from './speechCleanup';
-import { filterEmojiCategories } from './emojiData';
-import { searchAnimatedEmojiByCategory, webpUrl } from '@remotion-src/lib/animatedEmoji';
+import EmojiPicker from './EmojiPicker';
 
 const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three', four: 'Four' };
 
@@ -15,8 +14,7 @@ const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three',
  * keeps the click/edit handlers stable (useCallback) and passes index+word
  * back through them, so this component's props stay referentially stable.
  */
-const Word = React.memo(function Word({ index, word, isActive, suppressHighlight, isCut, captionHidden, inSel, onWordClick, onEdit }) {
-    const displayText = word.emoji ? `${word.text} ${word.emoji}` : word.text;
+const Word = React.memo(function Word({ index, word, isActive, suppressHighlight, isCut, captionHidden, inSel, onWordClick, onEdit, onEmojiClick }) {
     const colorClass = word.highlight ? 'text-[#04f827]' : 'text-white';
     return (
         <span
@@ -48,7 +46,35 @@ const Word = React.memo(function Word({ index, word, isActive, suppressHighlight
                           : `${colorClass} hover:bg-white/10`
             }`}
         >
-            {displayText}{' '}
+            {word.text}
+            {word.emoji && (
+                <>
+                    {' '}
+                    {/* Its own target: clicking the emoji opens the picker on
+                        this word with Remove at the top, instead of just
+                        selecting the word. */}
+                    <span
+                        data-transcript-emoji=""
+                        role="button"
+                        tabIndex={isCut ? -1 : 0}
+                        title="Change or remove this emoji"
+                        aria-label="Change or remove this emoji"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (!isCut) onEmojiClick(index);
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key !== 'Enter' && e.key !== ' ') return;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (!isCut) onEmojiClick(index);
+                        }}
+                        className="rounded hover:bg-white/20 hover:ring-1 hover:ring-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300/60"
+                    >
+                        {word.emoji}
+                    </span>
+                </>
+            )}{' '}
         </span>
     );
 });
@@ -93,7 +119,6 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     const [popupTick, setPopupTick] = useState(0);
     const [selectedPause, setSelectedPause] = useState(null);
     const [emojiOpen, setEmojiOpen] = useState(false);
-    const [emojiQuery, setEmojiQuery] = useState('');
     // Caption index the picker writes to when it was opened from the toolbar
     // rather than from an in-progress word edit.
     const [emojiTarget, setEmojiTarget] = useState(null);
@@ -319,22 +344,9 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         setEmojiOpen(false);
     }, [editingIndex, draft, onEditWord]);
 
-    // Animated and regular live in the same picker, each under its own
-    // categories, so one search covers both and you can see which is which
-    // before you pick. Animated buttons show the real moving artwork — Google's
-    // design often differs from the system emoji, so a character preview would
-    // hand you something that looks nothing like what lands on the caption.
-    // ponytail: 512px is the only size Google serves (~190KB), so these load
-    // lazily — only what's on screen is fetched. Serve smaller copies ourselves
-    // if scrolling the full list ever feels heavy.
-    const animatedCategories = useMemo(
-        () => searchAnimatedEmojiByCategory(emojiQuery),
-        [emojiQuery],
-    );
-    const emojiCategories = useMemo(() => filterEmojiCategories(emojiQuery), [emojiQuery]);
-
     const insertEmoji = useCallback((emoji, animated) => {
-        const patch = { emoji, emojiAnimated: animated === true };
+        // Picked by hand, so a later AI re-run leaves it alone (emojiAuto off).
+        const patch = { emoji, emojiAnimated: animated === true, emojiAuto: undefined };
         if (editingIndex !== null) {
             // Mid-edit: keep whatever text is in the box alongside the emoji.
             const text = draft.trim();
@@ -347,7 +359,22 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         setEmojiTarget(null);
         setSel(null);
         setEmojiOpen(false);
-        setEmojiQuery('');
+        emojiInteractingRef.current = false;
+    }, [draft, editingIndex, emojiTarget, onEditWord]);
+
+    // Clear the emoji off the picker's word (keeping an in-progress text edit).
+    const removeEmoji = useCallback(() => {
+        const patch = { emoji: undefined, emojiAnimated: undefined, emojiAuto: undefined };
+        if (editingIndex !== null) {
+            const text = draft.trim();
+            onEditWord(editingIndex, text ? { ...patch, text } : patch);
+        } else if (emojiTarget !== null) {
+            onEditWord(emojiTarget, patch);
+        }
+        setEditingIndex(null);
+        setEmojiTarget(null);
+        setSel(null);
+        setEmojiOpen(false);
         emojiInteractingRef.current = false;
     }, [draft, editingIndex, emojiTarget, onEditWord]);
 
@@ -355,8 +382,20 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     const openEmojiFor = useCallback((index) => {
         setEmojiTarget(index);
         setEditingIndex(null);
-        setEmojiQuery('');
         setEmojiOpen(true);
+        emojiInteractingRef.current = true;
+    }, []);
+
+    // Clicking the emoji itself in the transcript: select its word and open
+    // the picker on it, where Remove sits at the top.
+    const onEmojiClick = useCallback((index) => {
+        setSelectedPause(null);
+        setAnchorIdx(index);
+        setSel({ anchor: index, focus: index });
+        openEmojiFor(index);
+    }, [openEmojiFor]);
+
+    const markEmojiInteracting = useCallback(() => {
         emojiInteractingRef.current = true;
     }, []);
 
@@ -392,7 +431,6 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         setEditingIndex(index);
         setDraft(word.text);
         setEmojiOpen(false);
-        setEmojiQuery('');
     }, []);
 
     // sel.anchor/focus are caption ARRAY indices (stable identity for a word);
@@ -449,6 +487,11 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     // offers "Restore caption" instead of "Remove caption".
     const allHidden = selCaptionIndices.length > 0
         && selCaptionIndices.every((i) => captions[i]?.captionHidden);
+    // The emoji on the single selected word, if any (toolbar offers Remove).
+    const selectedEmoji = selCaptionIndices.length === 1 ? captions[selCaptionIndices[0]]?.emoji : undefined;
+    // The word the open picker writes to, so it can show that word's emoji.
+    const pickerIndex = editingIndex ?? emojiTarget;
+    const pickerWord = pickerIndex != null ? captions[pickerIndex] : null;
 
     const handleToggleCaption = () => {
         if (selCaptionIndices.length === 0) return;
@@ -721,6 +764,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                 inSel={!!(selRange && row.pos >= selRange.lo && row.pos <= selRange.hi)}
                                 onWordClick={onWordClick}
                                 onEdit={onEdit}
+                                onEmojiClick={onEmojiClick}
                             />
                         )
                     )
@@ -750,10 +794,23 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                         <button
                             data-toolbar-emoji=""
                             onClick={() => openEmojiFor(selCaptionIndices[0])}
-                            title="Add an emoji to this word"
+                            title={selectedEmoji ? 'Change this word\'s emoji' : 'Add an emoji to this word'}
                             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-zinc-200 hover:bg-white/10 transition-colors"
                         >
                             <Smile size={13} /> Emoji
+                        </button>
+                    )}
+                    {selCount === 1 && selectedEmoji && (
+                        <button
+                            data-toolbar-remove-emoji=""
+                            onClick={() => {
+                                onEditWord(selCaptionIndices[0], { emoji: undefined, emojiAnimated: undefined, emojiAuto: undefined });
+                                dismissToolbar();
+                            }}
+                            title="Take the emoji off this word"
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-zinc-200 hover:bg-white/10 transition-colors"
+                        >
+                            <X size={13} /> Remove {selectedEmoji}
                         </button>
                     )}
                     <button
@@ -792,122 +849,13 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
             )}
 
             {emojiOpen && (
-                <div
-                    data-emoji-picker=""
-                    className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center px-4"
-                    onMouseDown={() => {
-                        commitEdit();
-                    }}
-                >
-                    <div
-                        className="w-[430px] max-w-[calc(100vw-32px)] max-h-[70vh] rounded-lg border border-[#2b2d33] bg-[#0b0b0d] shadow-2xl p-3"
-                        onMouseDown={(e) => {
-                            emojiInteractingRef.current = true;
-                            e.stopPropagation();
-                        }}
-                    >
-                        <div className="flex items-center gap-2 mb-3">
-                            <input
-                                data-emoji-search=""
-                                autoFocus
-                                value={emojiQuery}
-                                onChange={(e) => setEmojiQuery(e.target.value)}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Escape') commitEdit();
-                                }}
-                                placeholder="Search"
-                                className="h-10 flex-1 rounded-md border border-[#2d2f36] bg-[#18191d] px-3 text-sm text-fg placeholder:text-zinc-500 focus:outline-none focus:border-white/30"
-                            />
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    commitEdit();
-                                }}
-                                className="size-9 rounded-md text-zinc-400 hover:text-white hover:bg-white/10 flex items-center justify-center"
-                                title="Close"
-                            >
-                                <X size={16} />
-                            </button>
-                        </div>
-                        <div className="overflow-y-auto custom-scrollbar pr-1 max-h-[46vh] space-y-3">
-                            {animatedCategories.length > 0 && (
-                                <>
-                                    <div className="sticky top-0 z-20 -mx-1 bg-[#0b0b0d] px-1 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-lime-300/80">
-                                        Animated
-                                    </div>
-                                    {animatedCategories.map((category) => (
-                                        <section key={`anim-${category.label}`} data-emoji-category={`Animated · ${category.label}`}>
-                                            <div className="inline-flex rounded-md bg-white px-3 py-1.5 text-sm font-medium text-zinc-950 shadow">
-                                                {category.label}
-                                            </div>
-                                            <div className="mt-2 grid grid-cols-9 gap-1.5">
-                                                {category.emojis.map(({ slug, char }) => (
-                                                    <button
-                                                        key={slug}
-                                                        type="button"
-                                                        data-emoji-choice={char}
-                                                        data-emoji-animated=""
-                                                        title={`${char} (animated)`}
-                                                        onMouseDown={(e) => {
-                                                            emojiInteractingRef.current = true;
-                                                            e.preventDefault();
-                                                        }}
-                                                        onClick={() => insertEmoji(char, true)}
-                                                        className="size-10 rounded-md flex items-center justify-center hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300/60"
-                                                    >
-                                                        <img
-                                                            src={webpUrl(slug)}
-                                                            alt={char}
-                                                            loading="lazy"
-                                                            decoding="async"
-                                                            width={32}
-                                                            height={32}
-                                                            className="size-8 object-contain"
-                                                        />
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </section>
-                                    ))}
-                                </>
-                            )}
-                            {emojiCategories.length > 0 && (
-                                <>
-                                    <div className="sticky top-0 z-20 -mx-1 bg-[#0b0b0d] px-1 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
-                                        Regular
-                                    </div>
-                                    {emojiCategories.map((category) => (
-                                        <section key={`plain-${category.label}`} data-emoji-category={category.label}>
-                                            <div className="inline-flex rounded-md bg-white px-3 py-1.5 text-sm font-medium text-zinc-950 shadow">
-                                                {category.label}
-                                            </div>
-                                            <div className="mt-2 grid grid-cols-9 gap-1.5">
-                                                {category.emojis.map((emoji, index) => (
-                                                    <button
-                                                        key={`${category.label}-${emoji}-${index}`}
-                                                        type="button"
-                                                        data-emoji-choice={emoji}
-                                                        onMouseDown={(e) => {
-                                                            emojiInteractingRef.current = true;
-                                                            e.preventDefault();
-                                                        }}
-                                                        onClick={() => insertEmoji(emoji, false)}
-                                                        className="size-10 rounded-md text-2xl leading-none flex items-center justify-center hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300/60"
-                                                    >
-                                                        {emoji}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </section>
-                                    ))}
-                                </>
-                            )}
-                            {animatedCategories.length === 0 && emojiCategories.length === 0 && (
-                                <p className="py-6 text-center text-[12px] text-muted">No emoji match “{emojiQuery}”.</p>
-                            )}
-                        </div>
-                    </div>
-                </div>
+                <EmojiPicker
+                    current={pickerWord}
+                    onPick={insertEmoji}
+                    onRemove={removeEmoji}
+                    onClose={commitEdit}
+                    onInteract={markEmojiInteracting}
+                />
             )}
         </div>
     );

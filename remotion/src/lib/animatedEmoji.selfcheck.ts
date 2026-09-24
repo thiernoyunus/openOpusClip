@@ -8,8 +8,7 @@ import {
   animatedSlug,
   lottieUrl,
   webpUrl,
-  searchAnimatedEmoji,
-  searchAnimatedEmojiByCategory,
+  stillUrl,
 } from "./animatedEmoji.ts";
 
 // The generated snapshot is non-empty and every row is well formed.
@@ -45,27 +44,9 @@ assert.strictEqual(
   "https://fonts.gstatic.com/s/e/notoemoji/latest/1f525/512.webp"
 );
 
-// Search matches the human words, not just the character.
-assert.ok(searchAnimatedEmoji("fire").some((e) => e.char === "🔥"), "'fire' should find 🔥");
-assert.ok(searchAnimatedEmoji("party").length > 0, "'party' should match something");
-assert.strictEqual(searchAnimatedEmoji("").length, ANIMATED_EMOJI.length);
-assert.strictEqual(searchAnimatedEmoji("zzzznope").length, 0);
-// Pasting the emoji itself into the search box finds it.
-assert.ok(searchAnimatedEmoji("🔥").some((e) => e.char === "🔥"), "pasted emoji should match");
-
-// Grouping keeps every emoji and never invents an empty category.
-const grouped = searchAnimatedEmojiByCategory("");
 assert.strictEqual(
-  grouped.reduce((n, g) => n + g.emojis.length, 0),
-  ANIMATED_EMOJI.length
+  stillUrl("1f525"),
+  "https://fonts.gstatic.com/s/e/notoemoji/latest/1f525/emoji.svg"
 );
-assert.ok(grouped.every((g) => g.emojis.length > 0), "empty category group");
-assert.ok(grouped.length > 1, "expected several categories");
-// A narrow query still groups, and drops categories with no match.
-const fireGroups = searchAnimatedEmojiByCategory("fire");
-assert.ok(fireGroups.length >= 1 && fireGroups.every((g) => g.emojis.length > 0));
-assert.strictEqual(searchAnimatedEmojiByCategory("zzzznope").length, 0);
 
-console.log(
-  `animatedEmoji selfcheck OK (${ANIMATED_EMOJI.length} emoji, ${grouped.length} categories)`
-);
+console.log(`animatedEmoji selfcheck OK (${ANIMATED_EMOJI.length} emoji)`);

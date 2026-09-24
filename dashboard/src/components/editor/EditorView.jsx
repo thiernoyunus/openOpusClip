@@ -421,20 +421,6 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         }
     }, [state.framing, captions, dispatch]);
 
-    // AI enhance / clear writes emoji+highlight onto the subtitle config; mirror
-    // it onto the transcript captions (by index) so the transcript shows what the
-    // AI added, exactly like a manual per-word emoji edit does.
-    const handleEnhanceCaptions = useCallback((mergedWords) => {
-        setCaptions((prev) => prev.map((w, i) => {
-            const m = mergedWords[i];
-            if (!m) return w;
-            const next = { ...w };
-            if (m.emoji) next.emoji = m.emoji; else delete next.emoji;
-            if (m.highlight) next.highlight = true; else delete next.highlight;
-            return next;
-        }));
-    }, []);
-
     const handleBack = useCallback(() => {
         if (state.dirty && !window.confirm('You have unsaved changes. Leave the editor anyway?')) {
             return;
@@ -792,7 +778,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                                     </div>
                                     <div className="flex-1 overflow-y-auto custom-scrollbar">
                                         {activeTab === 'captions' && (
-                                            <CaptionsPanel framing={framing} captions={captions} dispatch={dispatch} onEnhanceCaptions={handleEnhanceCaptions} captionScope={captionScope} setCaptionScope={setCaptionScope} getCurrentClipId={getCurrentClipId} />
+                                            <CaptionsPanel framing={framing} captions={captions} dispatch={dispatch} captionScope={captionScope} setCaptionScope={setCaptionScope} getCurrentClipId={getCurrentClipId} />
                                         )}
                                         {activeTab === 'text' && (
                                             <TextPanel framing={framing} dispatch={dispatch} getCurrentSourceFrame={getCurrentSourceFrame} />
