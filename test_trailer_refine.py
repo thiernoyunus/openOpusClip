@@ -23,6 +23,8 @@ from main import (
     _text_is_question,
     _code_ending,
     _slot_trailer,
+    _match_label,
+    _drop_inner_fillers,
 )
 import json
 import os
@@ -660,6 +662,21 @@ def test_slot_trailer_builds_guest_led_arc_ending_on_question_and_first_line():
     assert texts[-1].startswith('Systems thinking')
     assert any(t.startswith('this brother') for t in texts)  # "So" trimmed, host intro kept
     assert _trailer_story_problems(ms, words, '3', selects, sents) == []
+
+
+def test_match_label_accepts_model_spellings():
+    labels = {'1', '2', '3'}
+    assert _match_label(3, labels) == '3' and _match_label('Speaker 3', labels) == '3'
+    assert _match_label('speaker_9', labels) is None and _match_label(None, labels) is None
+
+
+def test_drop_inner_uh_splits_the_moment():
+    words = said("He, uh, used to consult for Google and Amazon.", 0, '1', gap=0.4)
+    m = [{'start': 0.0, 'end': words[-1]['end'] + 0.2, 'accent_word': 'Google', 'emotion': 'power'}]
+    out = _drop_inner_fillers(m, words)
+    assert len(out) == 2 and out[0]['text'] == 'He,' and out[1]['text'].startswith('used')
+    assert out[0]['end'] <= words[1]['start'] and out[1]['start'] >= words[1]['end']
+    assert out[0]['accent_word'] == '' and out[1]['accent_word'] == 'Google' and out[1]['joined_prev']
 
 
 if __name__ == '__main__':

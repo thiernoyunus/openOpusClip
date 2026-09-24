@@ -2975,11 +2975,26 @@ def _text_is_question(text):
     return _is_question_tokens(str(text).split())
 
 
+# Longest the guest's reply at the end may run (its first sentence, cut at a
+# clause mark when the sentence runs on).
+REPLY_MAX_S = 13.0
+
 # Hedges and fillers that make a reply's first sentence mumble instead of land.
 _REPLY_FILLER = {'um', 'uh', 'erm', 'like', 'right', 'yeah', 'yep', 'yup', 'mhm', 'okay', 'ok',
                  'basically', 'actually', 'literally', 'so'}
 _REPLY_HEDGES = {('i', 'think'), ('i', 'mean'), ('you', 'know'), ('kind', 'of'), ('sort', 'of'),
                  ('i', 'guess')}
+
+
+def _strip_tag(ws):
+    """Drop a trailing tag ("..., right?", "..., you know?") so the line ends
+    on its last real word."""
+    for n in (2, 1):
+        if len(ws) > n + 3 and ws[-1]['word'].strip().endswith(QUESTION_MARKS) \
+                and tuple(_accent_normalize(w['word']) for w in ws[-n:]) in _TAG_QUESTIONS \
+                and ws[-n - 1]['word'].strip().endswith(','):
+            return ws[:-n]
+    return ws
 
 
 def _mumbles(body):
@@ -3002,7 +3017,7 @@ def _reply_problem(tail):
     if _accent_normalize(body[0]['word']) in _ANSWER_OPENERS:
         return f"the reply opens on the answer itself (\"{_quote(body, 6)}\")"
     if any(_ends_sentence(w['word']) for w in body[:-1]) \
-            or float(body[-1]['end']) - float(body[0]['start']) > 10.0:
+            or float(body[-1]['end']) - float(body[0]['start']) > REPLY_MAX_S:
         return f"the reply runs past its first sentence (\"{_quote(body, 8, True)}\")"
     if _mumbles(body):
         return (f"the guest's first sentence is filler, not a claim (\"{_quote(body, 12)}\"); "
@@ -3328,8 +3343,10 @@ def _ending_candidates(keep, words, sentences, guest_sp, selects=None, title='',
         if not qb or _accent_normalize(qb[0]['word']) not in _QUESTION_OPENERS \
                 or _RHETORICAL_RE.search(' '.join(_accent_normalize(w['word']) for w in qb)):
             continue
-        # The guest's first sentence, joined across pause/run-on pieces, then
-        # cut at the last clause mark inside ~10s if it runs long.
+        # The guest's first sentence, joined across pause/run-on pieces. One
+        # that runs long is cut at its last clause mark inside REPLY_MAX_S,
+        # so it keeps "...any founder, any leader in the years to come," rather
+        # than stopping two words early.
         last_piece = reply
         while last_piece.get('more') and last_piece['i'] + 1 < len(sentences) \
                 and str(sentences[last_piece['i'] + 1].get('sp')) == g:
@@ -3337,10 +3354,10 @@ def _ending_candidates(keep, words, sentences, guest_sp, selects=None, title='',
         rw = ix.words_in(reply['s'], last_piece['e'])
         if not rw or next((c for c in rw[0]['word'] if c.isalpha()), 'A').islower():
             continue  # the reply starts mid-sentence
-        rw = rw[_lead_in_len(rw):] or rw
-        if rw and float(rw[-1]['end']) - float(rw[0]['start']) > 10:
+        rw = _strip_tag(rw[_lead_in_len(rw):] or rw)
+        if rw and float(rw[-1]['end']) - float(rw[0]['start']) > REPLY_MAX_S:
             cut = max((j for j, w in enumerate(rw)
-                       if float(w['end']) - float(rw[0]['start']) <= 10
+                       if float(w['end']) - float(rw[0]['start']) <= REPLY_MAX_S
                        and w['word'].strip().endswith(_CLAUSE_END + ('.', '!', '?'))), default=None)
             rw = rw[:cut + 1] if cut is not None and cut >= 4 else []
         if not qw or not rw or _reply_problem(rw) or not _clear_of(keep, q['s'], float(rw[-1]['end'])) \
@@ -3423,6 +3440,47 @@ def _trim_lead_ins(moments, words, min_left=1.5):
             m['text'] = ' '.join(w['word'].strip() for w in mw[i:])
             m['lead_in_trimmed'] = True
         out.append(m)
+    return out
+
+
+_INNER_FILLERS = {'uh', 'um', 'erm', 'uhm', 'er', 'ah', 'hmm', 'mm'}
+
+
+def _drop_inner_fillers(moments, words, min_part=0.25):
+    """Cut an "uh"/"um" out of the middle of a moment, audio and captions
+    alike ("He, uh, used to consult" -> "He, used to consult"), by splitting
+    the moment around it: two segments back to back play as one line. Only
+    where the filler sits in its own gap (no word overlaps it) and both halves
+    stay at least min_part seconds. Returns a new list."""
+    ws = sorted(words or [], key=lambda w: float(w['start']))
+    out = []
+    for m in moments:
+        parts = [dict(m)]
+        while True:
+            cur = parts[-1]
+            mw = _moment_words(ws, cur)
+            j = next((j for j in range(1, len(mw) - 1)
+                      if _accent_normalize(mw[j]['word']) in _INNER_FILLERS
+                      and float(mw[j]['end']) - float(mw[j]['start']) >= 0.12
+                      and float(mw[j - 1]['end']) <= float(mw[j]['start'])
+                      and float(mw[j + 1]['start']) >= float(mw[j]['end'])), None)
+            if j is None:
+                break
+            f, prev, nxt = mw[j], mw[j - 1], mw[j + 1]
+            cut_a = float(prev['end']) + min(0.06, float(f['start']) - float(prev['end']))
+            cut_b = float(nxt['start']) - min(0.06, float(nxt['start']) - float(f['end']))
+            if cut_a - float(cur['start']) < min_part or float(cur['end']) - cut_b < min_part:
+                break
+            head, tail = dict(cur, end=round(cut_a, 3)), dict(cur, start=round(cut_b, 3))
+            head['text'] = ' '.join(w['word'].strip() for w in mw[:j])
+            tail['text'] = ' '.join(w['word'].strip() for w in mw[j + 1:])
+            tail['joined_prev'] = True
+            target = _accent_normalize(cur.get('accent_word', ''))
+            in_head = any(_accent_normalize(w['word']) == target for w in mw[:j])
+            (tail if in_head else head)['accent_word'] = ''
+            print(f"   ✂️  Dropped \"{f['word'].strip()}\" from inside \"{_quote(mw, 8)}\".")
+            parts[-1:] = [head, tail]
+        out.extend(parts)
     return out
 
 
@@ -3715,7 +3773,7 @@ SLOT_WHO_PROMPT = """You are the assistant editor on a Diary of a CEO style podc
 {brief}Below are the speaker stats and the first minutes of the episode (sentences with sp = speaker id).
 {speakers}
 Decide:
-- guest_sp: the featured guest the episode is built around (the person introduced as the guest or expert), or null when it is a regular or panel episode with no featured guest.
+- guest_sp: the featured guest the episode is built around (the person introduced as the guest or expert). When the title names or describes one person ("The Ex-Amazon Engineer Running 50 Clients..."), that person is the featured guest even when others sit on a panel with them. null only for a regular or panel episode where nobody is featured.
 - host_sp: the host (asks the questions, introduces the guest).
 - topic: the episode's one topic in at most eight words, as a YouTube title would say it (use the title when given).
 
@@ -3732,6 +3790,7 @@ Pick the boldest, most specific claim about the topic that lands with zero setup
 Pick the sharpest doubt a viewer would also have ("Are you sure he's the real deal?"), answered by the guest with confidence.""",
     'credentials': """SLOT: WHO THE GUEST IS (by ~30 seconds). Pick the line that makes the guest worth listening to with specific results, names or numbers. The host introducing the guest is best. Never a sponsor read.""",
     'value': """SLOT: THE MOMENT OF VALUE, in the guest's voice. Pick one concrete, genuinely useful idea about the topic given away free: a rule, a framework, a surprising how-it-works. It must make sense on its own.""",
+    'stakes': """SLOT: THE STAKES, in the guest's voice. Pick the line that says what is at stake or what has changed for good: a risk, a loss, a warning, a bold claim about what no longer works ("AI has made it so easy that delegation is not worth it anymore"). It must make sense on its own.""",
     'proof': """SLOT: PROOF AND STAKES (up to THREE picks, best first; the weakest are cut if the trailer runs long). Pick lines that raise the stakes or prove the claim: a specific number or result, a risk, a failure, an admission, a skeptic's pushback. Prefer a voice other than the guest's when it is just as strong, so the trailer is a conversation.""",
 }
 
@@ -3828,10 +3887,23 @@ def _slot_spans(sentences, ix, speaker, skip, min_s, max_s, role_at=None, roles=
     return out
 
 
+def _match_label(value, labels):
+    """A speaker label from the model ("3", 3, "Speaker 3", "speaker_3"), or None."""
+    if value is None:
+        return None
+    v = str(value).strip()
+    if v in labels:
+        return v
+    nums = re.findall(r'\d+', v)
+    return nums[-1] if len(nums) == 1 and nums[-1] in labels else None
+
+
 def _slot_trailer(client, model_name, sentences, words, skip, selects, title, notes,
-                  target_seconds, speaker_context):
+                  target_seconds, speaker_context, slot_debug=None):
     """The slot-by-slot trailer (see TRAILER_SLOTS). Returns a winner dict
-    like _generate_trailer_candidate's, or None to fall back."""
+    like _generate_trailer_candidate's, or None to fall back; slot_debug gets
+    'skipped' with the reason."""
+    slot_debug = {} if slot_debug is None else slot_debug
     costs = []
     ix = _WordIndex(words)
     brief = _trailer_brief(title, notes, stage='selects')
@@ -3846,13 +3918,28 @@ def _slot_trailer(client, model_name, sentences, words, skip, selects, title, no
     opening = [{'i': x['i'], 'sp': x.get('sp'), 'text': x['text']}
                for x in sentences if x['s'] < 300 and x['i'] not in skip][:120]
     who = _flash_json(client, model_name, SLOT_WHO_PROMPT.format(
-        brief=brief, speakers=speaker_context, opening=json.dumps(opening)), costs) or {}
-    guest = str(who.get('guest_sp')) if who.get('guest_sp') is not None else None
-    if guest not in labels:
-        print("   🧩 Slots: no featured guest found; using the one-shot trailer prompt.")
+        brief=brief, speakers=speaker_context, opening=json.dumps(opening)), costs)
+    if not isinstance(who, dict) or 'guest_sp' not in who:
+        # The call failed or answered in another shape: find the guest in code,
+        # the voice with the most talk time that isn't the host.
+        host = _host_label(sentences, None)
+        talk = {}
+        for x in sentences:
+            if 'sp' in x and str(x['sp']) != host:
+                talk[str(x['sp'])] = talk.get(str(x['sp']), 0.0) + x['e'] - x['s']
+        guest = max(talk, key=talk.get) if talk else None
+        print(f"   🧩 Slots: the who-is-who call gave no usable answer ({who!r:.120}); "
+              f"guessing guest = speaker {guest} from talk time.")
+        who = {'guest_sp': guest, 'host_sp': host, 'topic': title}
+    slot_debug['who'] = {k: who.get(k) for k in ('guest_sp', 'host_sp', 'topic')}
+    guest = _match_label(who.get('guest_sp'), labels)
+    if guest is None:
+        slot_debug['skipped'] = f"no featured guest (model said {who.get('guest_sp')!r})"
+        print(f"   🧩 Slots: {slot_debug['skipped']}; using the one-shot trailer prompt.")
         return None
-    host = str(who.get('host_sp')) if str(who.get('host_sp')) in labels and str(who.get('host_sp')) != guest \
-        else _host_label(sentences, guest)
+    host = _match_label(who.get('host_sp'), labels)
+    if host is None or host == guest:
+        host = _host_label(sentences, guest)
     topic = ' '.join(str(who.get('topic') or title or '').split())[:80] or 'the episode'
     print(f"   🧩 Slots: guest = speaker {guest}, host = speaker {host}, topic = {topic!r}")
     header = SLOT_HEADER.format(brief=_trailer_brief(title, notes, stage='selects'),
@@ -3907,7 +3994,8 @@ def _slot_trailer(client, model_name, sentences, words, skip, selects, title, no
     # 2. The ending first: host question + the guest's first line.
     endings = _ending_candidates([], words, sentences, guest, selects, title, skip, ix)[:12]
     if not endings:
-        print("   🧩 Slots: no clean question + guest reply for the ending; one-shot instead.")
+        slot_debug['skipped'] = "no clean host question + guest reply for the ending"
+        print(f"   🧩 Slots: {slot_debug['skipped']}; one-shot instead.")
         return None
     ending = pick('ending', [({'sp': host, 'text': f"Q: {q['text']} | A: {r['text']}"[:260]}, [q, r])
                              for _, (q, r) in endings])[0]
@@ -3916,7 +4004,8 @@ def _slot_trailer(client, model_name, sentences, words, skip, selects, title, no
     # 3. The hook: the guest's boldest standalone claim.
     hooks = ranked(_slot_spans(sentences, ix, guest, skip, 3.0, 10.0), guest, 30, 1, 'hook', used)
     if not hooks:
-        print("   🧩 Slots: no clean guest line for the hook; one-shot instead.")
+        slot_debug['skipped'] = "no clean guest line for the hook"
+        print(f"   🧩 Slots: {slot_debug['skipped']}; one-shot instead.")
         return None
     hook = pick('hook', hooks)[0]
     used.append(hook)
@@ -3977,6 +4066,13 @@ def _slot_trailer(client, model_name, sentences, words, skip, selects, title, no
     value = pick('value', values)
     used += value
 
+    # 6b. The stakes, in the guest's voice.
+    stakes_c = ranked(_slot_spans(sentences, ix, guest, skip, 3.0, 12.0, role_at,
+                                  {'hook', 'lesson', 'emotion', 'proof', 'premise', 'cliffhanger'}),
+                      guest, 15, 3, 'stakes', used)
+    stakes = pick('stakes', stakes_c)
+    used += stakes
+
     # 7. Proof and stakes, from any voice (a host or other voice keeps the rhythm).
     proofs = []
     for sp in labels:
@@ -3995,7 +4091,7 @@ def _slot_trailer(client, model_name, sentences, words, skip, selects, title, no
     # another voice jumps ahead whenever one voice would speak three in a row
     # (a proof line that would, with nothing to swap in, is dropped).
     order = [hook] + challenge
-    pending = cred + value + list(proof)
+    pending = cred + value + stakes + list(proof)
     while pending:
         choice = pending[0]
         last2 = {speaker(m) for m in order[-2:]} if len(order) >= 2 else set()
@@ -4031,9 +4127,22 @@ def _slot_trailer(client, model_name, sentences, words, skip, selects, title, no
         if voice_share(order, guest) >= 0.5:
             break
         order.remove(m)  # the guest carries at least half
+    # ...and at most 70%: bring in the best other-voice proof line before the
+    # ending's question, or give up the stakes line.
+    spare = [r[1] for r in proofs if speaker(r[1]) != guest and r[1] not in order
+             and _clear_of(order, float(r[1]['start']), float(r[1]['end']))]
+    while voice_share(order, guest) > 0.7 and (spare or any(m in order for m in stakes)):
+        at = len(order) - len(ending)
+        if spare and not (speaker(order[at - 1]) == speaker(spare[0])):
+            order.insert(at, spare.pop(0))
+            middle.append(order[at])
+        elif spare:
+            spare.pop(0)
+        else:
+            order.remove(next(m for m in stakes if m in order))
     limit = target_seconds * TRAILER_BUDGET_SLACK
     total = lambda ms: sum(float(m['end']) - float(m['start']) for m in ms)
-    for m in reversed(middle + value):  # proof first, then value, until it fits
+    for m in reversed(value + stakes + middle):  # proof, then stakes, then value, until it fits
         if total(order) <= limit:
             break
         if m in order:
@@ -4177,12 +4286,20 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
     hi = max_moments + 12
 
     slotted = None
-    if TRAILER_SLOTS and speaker_context:
+    slot_debug = {}
+    if not TRAILER_SLOTS:
+        slot_debug['skipped'] = 'TRAILER_SLOTS=0'
+    elif not speaker_context:
+        slot_debug['skipped'] = 'no speaker labels in the transcript'
+    else:
         print("   🧩 Building the trailer slot by slot (TRAILER_SLOTS=0 for the one-shot prompt)...")
         try:
             slotted = _slot_trailer(client, model_name, sentences, refine_words, ads, bites or [],
-                                    title, notes, target_seconds, speaker_context)
+                                    title, notes, target_seconds, speaker_context, slot_debug)
         except Exception as e:  # never lose a paid-for job to the new path
+            import traceback
+            slot_debug['error'] = f"{type(e).__name__}: {e}"[:300]
+            slot_debug['where'] = traceback.format_exc().strip().splitlines()[-3][:200]
             print(f"   ⚠️  Slot trailer failed ({e}); using the one-shot prompt.")
             slotted = None
 
@@ -4279,6 +4396,7 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
                 print("   ⚠️  The ending still breaks the rules and no clean question + reply "
                       "was found to replace it.")
     moments = _fit_trailer_budget(winner['moments_ordered'], refine_words, target_seconds)
+    moments = _drop_inner_fillers(moments, refine_words)
     script = winner['script']
 
     print("   📜 Trailer script (winner):")
@@ -4296,7 +4414,7 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
            # Saved in the metadata so a bad trailer can be traced to its step.
            'debug': {'selects': bites or [], 'ads': sorted(ads),
                      'guest_sp': winner.get('guest_sp'), 'problems_left': problems,
-                     'mode': 'slots' if slotted else 'one-shot'}}
+                     'mode': 'slots' if slotted else 'one-shot', 'slots': slot_debug}}
     if costs:
         candidate_latencies = [c.get('latency_ms') for c in costs if c.get('latency_ms') is not None]
         candidate_attempts = [c.get('attempts_used') for c in costs if c.get('attempts_used') is not None]
@@ -4401,7 +4519,7 @@ def retime_captions(transcript_result, moments_ordered, offsets_frames, seg_fram
         power_targets.add(_accent_normalize(moment.get('accent_word', '')))
         power_targets.discard('')
 
-        first_in_moment = True
+        first_in_moment = not moment.get('joined_prev')  # a split line keeps its case
         for word in all_words:
             t_start = float(word['start'])
             t_end = float(word['end'])
