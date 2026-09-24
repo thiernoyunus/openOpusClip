@@ -17,6 +17,13 @@ export interface CaptionWord {
    */
   emojiAnimated?: boolean;
   /**
+   * Phrase emoji: every word of a phrase the user selected carries the same
+   * emoji and this shared id, so the emoji stays on screen for as long as any
+   * word of the phrase is (shown once per caption block). Absent → the emoji
+   * belongs to this word alone.
+   */
+  emojiSpan?: string;
+  /**
    * When true, this word is a highlighted keyword and gets the active-word
    * highlight treatment even when it isn't the word currently being spoken.
    * Optional → existing caption data is unaffected (back-compat).
@@ -495,6 +502,9 @@ export const captionWordSchema = z.object({
   endMs: z.number(),
   emoji: z.string().optional(),
   emojiAnimated: z.boolean().optional(),
+  // Listed so the render worker keeps phrase emojis grouped (Zod strips
+  // unknown keys).
+  emojiSpan: z.string().optional(),
   highlight: z.boolean().optional(),
   accentColor: z.string().optional(),
   language: z.string().optional(),

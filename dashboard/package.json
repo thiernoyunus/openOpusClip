@@ -9,6 +9,7 @@
     "lint": "eslint src --report-unused-disable-directives",
     "test:analytics": "node src/analyticsSanitizer.selfcheck.mjs",
     "test:emoji": "node src/components/editor/emojiCatalog.selfcheck.mjs",
+    "test:phrase": "node src/components/editor/phraseEdit.selfcheck.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

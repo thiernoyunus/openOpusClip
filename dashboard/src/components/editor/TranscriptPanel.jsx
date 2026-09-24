@@ -4,6 +4,7 @@ import { EDITOR_FPS } from './EditorCanvas';
 import { wordSourceToOutput, sourceToOutputAll } from '@remotion-src/lib/edl';
 import { detectFillerCuts, detectPauseCuts, visibleTranscriptPauses } from './speechCleanup';
 import EmojiPicker from './EmojiPicker';
+import { retextPhrase, setPhraseEmoji, clearEmojis, spanIndices } from './phraseEdit';
 
 const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three', four: 'Four' };
 
@@ -14,8 +15,11 @@ const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three',
  * keeps the click/edit handlers stable (useCallback) and passes index+word
  * back through them, so this component's props stay referentially stable.
  */
-const Word = React.memo(function Word({ index, word, isActive, suppressHighlight, isCut, captionHidden, inSel, onWordClick, onEdit, onEmojiClick }) {
+const Word = React.memo(function Word({ index, word, isActive, suppressHighlight, isCut, captionHidden, inSel, showEmoji, inSpan, onWordClick, onEdit, onEmojiClick }) {
     const colorClass = word.highlight ? 'text-[#04f827]' : 'text-white';
+    // Words under a phrase emoji get a faint dotted underline so you can see
+    // how far the emoji reaches; the emoji itself shows once, after the last.
+    const spanClass = inSpan ? ' underline decoration-dotted decoration-amber-300/70 underline-offset-4' : '';
     return (
         <span
             data-transcript-word={index}
@@ -30,7 +34,7 @@ const Word = React.memo(function Word({ index, word, isActive, suppressHighlight
                     ? 'Removed from the clip'
                     : captionHidden
                       ? "Caption hidden (still in the video). Click to restore."
-                      : 'Click to edit or remove. Double-click to edit text.'
+                      : 'Click to edit or remove, drag across words to select a phrase. Double-click to edit text.'
             }
             className={`ph-mask cursor-pointer text-sm leading-7 rounded px-0.5 transition-colors ${
                 isCut
@@ -43,11 +47,11 @@ const Word = React.memo(function Word({ index, word, isActive, suppressHighlight
                         ? 'text-zinc-500 italic underline decoration-dashed decoration-zinc-600 underline-offset-4 hover:text-zinc-300'
                         : isActive && !suppressHighlight
                           ? 'bg-lime-300/35 text-fg'
-                          : `${colorClass} hover:bg-white/10`
+                          : `${colorClass} hover:bg-white/10${spanClass}`
             }`}
         >
             {word.text}
-            {word.emoji && (
+            {showEmoji && (
                 <>
                     {' '}
                     {/* Its own target: clicking the emoji opens the picker on
@@ -57,8 +61,8 @@ const Word = React.memo(function Word({ index, word, isActive, suppressHighlight
                         data-transcript-emoji=""
                         role="button"
                         tabIndex={isCut ? -1 : 0}
-                        title="Change or remove this emoji"
-                        aria-label="Change or remove this emoji"
+                        title={word.emojiSpan ? 'Change or remove this phrase emoji' : 'Change or remove this emoji'}
+                        aria-label={word.emojiSpan ? 'Change or remove this phrase emoji' : 'Change or remove this emoji'}
                         onClick={(e) => {
                             e.stopPropagation();
                             if (!isCut) onEmojiClick(index);
@@ -108,20 +112,27 @@ const PauseChip = React.memo(function PauseChip({ pause, selected, isCut, onPaus
  * content (splits the owning clip(s) and drops the middle). Removed words
  * render struck through; use Undo to bring them back.
  */
-export default function TranscriptPanel({ captions, framing, playerRef, onEditWord, onSetCaptionHidden, dispatch, onOpenExtend, extending, clipStartSec }) {
+export default function TranscriptPanel({ captions, framing, playerRef, onEditWord, onSetCaptionHidden, onUpdateCaptions, dispatch, onOpenExtend, extending, clipStartSec }) {
     const [currentMs, setCurrentMs] = useState(0);
     const [editingIndex, setEditingIndex] = useState(null);
     const [draft, setDraft] = useState('');
     const [sel, setSel] = useState(null); // {anchor, focus} word indices
-    // Caption index the floating toolbar anchors to (the last-clicked word);
-    // popupTick is bumped on scroll/resize so its screen position recomputes.
-    const [anchorIdx, setAnchorIdx] = useState(null);
+    // popupTick is bumped on scroll/resize so the floating toolbar's screen
+    // position recomputes.
     const [popupTick, setPopupTick] = useState(0);
+    // Retyping a selected phrase: {indices (display order), draft}.
+    const [phraseEdit, setPhraseEdit] = useState(null);
+    // Drag-to-select: where the drag started, and whether it has left that
+    // word yet (a drag that did must not also count as a click on a word).
+    const dragRef = useRef(null);
+    const [dragging, setDragging] = useState(false);
+    const suppressClickRef = useRef(false);
     const [selectedPause, setSelectedPause] = useState(null);
     const [emojiOpen, setEmojiOpen] = useState(false);
-    // Caption index the picker writes to when it was opened from the toolbar
-    // rather than from an in-progress word edit.
-    const [emojiTarget, setEmojiTarget] = useState(null);
+    // Caption indices the picker writes to when it was opened from the
+    // toolbar rather than from an in-progress word edit. Several indices = a
+    // phrase emoji that stays up while any of those words is on screen.
+    const [emojiTargets, setEmojiTargets] = useState(null);
     const [cleanupOpen, setCleanupOpen] = useState(false);
     const [removeFillers, setRemoveFillers] = useState(true);
     const [removePauses, setRemovePauses] = useState(true);
@@ -134,6 +145,11 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     useEffect(() => {
         selRef.current = sel;
     }, [sel]);
+    // Same trick for captions, so the emoji click handler stays stable.
+    const captionsRef = useRef(captions);
+    useEffect(() => {
+        captionsRef.current = captions;
+    }, [captions]);
 
     const srcFps = framing.source.fps;
     // Caption ms are anchored at the ORIGINAL clip start (captionsOriginFrame)
@@ -340,59 +356,71 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         }
         emojiInteractingRef.current = false;
         setEditingIndex(null);
-        setEmojiTarget(null);
+        setEmojiTargets(null);
         setEmojiOpen(false);
     }, [editingIndex, draft, onEditWord]);
 
     const insertEmoji = useCallback((emoji, animated) => {
         // Picked by hand, so a later AI re-run leaves it alone (emojiAuto off).
-        const patch = { emoji, emojiAnimated: animated === true, emojiAuto: undefined };
+        // A single word's own emoji also takes it out of any phrase emoji.
+        const patch = { emoji, emojiAnimated: animated === true, emojiAuto: undefined, emojiSpan: undefined };
         if (editingIndex !== null) {
             // Mid-edit: keep whatever text is in the box alongside the emoji.
             const text = draft.trim();
             if (text) onEditWord(editingIndex, { ...patch, text });
-        } else if (emojiTarget !== null) {
+        } else if (emojiTargets?.length > 1) {
+            // A phrase: one emoji that stays up while the phrase is spoken.
+            onUpdateCaptions((c) => setPhraseEmoji(c, emojiTargets, emoji, animated));
+        } else if (emojiTargets?.length === 1) {
             // Opened straight from a selected word — no Edit step needed.
-            onEditWord(emojiTarget, patch);
+            onEditWord(emojiTargets[0], patch);
         }
         setEditingIndex(null);
-        setEmojiTarget(null);
+        setEmojiTargets(null);
         setSel(null);
         setEmojiOpen(false);
         emojiInteractingRef.current = false;
-    }, [draft, editingIndex, emojiTarget, onEditWord]);
+    }, [draft, editingIndex, emojiTargets, onEditWord, onUpdateCaptions]);
 
-    // Clear the emoji off the picker's word (keeping an in-progress text edit).
+    // Clear the emoji off the picker's word(s), and off the rest of any phrase
+    // they belong to (keeping an in-progress text edit).
     const removeEmoji = useCallback(() => {
-        const patch = { emoji: undefined, emojiAnimated: undefined, emojiAuto: undefined };
         if (editingIndex !== null) {
             const text = draft.trim();
-            onEditWord(editingIndex, text ? { ...patch, text } : patch);
-        } else if (emojiTarget !== null) {
-            onEditWord(emojiTarget, patch);
+            onUpdateCaptions((c) => {
+                const next = clearEmojis(c, [editingIndex]);
+                if (text) next[editingIndex] = { ...next[editingIndex], text };
+                return next;
+            });
+        } else if (emojiTargets?.length) {
+            onUpdateCaptions((c) => clearEmojis(c, emojiTargets));
         }
         setEditingIndex(null);
-        setEmojiTarget(null);
+        setEmojiTargets(null);
         setSel(null);
         setEmojiOpen(false);
         emojiInteractingRef.current = false;
-    }, [draft, editingIndex, emojiTarget, onEditWord]);
+    }, [draft, editingIndex, emojiTargets, onUpdateCaptions]);
 
-    /** Open the picker for a word that is only selected, skipping edit mode. */
-    const openEmojiFor = useCallback((index) => {
-        setEmojiTarget(index);
+    /**
+     * Open the picker for selected word(s), skipping edit mode. One word that
+     * belongs to a phrase emoji targets the whole phrase, so picking changes
+     * the phrase's emoji rather than splitting that word off.
+     */
+    const openEmojiFor = useCallback((indices) => {
+        setEmojiTargets(indices.length === 1 ? spanIndices(captionsRef.current, indices[0]) : indices);
         setEditingIndex(null);
         setEmojiOpen(true);
         emojiInteractingRef.current = true;
     }, []);
 
-    // Clicking the emoji itself in the transcript: select its word and open
-    // the picker on it, where Remove sits at the top.
+    // Clicking the emoji itself in the transcript: select its word (or its
+    // whole phrase) and open the picker on it, where Remove sits at the top.
     const onEmojiClick = useCallback((index) => {
+        const span = spanIndices(captionsRef.current, index);
         setSelectedPause(null);
-        setAnchorIdx(index);
-        setSel({ anchor: index, focus: index });
-        openEmojiFor(index);
+        setSel({ anchor: span[0], focus: span[span.length - 1] });
+        openEmojiFor(span);
     }, [openEmojiFor]);
 
     const markEmojiInteracting = useCallback(() => {
@@ -404,15 +432,18 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     // updater so it needn't be a dependency.
     const onWordClick = useCallback(
         (index, word, e) => {
+            // The click that ends a drag-select: the drag already set the range.
+            if (suppressClickRef.current) {
+                suppressClickRef.current = false;
+                return;
+            }
             if (isCutByWord[index]) {
                 // removed content: nothing to seek/select (use Undo to restore)
                 setSel(null);
-                setAnchorIdx(null);
                 return;
             }
             const cur = selRef.current;
             setSelectedPause(null);
-            setAnchorIdx(index); // toolbar anchors to the just-clicked word
             if (e.shiftKey && cur) {
                 setSel({ anchor: cur.anchor, focus: index });
             } else {
@@ -426,8 +457,8 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     // Stable double-click -> edit handler for memoized <Word> children.
     const onEdit = useCallback((index, word) => {
         setSel(null);
-        setAnchorIdx(null);
         setSelectedPause(null);
+        setPhraseEdit(null);
         setEditingIndex(index);
         setDraft(word.text);
         setEmojiOpen(false);
@@ -475,7 +506,6 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
         if (curClipId != null) ranges.push({ startFrame: curStart, endFrame: curEnd });
         if (ranges.length > 0) dispatch({ type: 'CUT_SOURCE_RANGE', ranges });
         setSel(null);
-        setAnchorIdx(null);
     };
 
     // Caption ARRAY indices covered by the current selection (display order).
@@ -487,40 +517,124 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     // offers "Restore caption" instead of "Remove caption".
     const allHidden = selCaptionIndices.length > 0
         && selCaptionIndices.every((i) => captions[i]?.captionHidden);
-    // The emoji on the single selected word, if any (toolbar offers Remove).
-    const selectedEmoji = selCaptionIndices.length === 1 ? captions[selCaptionIndices[0]]?.emoji : undefined;
+    // Selected words still in the video: what Edit and Emoji act on.
+    const selKeptIndices = useMemo(
+        () => selCaptionIndices.filter((i) => !isCutByWord[i]),
+        [selCaptionIndices, isCutByWord]
+    );
+    // Emojis on the selected words (toolbar offers Remove when there are any).
+    const selectedEmojis = [...new Set(selKeptIndices.map((i) => captions[i]?.emoji).filter(Boolean))];
     // The word the open picker writes to, so it can show that word's emoji.
-    const pickerIndex = editingIndex ?? emojiTarget;
+    const pickerIndex = editingIndex ?? emojiTargets?.[0] ?? null;
     const pickerWord = pickerIndex != null ? captions[pickerIndex] : null;
+
+    // Phrase emojis show once in the transcript, after the phrase's last word
+    // still in the video (display order).
+    const spanTail = useMemo(() => {
+        const tail = new Map();
+        wordRows.forEach((r) => {
+            const span = r.word.emoji && r.word.emojiSpan;
+            if (!span) return;
+            if (!tail.has(span) || !isCutByWord[r.index]) tail.set(span, r.index);
+        });
+        return tail;
+    }, [wordRows, isCutByWord]);
 
     const handleToggleCaption = () => {
         if (selCaptionIndices.length === 0) return;
         onSetCaptionHidden?.(selCaptionIndices, !allHidden);
         setSel(null);
-        setAnchorIdx(null);
     };
 
     const dismissToolbar = useCallback(() => {
         setSel(null);
-        setAnchorIdx(null);
     }, []);
+
+    // Retype a whole selected phrase in one box.
+    const startPhraseEdit = () => {
+        if (selKeptIndices.length === 0) return;
+        setPhraseEdit({
+            indices: selKeptIndices,
+            draft: selKeptIndices.map((i) => captions[i].text).join(' '),
+        });
+        setSel(null);
+        setSelectedPause(null);
+        setEditingIndex(null);
+        setEmojiOpen(false);
+    };
+
+    const commitPhraseEdit = useCallback(() => {
+        if (!phraseEdit) return;
+        const { indices, draft: text } = phraseEdit;
+        const before = indices.map((i) => captions[i]?.text).join(' ');
+        if (text.trim() && text.trim().split(/\s+/).join(' ') !== before) {
+            onUpdateCaptions((c) => retextPhrase(c, indices, text));
+        }
+        setPhraseEdit(null);
+    }, [phraseEdit, captions, onUpdateCaptions]);
+
+    // Drag across words to select a phrase. Delegated on the list so the
+    // memoized <Word>s need no extra props. Shift-click still extends too.
+    const onListMouseDown = useCallback((e) => {
+        suppressClickRef.current = false;
+        if (e.button !== 0 || e.shiftKey || e.target.closest('[data-transcript-emoji]')) return;
+        const el = e.target.closest('[data-transcript-word]');
+        if (!el) return;
+        const index = Number(el.dataset.transcriptWord);
+        if (isCutByWord[index]) return;
+        dragRef.current = { anchor: index, moved: false };
+    }, [isCutByWord]);
+
+    const onListMouseOver = useCallback((e) => {
+        const drag = dragRef.current;
+        if (!drag) return;
+        const el = e.target.closest('[data-transcript-word]');
+        if (!el) return;
+        const index = Number(el.dataset.transcriptWord);
+        if (index === drag.anchor && !drag.moved) return;
+        if (!drag.moved) {
+            drag.moved = true;
+            setDragging(true);
+            setSelectedPause(null);
+        }
+        setSel({ anchor: drag.anchor, focus: index });
+    }, []);
+
+    useEffect(() => {
+        const onUp = () => {
+            const drag = dragRef.current;
+            dragRef.current = null;
+            if (!drag?.moved) return;
+            suppressClickRef.current = true;
+            setDragging(false);
+            // Park the playhead at the start of the phrase so Play shows it.
+            const cur = selRef.current;
+            const lo = cur ? Math.min(posByIndex.get(cur.anchor) ?? 0, posByIndex.get(cur.focus) ?? 0) : null;
+            const first = lo != null ? wordRows[lo] : null;
+            if (first) seekToWord(first.word);
+        };
+        window.addEventListener('mouseup', onUp);
+        return () => window.removeEventListener('mouseup', onUp);
+    }, [posByIndex, wordRows, seekToWord]);
 
     // Toolbar position: recompute the anchor word's on-screen rect whenever the
     // selection, the transcript scroll, or the window size changes (popupTick).
     // Kept in state (not derived in render) so we read the DOM ref in an effect.
     // Depends on `sel` (stable state), NOT the derived selRange (new object each
     // render, which would re-run this every render).
+    // The toolbar sits over the first selected word (display order).
+    const toolbarIdx = selRange ? wordRows[selRange.lo]?.index ?? null : null;
     const [toolbarPos, setToolbarPos] = useState(null);
     useEffect(() => {
-        if (anchorIdx == null || !sel) { setToolbarPos(null); return; }
+        if (toolbarIdx == null || !sel) { setToolbarPos(null); return; }
         const scroll = containerRef.current;
-        const el = scroll?.querySelector(`[data-transcript-word="${anchorIdx}"]`);
+        const el = scroll?.querySelector(`[data-transcript-word="${toolbarIdx}"]`);
         if (!el || !scroll) { setToolbarPos(null); return; }
         const r = el.getBoundingClientRect();
         const bounds = scroll.getBoundingClientRect();
         // Hide the toolbar if the anchor word scrolled out of the visible list.
         setToolbarPos(r.bottom < bounds.top || r.top > bounds.bottom ? null : { top: r.top, left: r.left });
-    }, [anchorIdx, sel, popupTick]);
+    }, [toolbarIdx, sel, popupTick]);
 
     // Bump popupTick on transcript scroll and window resize so the toolbar
     // tracks its anchor word instead of floating in a stale spot.
@@ -678,7 +792,11 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
             )}
             <div
                 ref={containerRef}
-                className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-6 leading-8"
+                onMouseDown={onListMouseDown}
+                onMouseOver={onListMouseOver}
+                // select-none: dragging across words selects a phrase in our
+                // own highlight, not the browser's text selection.
+                className="flex-1 overflow-y-auto custom-scrollbar px-5 pb-6 leading-8 select-none"
                 // plaintext: let the bidi algorithm reorder runs (Arabic RTL, Latin
                 // LTR) per the first strong char of each block, without isolating
                 // each word. textAlign:start makes Arabic lines hug the right edge.
@@ -714,6 +832,36 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                 isCut={cutPauseKeys.has(row.index)}
                                 onPauseClick={onPauseClick}
                             />
+                        ) : phraseEdit?.indices.includes(row.index) ? (
+                            // The phrase's first word holds the edit box; its
+                            // other words are folded into it.
+                            row.index === phraseEdit.indices[0] ? (
+                                <span key={`w-${row.index}`} className="block my-1">
+                                    <textarea
+                                        data-transcript-editor=""
+                                        data-posthog-sensitive="true"
+                                        dir="auto"
+                                        autoFocus
+                                        onFocus={(e) => e.target.select()}
+                                        value={phraseEdit.draft}
+                                        rows={Math.min(6, Math.max(2, Math.ceil(phraseEdit.draft.length / 38)))}
+                                        onChange={(e) => {
+                                            const value = e.target.value;
+                                            setPhraseEdit((pe) => (pe ? { ...pe, draft: value } : pe));
+                                        }}
+                                        onBlur={commitPhraseEdit}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' && !e.shiftKey) {
+                                                e.preventDefault();
+                                                commitPhraseEdit();
+                                            }
+                                            if (e.key === 'Escape') setPhraseEdit(null);
+                                        }}
+                                        className="block w-full resize-none bg-surface2 border border-white/30 rounded px-2 py-1 text-sm leading-6 text-fg focus:outline-none select-text"
+                                    />
+                                    <span className="block text-[10px] leading-4 text-muted mt-0.5">Enter to save, Esc to cancel</span>
+                                </span>
+                            ) : null
                         ) : editingIndex === row.index ? (
                             <React.Fragment key={`w-${row.index}`}>
                                 <input
@@ -762,6 +910,8 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                 isCut={isCutByWord[row.index]}
                                 captionHidden={!!row.word.captionHidden}
                                 inSel={!!(selRange && row.pos >= selRange.lo && row.pos <= selRange.hi)}
+                                showEmoji={!!row.word.emoji && (!row.word.emojiSpan || spanTail.get(row.word.emojiSpan) === row.index)}
+                                inSpan={!!(row.word.emoji && row.word.emojiSpan)}
                                 onWordClick={onWordClick}
                                 onEdit={onEdit}
                                 onEmojiClick={onEmojiClick}
@@ -772,17 +922,24 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
             </div>
 
             {/* Floating Opus-style toolbar: appears above the selected word(s).
-                Edit (single word), Remove/Restore caption, Remove caption+video. */}
-            {selCount > 0 && toolbarPos && editingIndex === null && (
+                Edit (one word, or the whole phrase in one box), Emoji (a phrase
+                gets one emoji for its whole duration), Remove/Restore caption,
+                Remove caption+video. */}
+            {selCount > 0 && toolbarPos && editingIndex === null && !dragging && (
                 <div
                     data-transcript-toolbar=""
                     className="fixed z-[130] flex items-center gap-0.5 -translate-y-full -translate-x-0 rounded-lg border border-edge bg-[#17171b] shadow-2xl p-1"
                     style={{ top: toolbarPos.top - 8, left: toolbarPos.left }}
                     onMouseDown={(e) => e.stopPropagation()}
                 >
-                    {selCount === 1 && (
+                    {selKeptIndices.length > 0 && (
                         <button
-                            onClick={() => onEdit(selCaptionIndices[0], captions[selCaptionIndices[0]])}
+                            onClick={() =>
+                                selKeptIndices.length === 1
+                                    ? onEdit(selKeptIndices[0], captions[selKeptIndices[0]])
+                                    : startPhraseEdit()
+                            }
+                            title={selKeptIndices.length === 1 ? 'Edit this word' : 'Edit the text of the selected words'}
                             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-zinc-200 hover:bg-white/10 transition-colors"
                         >
                             <Pencil size={13} /> Edit
@@ -790,27 +947,31 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                     )}
                     {/* Emoji sits right next to Edit so adding one is a single
                         click on the word, not click-word then Edit then emoji. */}
-                    {selCount === 1 && (
+                    {selKeptIndices.length > 0 && (
                         <button
                             data-toolbar-emoji=""
-                            onClick={() => openEmojiFor(selCaptionIndices[0])}
-                            title={selectedEmoji ? 'Change this word\'s emoji' : 'Add an emoji to this word'}
+                            onClick={() => openEmojiFor(selKeptIndices)}
+                            title={
+                                selKeptIndices.length > 1
+                                    ? 'Add one emoji that stays up while these words are spoken'
+                                    : selectedEmojis.length ? 'Change this word\'s emoji' : 'Add an emoji to this word'
+                            }
                             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-zinc-200 hover:bg-white/10 transition-colors"
                         >
                             <Smile size={13} /> Emoji
                         </button>
                     )}
-                    {selCount === 1 && selectedEmoji && (
+                    {selectedEmojis.length > 0 && (
                         <button
                             data-toolbar-remove-emoji=""
                             onClick={() => {
-                                onEditWord(selCaptionIndices[0], { emoji: undefined, emojiAnimated: undefined, emojiAuto: undefined });
+                                onUpdateCaptions((c) => clearEmojis(c, selKeptIndices));
                                 dismissToolbar();
                             }}
-                            title="Take the emoji off this word"
+                            title="Take the emoji off these words"
                             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-zinc-200 hover:bg-white/10 transition-colors"
                         >
-                            <X size={13} /> Remove {selectedEmoji}
+                            <X size={13} /> Remove {selectedEmojis.length === 1 ? selectedEmojis[0] : 'emojis'}
                         </button>
                     )}
                     <button
