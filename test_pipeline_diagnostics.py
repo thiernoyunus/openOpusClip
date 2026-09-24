@@ -110,7 +110,7 @@ def test_model_shape_failure_keeps_invalid_response_code():
             self.models = FakeModels()
 
     with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}):
-        with patch.object(main.genai, "Client", FakeClient):
+        with patch.object(main.llm.genai, "Client", FakeClient):
             try:
                 main.get_viral_clips(
                     {"segments": [], "text": ""},
@@ -120,7 +120,7 @@ def test_model_shape_failure_keeps_invalid_response_code():
             except main.ClipAnalysisError as exc:
                 assert exc.code == "provider_invalid_response"
                 assert exc.provider == "gemini"
-                assert exc.model == "gemini-2.5-flash"
+                assert exc.model == main.DEFAULT_GEMINI_MODEL
             else:
                 raise AssertionError("Expected ClipAnalysisError")
 
