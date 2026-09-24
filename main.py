@@ -86,8 +86,18 @@ def report_failure(stage, code, provider=None, model=None):
 
 # --- Constants ---
 ASPECT_RATIO = 9 / 16
-VIRAL_ANALYSIS_PROVIDER = 'gemini'
-VIRAL_ANALYSIS_MODEL = DEFAULT_GEMINI_MODEL
+
+
+def _active_ai():
+    """Provider/model chosen for this run, for failure labels (Gemini if unset)."""
+    try:
+        ai = llm.settings_from_env()
+        return ai.provider, ai.model
+    except ValueError:
+        return 'gemini', DEFAULT_GEMINI_MODEL
+
+
+VIRAL_ANALYSIS_PROVIDER, VIRAL_ANALYSIS_MODEL = _active_ai()
 
 # Supported output aspect ratios -> (width, height). 1080-class for quality.
 ASPECT_PRESETS = {
@@ -192,8 +202,7 @@ TRAILER_PACE_PRESETS = {
     'extended': (12, 18, 90),
 }
 
-TRAILER_PROVIDER = 'gemini'
-TRAILER_MODEL = DEFAULT_GEMINI_MODEL
+TRAILER_PROVIDER, TRAILER_MODEL = VIRAL_ANALYSIS_PROVIDER, VIRAL_ANALYSIS_MODEL
 TRAILER_JUDGE_MODEL = DEFAULT_GEMINI_MODEL
 
 # All text-based Gemini features use the one model selected in Settings. Image
@@ -2512,6 +2521,12 @@ def _trailer_cost(response, model_name):
         return None
 
 
+def _sum_costs(costs):
+    """Add up per-call costs; None if any call had no price (e.g. DeepSeek direct)."""
+    costs = list(costs)
+    return None if any(c is None for c in costs) else sum(costs)
+
+
 def _augment_attempt_metrics(cost_analysis, latency_ms, attempts_used, max_retries):
     """Attach bounded numeric latency/retry metadata to a Gemini cost dict.
 
@@ -2777,9 +2792,9 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
         out['cost_analysis'] = {
             "input_tokens": sum(c['input_tokens'] for c in costs),
             "output_tokens": sum(c['output_tokens'] for c in costs),
-            "total_cost": sum(c['total_cost'] for c in costs),
+            "total_cost": _sum_costs(c['total_cost'] for c in costs),
             "model": model_name,
-            "estimate_basis": "paid_standard",
+            "estimate_basis": costs[0].get('estimate_basis', 'paid_standard'),
             "candidates": len(candidates),
             # Trailer cost covers usable candidate calls; the optional judge
             # call is intentionally not included because it has no cost dict.

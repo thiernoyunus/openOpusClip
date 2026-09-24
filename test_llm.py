@@ -126,3 +126,20 @@ def test_model_list_filters_and_orders(monkeypatch):
         ("google/gemma:free", False, True),
         ("zzz/other", False, False),
     ]
+
+
+def test_trailer_cost_total_survives_providers_without_prices(monkeypatch):
+    """DeepSeek run crashed adding None costs; the total is now just unknown."""
+    import main
+    assert main._sum_costs([None, None]) is None
+    assert main._sum_costs([0.5, None]) is None
+    assert main._sum_costs([0.5, 0.25]) == 0.75
+
+
+def test_failure_labels_follow_the_chosen_provider(monkeypatch):
+    import main
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-flash")
+    assert main._active_ai() == ("deepseek", "deepseek-v4-flash")
+    monkeypatch.setenv("LLM_MODEL", "")
+    assert main._active_ai() == ("gemini", main.DEFAULT_GEMINI_MODEL)
