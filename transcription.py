@@ -609,7 +609,9 @@ def detect_speech_gaps(video_path, min_silence=SILENCE_MIN_S):
     audio = decode_audio(video_path, sampling_rate=sr)
     speech = get_speech_timestamps(audio, VadOptions(
         min_silence_duration_ms=int(min_silence * 1000),
-        speech_pad_ms=30,  # default 400ms would swallow short pauses
+        # No padding: it shrinks every gap (default 400ms hides short pauses),
+        # and the editor already keeps an 80ms margin when it cuts a pause.
+        speech_pad_ms=0,
     ))
     edges = [0] + [x for s in speech for x in (s["start"], s["end"])] + [len(audio)]
     return [
