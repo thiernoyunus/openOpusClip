@@ -240,7 +240,7 @@ function EmojiPicker({ current, onPick, onRemove, onClose, onInteract }) {
         });
     };
 
-    const currentSlug = current?.animated ? animatedSlug(current.emoji) : null;
+    const currentSlug = current?.emojiAnimated ? animatedSlug(current.emoji) : null;
 
     // Portaled to <body>: inside the editor layout a transformed ancestor
     // turned `fixed` into "fixed to that panel", so the backdrop only dimmed

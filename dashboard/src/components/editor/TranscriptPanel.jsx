@@ -56,12 +56,20 @@ const Word = React.memo(function Word({ index, word, isActive, suppressHighlight
                     <span
                         data-transcript-emoji=""
                         role="button"
+                        tabIndex={isCut ? -1 : 0}
                         title="Change or remove this emoji"
+                        aria-label="Change or remove this emoji"
                         onClick={(e) => {
                             e.stopPropagation();
                             if (!isCut) onEmojiClick(index);
                         }}
-                        className="rounded hover:bg-white/20 hover:ring-1 hover:ring-white/40"
+                        onKeyDown={(e) => {
+                            if (e.key !== 'Enter' && e.key !== ' ') return;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (!isCut) onEmojiClick(index);
+                        }}
+                        className="rounded hover:bg-white/20 hover:ring-1 hover:ring-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-300/60"
                     >
                         {word.emoji}
                     </span>
