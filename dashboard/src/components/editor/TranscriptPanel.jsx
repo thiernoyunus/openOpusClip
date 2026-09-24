@@ -15,11 +15,14 @@ const LAYOUT_LABEL = { fill: 'Fill', fit: 'Fit', split: 'Split', three: 'Three',
  * keeps the click/edit handlers stable (useCallback) and passes index+word
  * back through them, so this component's props stay referentially stable.
  */
-const Word = React.memo(function Word({ index, word, isActive, suppressHighlight, isCut, captionHidden, inSel, showEmoji, inSpan, onWordClick, onEdit, onEmojiClick }) {
+const Word = React.memo(function Word({ index, word, isActive, suppressHighlight, isCut, captionHidden, inSel, selStart, selEnd, showEmoji, inSpan, onWordClick, onEdit, onEmojiClick }) {
     const colorClass = word.highlight ? 'text-[#04f827]' : 'text-white';
     // Words under a phrase emoji get a faint dotted underline so you can see
     // how far the emoji reaches; the emoji itself shows once, after the last.
     const spanClass = inSpan ? ' underline decoration-dotted decoration-amber-300/70 underline-offset-4' : '';
+    // A selected phrase reads as one band, like Opus: square inner corners,
+    // rounded only where the phrase starts and ends.
+    const corners = inSel ? `${selStart ? 'rounded-l' : ''} ${selEnd ? 'rounded-r' : ''}` : 'rounded';
     return (
         <span
             data-transcript-word={index}
@@ -36,7 +39,7 @@ const Word = React.memo(function Word({ index, word, isActive, suppressHighlight
                       ? "Caption hidden (still in the video). Click to restore."
                       : 'Click to edit or remove, drag across words to select a phrase. Double-click to edit text.'
             }
-            className={`ph-mask cursor-pointer text-sm leading-7 rounded px-0.5 transition-colors ${
+            className={`ph-mask cursor-pointer text-sm leading-7 ${corners} px-0.5 transition-colors ${
                 isCut
                     ? 'line-through text-zinc-600 hover:text-zinc-400'
                     : inSel
@@ -83,7 +86,7 @@ const Word = React.memo(function Word({ index, word, isActive, suppressHighlight
     );
 });
 
-const PauseChip = React.memo(function PauseChip({ pause, selected, isCut, onPauseClick }) {
+const PauseChip = React.memo(function PauseChip({ pause, selected, isCut, inSel, onPauseClick }) {
     return (
         <button
             type="button"
@@ -92,7 +95,11 @@ const PauseChip = React.memo(function PauseChip({ pause, selected, isCut, onPaus
             data-pause-index={pause.index}
             onClick={() => onPauseClick(pause)}
             title={isCut ? 'Pause already cut' : 'Click to select this pause for cutting'}
-            className={`inline-flex items-center align-baseline mx-0.5 rounded px-1 py-px text-xs leading-4 transition-colors ${
+            className={`inline-flex items-center align-baseline mx-0.5 px-1 py-px text-xs leading-4 transition-colors ${
+                // Inside a selected phrase the chip sits on the highlight band
+                // (a lime ring fills the space around it) so the band stays whole.
+                inSel ? 'rounded-sm shadow-[0_0_0_4px_#bef264] ' : 'rounded '
+            }${
                 isCut
                     ? 'line-through bg-[#2f2f2f]/60 text-zinc-600'
                     : selected
@@ -830,6 +837,8 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                 pause={row}
                                 selected={selectedPause?.index === row.index}
                                 isCut={cutPauseKeys.has(row.index)}
+                                // Between two selected words (it follows word row.index).
+                                inSel={!!(selRange && posByIndex.get(row.index) >= selRange.lo && posByIndex.get(row.index) < selRange.hi)}
                                 onPauseClick={onPauseClick}
                             />
                         ) : phraseEdit?.indices.includes(row.index) ? (
@@ -910,6 +919,8 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                 isCut={isCutByWord[row.index]}
                                 captionHidden={!!row.word.captionHidden}
                                 inSel={!!(selRange && row.pos >= selRange.lo && row.pos <= selRange.hi)}
+                                selStart={selRange?.lo === row.pos}
+                                selEnd={selRange?.hi === row.pos}
                                 showEmoji={!!row.word.emoji && (!row.word.emojiSpan || spanTail.get(row.word.emojiSpan) === row.index)}
                                 inSpan={!!(row.word.emoji && row.word.emojiSpan)}
                                 onWordClick={onWordClick}
