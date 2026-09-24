@@ -22,6 +22,7 @@ from main import (
     _select_soundbites,
     _text_is_question,
     _code_ending,
+    _slot_trailer,
 )
 import json
 import os
@@ -612,6 +613,53 @@ def test_trim_reported_question_to_the_question():
     a = said("Abu Jihad, like are you sure he's the real deal?", 0)
     out = _trim_lead_ins([span(a)], a)
     assert out[0]['text'].startswith("are you sure")
+
+
+class _SlotClient:
+    """Stands in for Gemini in the slot trailer: names guest 3 / host 1 and
+    always picks the first (best-ranked) candidate."""
+    def __init__(self):
+        self.models = self
+        self.calls = 0
+
+    def generate_content(self, model, contents, config):
+        self.calls += 1
+        if 'guest_sp: the featured guest' in contents:
+            return _FakeResponse(json.dumps({'guest_sp': '3', 'host_sp': '1', 'topic': 'AI agencies'}))
+        if 'key picks' in contents:
+            return _FakeResponse(json.dumps({'picks': [0, 1]}))
+        if 'key pick' in contents:
+            return _FakeResponse(json.dumps({'pick': 0}))
+        return _FakeResponse('{}')
+
+
+def test_slot_trailer_builds_guest_led_arc_ending_on_question_and_first_line():
+    lines = [
+        ("So this brother runs fifty clients and consulted for Google.", 0, '1', 'credentials'),
+        ("I have maybe four meetings a week and all of them are optional.", 20, '3', 'hook'),
+        ("Are you sure he is the real deal?", 40, '1', 'challenge'),
+        ("My AI brain summarizes every client channel for me daily.", 60, '3', 'lesson'),
+        ("We lost our biggest client when the system broke once.", 80, '3', 'emotion'),
+        ("The results speak louder than any pitch deck ever could.", 100, '1', 'proof'),
+        ("Do we actually need engineers like you?", 120, '1', 'question'),
+        ("Systems thinking is the most important skill for any founder.", 124, '3', None),
+    ]
+    words, sents, selects = [], [], []
+    for i, (t, at, sp, role) in enumerate(lines):
+        w = said(t, at, sp)
+        words += w
+        sents.append({'i': i, 's': w[0]['start'], 'e': w[-1]['end'], 'text': t, 'sp': sp})
+        if role:
+            selects.append({'from_i': i, 'to_i': i, 'role': role})
+    out = _slot_trailer(_SlotClient(), 'm', sents, words, set(), selects,
+                        'Ex-Amazon Engineer Running 50 Clients With AI', '', 60, 'SPEAKERS')
+    ms = out['moments_ordered']
+    texts = [m['text'] for m in ms]
+    assert texts[0].startswith('I have maybe four meetings')
+    assert texts[-2] == 'Do we actually need engineers like you?'
+    assert texts[-1].startswith('Systems thinking')
+    assert any(t.startswith('this brother') for t in texts)  # "So" trimmed, host intro kept
+    assert _trailer_story_problems(ms, words, '3', selects, sents) == []
 
 
 if __name__ == '__main__':
