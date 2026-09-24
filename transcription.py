@@ -598,6 +598,29 @@ def detect_silences(video_path, noise_db=SILENCE_NOISE_DB, min_silence=SILENCE_M
     return silences
 
 
+def detect_speech_gaps(video_path, min_silence=SILENCE_MIN_S):
+    """Silence intervals [(start_s, end_s)] from the Silero voice detector that
+    ships with faster-whisper. Unlike silencedetect it listens for a voice, not
+    for quiet, so pauses under music, room noise or hum are still found."""
+    from faster_whisper.audio import decode_audio
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+    sr = 16000
+    audio = decode_audio(video_path, sampling_rate=sr)
+    speech = get_speech_timestamps(audio, VadOptions(
+        min_silence_duration_ms=int(min_silence * 1000),
+        # No padding: it shrinks every gap (default 400ms hides short pauses),
+        # and the editor already keeps an 80ms margin when it cuts a pause.
+        speech_pad_ms=0,
+    ))
+    edges = [0] + [x for s in speech for x in (s["start"], s["end"])] + [len(audio)]
+    return [
+        (s / sr, e / sr)
+        for s, e in zip(edges[::2], edges[1::2])
+        if (e - s) / sr >= min_silence
+    ]
+
+
 def _apply_silence_gaps(segments, silences):
     """Carve real gaps into the word timeline using detected silences. Whisper
     word alignment sets each word's end == the next word's start (no silence),
@@ -695,7 +718,11 @@ def _recover_silence_gaps(video_path, result):
     if not _silence_gaps_enabled():
         return
     try:
-        silences = detect_silences(video_path)
+        try:
+            silences = detect_speech_gaps(video_path)
+        except Exception as exc:
+            print(f"⚠️  Voice detector unavailable ({exc}); using volume-based silence detection.")
+            silences = detect_silences(video_path)
         if silences:
             _apply_silence_gaps(result["segments"], silences)
             print(f"   \U0001f507 Recovered {len(silences)} silence gap(s) in word timings.")
