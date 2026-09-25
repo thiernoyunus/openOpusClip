@@ -1,5 +1,5 @@
 """Turn the plan into a HyperFrames project you can preview, tweak and render.
-usage: hyperframes.py plan.json outdir/        (run audio.py first; it writes audio_mix.wav next to the plan)
+usage: hyperframes.py plan.json outdir/        (run audio.py and sfx.py first; they write audio_mix.wav and sfx.json next to the plan)
 
   cd outdir && npx hyperframes preview      live Studio: scrub, retime clips, edit caption text and style
   cd outdir && npx hyperframes render -o trailer.mp4
@@ -9,7 +9,8 @@ What it writes:
   compositions/captions.html   every caption as HTML text (a block per phrase with data-start/data-duration,
                           a span per word with data-at), plus the caption style block
   assets/clips/NN-*.mp4   each bite pre-cut from the source (frame-accurate, 30 fps, muted)
-  assets/audio_mix.wav    the soundtrack from audio.py (dialogue, bed, booms, -14 LUFS)
+  assets/audio_mix.wav    the dialogue track from audio.py (-14 LUFS, plus music if the plan has a track)
+  assets/sfx/             each sound effect from sfx.py (HyperFrames' sound library), one clip per boom / riser / whoosh
   assets/fonts/           Montserrat, Anton, Playfair Display (from ~/.cache/doac-trailer/fonts)
   assets/vendor/          GSAP (the animation library HyperFrames drives), so nothing loads from the network
 
@@ -246,7 +247,7 @@ CAPTIONS = """<!-- Captions for the DOAC trailer (made by hyperframes.py; regene
 INDEX = """<!doctype html>
 <!-- DOAC trailer from %(plan)s, made by hyperframes.py (regenerating overwrites this project's html).
      Preview / tweak:  npx hyperframes preview        Render:  npx hyperframes render -o trailer.mp4
-     Bites are muted clips cut from the episode; all sound is the soundtrack (audio.py's mix).
+     Bites are muted clips cut from the episode. The dialogue is one track; every sound effect is its own clip below it.
      Captions and their style: compositions/captions.html -->
 <html lang="en">
   <head>
@@ -267,8 +268,11 @@ INDEX = """<!doctype html>
       <!-- ============ BITES, in trailer order: one clip each (start/duration in seconds on the trailer) ============ -->
 %(bites)s
 
-      <!-- ============ SOUNDTRACK: dialogue + music bed + booms at -14 LUFS, from audio.py ============ -->
+      <!-- ============ DIALOGUE: the bites' sound at -14 LUFS, from audio.py ============ -->
       <audio id="soundtrack" src="assets/audio_mix.wav" data-start="0" data-duration="%(total)s" data-track-index="2" data-volume="1"></audio>
+
+      <!-- ============ SOUND EFFECTS: one clip each, from HyperFrames' sound library (sfx.py). Move, re-level or delete freely ============ -->
+%(sfx)s
 
       <!-- ============ CAPTIONS: text, timing and style live in compositions/captions.html ============ -->
       <div id="captions" data-composition-id="captions" data-composition-src="compositions/captions.html" data-track-kind="captions"
@@ -335,6 +339,24 @@ def main():
     shutil.copy(audio, os.path.join(outdir, "assets/audio_mix.wav"))
     for f in ("Montserrat.ttf", "Anton-Regular.ttf", "PlayfairDisplay-Italic.ttf"):
         shutil.copy(f"{FONTS}/{f}", os.path.join(outdir, "assets/fonts", f))
+
+    sfx_html = []
+    sfx_path = os.path.join(os.path.dirname(os.path.abspath(plan_path)), "sfx.json")
+    fx = json.load(open(sfx_path))["sounds"] if os.path.exists(sfx_path) else []
+    if any(b.get(k) for b in plan["bites"] for k in ("boom", "riser", "whoosh")) and not os.path.exists(sfx_path):
+        sys.exit(f"the plan has sound effects but no sfx.json: run sfx.py {plan_path} first")
+    if fx:
+        os.makedirs(os.path.join(outdir, "assets/sfx"), exist_ok=True)
+    old = os.path.join(outdir, "assets/sfx")
+    for f in (os.listdir(old) if os.path.isdir(old) else []):   # sounds no longer in the plan
+        if f not in {os.path.basename(s["file"]) for s in fx}:
+            os.remove(os.path.join(old, f))
+    tracks = {"boom": 3, "riser": 4, "whoosh": 5}   # one track per kind, so effects never overlap on a track
+    for s in fx:
+        name = os.path.basename(s["file"])
+        shutil.copy(s["file"], os.path.join(outdir, "assets/sfx", name))
+        sfx_html.append(f'      <audio id="sfx-{name[:-4]}" class="sfx" src="assets/sfx/{name}" data-start="{s["start"]:.4f}" data-duration="{s["dur"]:.4f}"'
+                        f' data-media-start="0" data-track-index="{tracks[s["kind"]]}" data-volume="1"></audio>  <!-- {s["kind"]} on bite {html.escape(str(s["bite"]))} -->')
 
     timeline, total = C.place_bites(plan["bites"])
     blocks = C.build_blocks(timeline, words(plan["transcript"]))
@@ -414,7 +436,8 @@ def main():
         total=secs(nfr))
     open(os.path.join(outdir, "compositions/captions.html"), "w").write(captions)
     open(os.path.join(outdir, "index.html"), "w").write(INDEX % dict(
-        gsap=vendor_gsap(outdir), plan=html.escape(os.path.basename(plan_path)), W=W, H=H, total=secs(nfr), hold=hold, bites="\n".join(bite_html)))
+        gsap=vendor_gsap(outdir), plan=html.escape(os.path.basename(plan_path)), W=W, H=H, total=secs(nfr), hold=hold, bites="\n".join(bite_html),
+        sfx="\n".join(sfx_html) or "      <!-- (none in the plan) -->"))
 
     # project files, as `hyperframes init` writes them
     name = re.sub(r"[^a-z0-9-]+", "-", os.path.basename(os.path.abspath(outdir)).lower())

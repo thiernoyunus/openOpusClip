@@ -1,15 +1,20 @@
-"""Build the trailer's audio: dialogue bites with click-free edges, a quiet music bed, sub booms.
-usage: audio.py plan.json [audio_mix.wav]
-Optional plan keys: "music": path to a licensed track (used instead of the synth pad), "music_db": its level (default -24).
-Bite keys: "boom": true puts a sub hit at the start of that bite. "fade_in"/"fade_out" (seconds, default 0.025)
-lengthen a bite's edge fade, e.g. 0.1 when the next speaker starts right on top of the last word. The bed always drops out before the last bite."""
-import os, subprocess, sys
+"""Build the trailer's dialogue track: the bites with click-free edges, at -14 LUFS, peaks held to -3 dB
+(so the sound effects HyperFrames adds on top have room and never clip).
+usage: audio.py plan.json [audio_mix.wav] [--sfx]
+Sound effects are not mixed in here: sfx.py fetches them and hyperframes.py puts each one on the timeline as its own clip.
+--sfx mixes sfx.json's sounds into this file instead (only for the Python fallback, render.py).
+Optional plan keys: "music": path to a licensed track, laid quietly under the dialogue; "music_db": its level (default -24).
+No music key means no music: there is no placeholder bed. The music always drops out before the last bite.
+Bite keys: "fade_in"/"fade_out" (seconds, default 0.025) lengthen a bite's edge fade, e.g. 0.1 when the next speaker
+starts right on top of the last word."""
+import json, os, subprocess, sys
 import numpy as np
 from common import load_plan
 
 SR, FPS = 48000, 30
-plan = load_plan(sys.argv[1])
-out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), "audio_mix.wav")
+args = [a for a in sys.argv[1:] if a != "--sfx"]
+plan = load_plan(args[0])
+out = args[1] if len(args) > 1 else os.path.join(os.path.dirname(os.path.abspath(args[0])), "audio_mix.wav")
 END_HOLD = plan.get("end_hold", 1.2)
 
 
@@ -17,6 +22,18 @@ def load(src, a, d, ch=2):
     raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", f"{a:.3f}", "-i", src, "-t", f"{d:.3f}",
                           "-vn", "-ac", str(ch), "-ar", str(SR), "-f", "f32le", "-"], capture_output=True).stdout
     return np.frombuffer(raw, np.float32).reshape(-1, ch).copy()
+
+
+def limit(x, ceiling):
+    """Hold every peak under `ceiling` (0.7 = -3 dB) with a smooth gain dip, instead of a hard clip."""
+    B = 240   # 5 ms blocks
+    n = -(-len(x) // B)
+    pk = np.pad(np.abs(x).max(1), (0, n * B - len(x))).reshape(n, B).max(1)
+    g = np.minimum(1, ceiling / np.maximum(pk, 1e-9))
+    for k in (1, 2, 4):   # reach 20 ms around each peak so the dip starts before it
+        g = np.minimum(g, np.minimum(np.r_[g[k:], np.ones(k)], np.r_[np.ones(k), g[:-k]]))
+    gs = np.interp(np.arange(len(x)), np.arange(n) * B + B / 2, g)
+    return (x * gs[:, None]).astype(np.float32)
 
 
 parts, marks, t = [], [], 0.0
@@ -40,30 +57,27 @@ dlg *= 10 ** (-18 / 20) / max(rms, 1e-6)
 
 last_t = marks[-1][0]
 env = np.clip(T / 3, 0, 1) * np.clip((last_t - 0.4 - T) / 0.8, 0, 1)   # fade in; drop out before the cliffhanger
+bed = np.zeros(N, np.float32)
 if plan.get("music"):
     m = load(plan["music"], 0, N / SR + 1).mean(1)[:N]
     m = np.pad(m, (0, N - len(m)))
     m *= 10 ** (plan.get("music_db", -24) / 20) / max(np.sqrt(np.mean(m ** 2)), 1e-6)
     bed = m * env
-else:  # placeholder: slow detuned minor pad (A2 C3 E3 A3)
-    bed = np.zeros(N, np.float32)
-    for fz, a in ((110, 1), (130.81, .7), (164.81, .6), (220, .35)):
-        for det in (-0.6, 0.6):
-            bed += a * np.sin(2 * np.pi * (fz + det) * T + det)
-    bed *= (0.55 + 0.45 * np.sin(2 * np.pi * T / 7.5) ** 2) * env * 10 ** (-33 / 20) / 3
 
 hits = np.zeros(N, np.float32)
-rng = np.random.default_rng(1)
-for t0, b in marks:
-    if not b.get("boom"): continue
-    i0 = int(t0 * SR); L = int(1.8 * SR); tt = np.arange(L) / SR
-    s = np.sin(2 * np.pi * np.cumsum(38 + 60 * np.exp(-tt * 9)) / SR) * np.exp(-tt * 2.2)
-    s += rng.normal(0, 1, L) * np.exp(-tt * 40) * 0.25
-    j = min(N, i0 + L)
-    hits[i0:j] += (s * 10 ** (-12 / 20))[: j - i0].astype(np.float32)
+if "--sfx" in sys.argv:   # Python fallback only: the same sounds hyperframes.py puts on the timeline
+    fx = json.load(open(os.path.join(os.path.dirname(os.path.abspath(args[0])), "sfx.json")))
+    for s in fx["sounds"]:
+        y = load(s["file"], 0, s["dur"] + 0.1, 1)[:, 0]
+        i0 = int(s["start"] * SR); j = min(N, i0 + len(y))
+        hits[i0:j] += y[: j - i0]
 
 mix = dlg + (bed + hits)[:, None]
 mix /= max(1.0, np.abs(mix).max() / 0.97)
+raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "f32le", "-ar", str(SR), "-ac", "2", "-i", "-",
+                      "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-ar", str(SR), "-f", "f32le", "-"],
+                     input=mix.astype(np.float32).tobytes(), capture_output=True, check=True).stdout
+mix = limit(np.frombuffer(raw, np.float32).reshape(-1, 2).copy(), 0.89 if "--sfx" in sys.argv else 0.7)
 subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "f32le", "-ar", str(SR), "-ac", "2", "-i", "-",
-                "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-ar", str(SR), out], input=mix.astype(np.float32).tobytes(), check=True)
+                "-c:a", "pcm_s16le", out], input=mix.tobytes(), check=True)
 print(f"audio {N / SR:.1f}s -> {out}")

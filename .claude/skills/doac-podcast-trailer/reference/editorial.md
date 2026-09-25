@@ -1,7 +1,7 @@
 # Picking the story
 
 This is the part that makes or breaks the trailer. The scripts only cut what you choose.
-It is written from the trailer Yunus called "the absolute best" (a 91 s e-commerce episode cut, v3), from what went wrong in the cuts before it, and from DOAC's lead trailer editor.
+It is written from the best approved trailer (a 91 s e-commerce episode cut, v3), from what went wrong in the cuts before it, and from DOAC's lead trailer editor.
 
 ## 1. Read the episode before choosing anything
 Read all of `transcript.txt`, in chunks. Then write these down, with timestamps:
@@ -75,7 +75,7 @@ Role names are free labels: `hook`, `challenge`, `premise`, `frame`, `sell-guest
 
 ## 5. Captions
 - One `big` word per caption line: the number, the topic word, or the emotional word.
-- **Colour a word in almost every caption block.** DOAC trailers do: red "HATE", yellow "AI", green "RESULTS", a red box behind "replaced". A trailer with only a few coloured words looks flat (Yunus's feedback). Pick the colour by what the word means:
+- **Colour a word in almost every caption block.** DOAC trailers do: red "HATE", yellow "AI", green "RESULTS", a red box behind "replaced". A trailer with only a few coloured words looks flat. Pick the colour by what the word means:
   - **red**: danger, loss, negatives, pushback ("not", "wasting", "lose", "never", "reps" when it's a put-down)
   - **green**: money, results, wins, the positive answer ("money", "selling", "80%", "solutions")
   - **yellow**: the topic word, names, numbers, and emphasis that's neither good nor bad ("AI", "2018", "even")
@@ -86,8 +86,11 @@ Role names are free labels: `hook`, `challenge`, `premise`, `frame`, `sell-guest
 - Fix the transcript's mistakes with `fix`: names, brand words, and missing question marks.
 
 ## 6. Sound
+- Sound effects come from HyperFrames' sound library (HeyGen's full library when signed in), never synthesized. Less is more: each one marks a turn.
 - `boom` on 2-4 turning points (the hook, the guest reveal, the stakes).
-- For a real release, choose a licensed track that fits the genre (thriller, interrogation, rags-to-riches) and set `music` in the plan. The synth pad is only a placeholder.
+- `whoosh` on a cut that changes scene or mood (one or two per trailer).
+- `riser` into the one biggest turn, usually the stakes or the cliffhanger. At most one.
+- No music by default: the dialogue carries the trailer. Only set `music` if the person gives you a licensed track.
 
 ## From DOAC's lead trailer editor
 - Every element must be justified. If it's only there to look cool, cut it.

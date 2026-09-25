@@ -1,4 +1,4 @@
-"""Render the trailer: source bites in plan order, Imran-style captions, the audio mix from audio.py.
+"""Render the trailer: source bites in plan order, DOAC-style captions, the audio mix from audio.py.
 usage: render.py plan.json trailer.mp4        (run audio.py first; it writes audio_mix.wav next to the plan)
 
 Framing (plan "aspect"):
