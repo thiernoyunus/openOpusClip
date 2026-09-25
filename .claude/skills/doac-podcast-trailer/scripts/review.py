@@ -16,6 +16,38 @@ def grab(src, t, w, h):
     return np.frombuffer(raw, np.uint8).reshape(h, w, 3) if len(raw) == w * h * 3 else None
 
 
+def intro_check(plan):
+    """Everyone who speaks twice needs an intro bite (`introduces`) that says their name, so viewers know who is who."""
+    ws = words(plan["transcript"])
+    count = {}
+    for b in plan["bites"]:
+        count[b.get("speaker", "?")] = count.get(b.get("speaker", "?"), 0) + 1
+    intros = {}
+    for b in plan["bites"]:
+        if b.get("introduces"):
+            a, e = b.get("cap_start", b["start"]), b.get("cap_end", b["end"])
+            said = " ".join(b.get("fix", {}).get(C.clean(w["w"]), w["w"]) for w in ws if a <= w["s"] < e)
+            said += " " + " ".join(b.get("fix_times", {}).values())
+            intros.setdefault(b["introduces"], []).append(said.lower())
+    print("\nintroductions (everyone who speaks twice needs their name and credential)")
+    ok = True
+    for who, n in sorted(count.items(), key=lambda kv: -kv[1]) + [(w, 0) for w in intros if w not in count]:
+        if (n < 2 and who not in intros) or (who.lower().startswith("host") and who not in intros):
+            continue
+        name = plan.get("names", {}).get(who, who)
+        if who not in intros:
+            print(f"  {who}: {n} bites, never introduced  <-- add an intro bite with \"introduces\": \"{who}\"")
+            ok = False
+        elif not any(name.split()[0].lower() in t for t in intros[who]):
+            print(f"  {who}: introduced, but \"{name}\" isn't said in it  <-- start the bite on \"we have {name}...\" "
+                  "(or set plan \"names\" / fix a garbled name)")
+            ok = False
+        else:
+            print(f"  {who}: ok")
+    if ok:
+        print("  ok")
+
+
 def face_check(vid, plan):
     """Captions must never cover a face. For each caption block, compare a trailer frame (with captions) to the same
     source frame (without), so the difference is exactly the caption; then find the faces in the source frame."""
@@ -93,6 +125,7 @@ if len(sys.argv) > 2:
     if g:
         gs = share.get(g, 0) / t
         print(f"  guest '{g}': {gs:.0%}" + ("  <-- under 50%: give the guest more of the trailer" if gs < 0.5 else "  ok"))
+    intro_check(plan)
     face_check(vid, plan)
 cap = vid.rsplit(".", 1)[0] + "_captions.json"   # render.py writes this; for a HyperFrames render, rebuild from the plan
 shown = json.load(open(cap)) if os.path.exists(cap) else []

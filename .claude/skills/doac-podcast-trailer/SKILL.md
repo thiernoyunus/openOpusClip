@@ -32,7 +32,8 @@ Work in a folder of its own, e.g. `trailer-<episode>/`. `S` is this skill's fold
    - Upload: copy the file in.
 3. **Transcribe**: `python3 $S/scripts/transcribe.py original.mp4`. This writes `transcript.json`, `transcript.txt` and `audio.wav`, and takes about a quarter of the episode's length. Read the transcript while it finishes.
 4. **Pick the story** following `reference/editorial.md`:
-   - Name the one topic, and decide whether it's a guest episode (someone brought in as the expert) or a panel/regular one. A guest episode is guest-led: the guest speaks first (their boldest claim cold-opens the trailer) and for at least half of it.
+   - Name the one topic, and decide the kind of episode: a guest episode, a guest plus panel, or a panel (`reference/editorial.md`, section 1). With a main guest it's guest-led: the guest speaks first (their boldest claim cold-opens the trailer) and for at least half of it. In a panel, share the trailer between the strongest voices.
+   - Introduce everyone who speaks twice with their name and credential together (start the bite on "we have [name]…"), and mark those bites with `introduces`.
    - Find who is who: `python3 $S/scripts/frames.py original.mp4 who.jpg --burst MM:SS ...` shows three frames per time, so you can see whose mouth moves.
    - List candidate lines.
    - Build the arc.
@@ -54,7 +55,8 @@ Work in a folder of its own, e.g. `trailer-<episode>/`. `S` is this skill's fold
    `hyperframes doctor` says what's missing if a command fails.
    - **Fallback, only if setup printed `HYPERFRAMES NOT READY`:** `python3 $S/scripts/audio.py plan.json --sfx` (mixes the sound effects in), then `python3 $S/scripts/render.py plan.json trailer.mp4`. For 9:16, set `"aspect": "9:16"` and run `track.py plan.json` first. The picture is the same, but the person gets no project to edit, so tell them why HyperFrames didn't run.
 8. **Review before sharing**: `python3 $S/scripts/review.py trailer.mp4 plan.json`. It makes a time-labelled sheet and prints the captions exactly as they appear on screen. Look at the sheet, and at 5+ full-size frames (the sheet catches words mid-animation). Check that:
-   - in a guest episode, the first voice is the guest's, and the guest's share (printed by `review.py`) is at least 50%, spread through the trailer
+   - with a main guest, the first voice is the guest's, and the guest's share (printed by `review.py`) is at least 50%, spread through the trailer
+   - everyone who speaks twice is introduced by name: `review.py` flags anyone without an intro bite, or whose name was cut out of it
    - captions never cover a face: `review.py` checks every caption block against the faces under it and saves any it flags as `trailer_faces.jpg`. This is very important; fix every one. On 9:16 or zoomed bites it can't check, so look yourself. Also keep captions off anything the viewer needs to see (a product, a screen, a sign).
    - nearly every block has a coloured word
    - the running order reads as one conversation

@@ -11,10 +11,11 @@ Read all of `transcript.txt`, in chunks. Then write these down, with timestamps:
   2. Run `frames.py original.mp4 who.jpg --burst MM:SS …` there, and see whose mouth and hands move across the three frames.
   3. Note what they look like (clothes, glasses, seat, camera) so you can recognise them at other timestamps.
   People are often never named, or two share a name. Label them by role ("the host", "the construction partner") and never guess a name.
-- **What kind of episode it is.** This decides whose voice carries the trailer:
-  - **Guest episode:** the host introduces someone as the guest or the expert ("Today I have…", "he's been in this space since 2018"), and the conversation is about what they know. The trailer is **guest-led** (see the table below).
-  - **Panel or regular episode:** the usual hosts or a group discuss a topic, and nobody is brought in as the expert. Share the trailer between the strongest voices.
-  Write down which it is, and the guest's name or label, before listing candidates.
+- **What kind of episode it is.** This decides whose voice carries the trailer. Look at who the title or thumbnail names, who the host introduces as the guest ("Today I have…"), and who gets asked most of the questions.
+  - **Guest episode:** one person is brought in as the expert, and the conversation is about what they know. The trailer is **guest-led** (see below). Co-hosts do the host's job.
+  - **Guest plus panel:** one main guest, plus regulars or panelists who also talk. Still guest-led: the main guest opens and has 50%+. Panelists are supporting voices. Keep one only if they add friction or a strong line, and introduce each one you keep.
+  - **Panel:** a group discusses a topic and nobody is the main expert. No one has to have 50%. Share the trailer between the two to four strongest voices, and introduce each one.
+  If you can't tell, it's a panel. Write down which it is, and each person's name as spoken (or a role label if never named), before listing candidates.
 - **The premise.** The one or two sentences that tell a stranger what this conversation is. Often in the host's intro.
 - **The central question** the episode keeps coming back to.
 - **Specific numbers**, such as "$10,000 a month", "quarter of a billion", "three exits". Specific numbers feel true.
@@ -45,7 +46,7 @@ Role names are free labels: `hook`, `challenge`, `premise`, `frame`, `sell-guest
 | **Hook** | 0-20 s | The first line: a bold, specific claim about the topic. In a guest episode it's the guest's boldest claim. It must make you want the answer, and must not give it away. The strongest hook is usually the claim nobody expects from that speaker, e.g. a doctor saying "most of what you eat for health does nothing", or an investor saying "your investment can go to zero". Write down 5+ hook candidates, rank them on surprise, specificity and the topic word, and open with the winner. |
 | **Back-and-forth** | | Right after the hook: a reaction or challenge from the other side ("what gives you so much confidence to make such a bold statement?"), and in a guest episode the guest doubling down. One or two quick exchanges, before the introduction. |
 | **Frame** | by ~30 s | The premise, in the host's words if possible, so a stranger knows what the conversation is. |
-| **Sell the guest** | by ~40 s | Credentials with numbers. It's best when someone else says them (the host introducing them). Everyone who speaks twice or carries the conflict needs to be introduced: a guest, a co-host, a skeptic. Use one short line each ("manages a quarter of a billion", "20 years in construction"). If there's no such line for someone, give their bites to someone else or cut them. An unknown voice arguing carries no weight. |
+| **Sell the guest** | by ~40 s | Who each voice is: their **name and credential together**, ideally said by the host ("To my right, we have brother X, who spent a quarter of a million dollars on this book"). Start the bite on the host's "we have [name]…", never after the name. Everyone who speaks twice or carries the conflict needs this: the guest, a co-host, a panelist, a skeptic. In a panel, introduce everyone the same way, one short line each, in one quick run after the hook. If the transcript garbles a name, correct it with `fix`. If a person is never named, a credential alone is fine (never guess a name). If there's no intro line for someone at all, give their bites to someone else or cut them. An unknown voice arguing carries no weight. Mark each intro bite with `introduces`. |
 | **The question** | | The central question, asked out loud. This turns the setup into the debate. |
 | **Moment of value** | | One genuinely useful idea given away free (a definition, a rule, a framework). |
 | **Conflict** | | Pushback: "Personally, no, not yet", "merciless due diligence". The trailer needs friction. |
@@ -66,6 +67,7 @@ Role names are free labels: `hook`, `challenge`, `premise`, `frame`, `sell-guest
 - **Topic drift.** Twelve great lines on five topics feel like a highlight reel, not a trailer.
 - **No context.** Without the premise, viewers don't know why the argument matters.
 - **Unknown guests.** If nobody says who they are, their claims carry no weight.
+- **A name cut off the intro.** A panel test introduced three people but only one by name: two intro bites started a line after the host said the name ("And Hormozi was impressed…" instead of "Across me we have Murad, who…"), partly because the transcript had garbled the names. Viewers couldn't tell who was who. Keep the name in the bite and fix its spelling.
 - **The guest barely speaks.** One test cut gave the guest one moment (two bites back to back) and the host seven bites. The guest was introduced well, then went quiet. In a guest episode the guest's ideas are the product: let the guest carry it.
 - **Zoom and crop on a two-shot podcast.** People want both faces in view. Keep the full frame in 16:9, exactly as each camera shot it. That also holds when four people are on two alternating two-shot cameras.
 - **Trusting Whisper's word times at an edge.** Filler words ("Yeah", "I") are sometimes stretched over a second, so a cut placed from `words.py` can clip the next word. `check_audio.py` catches this. When it happens, re-transcribe a 2 s clip around the cut, place the edge by hand, and add `"lock": true`.

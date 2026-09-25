@@ -10,7 +10,8 @@ Editorial choices live here and nowhere else, so changing the trailer means edit
   "aspect": "16:9",                  // "16:9" (full two-shot, default) or "9:16" (speaker crop, run track.py)
   "topic": "e-commerce as an asset class",   // the one thing this episode is about (for you, not the renderer)
   "genre": "interrogation / thriller",
-  "guest": "Jamal",                  // guest episodes only: exactly the label used in the bites' "speaker"; review.py checks their share
+  "guest": "Jamal",                  // the main guest (guest episodes and guest plus panel): exactly the label used in the bites' "speaker"; review.py checks their share
+  "names": {"Book buyer": "Abu Malik"},   // optional: the name as spoken, for a speaker label that isn't their name (review.py looks for it in the intro)
   "music": "track.mp3",              // optional licensed track, laid quietly under the dialogue; no key = no music
   "music_db": -24,
   "sounds": {"boom": {"heygen": "deep trailer boom"}},   // optional: what sfx.py searches for, or {"boom": "my-boom.wav"}
@@ -25,13 +26,14 @@ Editorial choices live here and nowhere else, so changing the trailer means edit
 |-----|----------|---------|
 | `id` | no | Label shown in logs (defaults to 1, 2, 3...) |
 | `role` | yes | Its job in the story: `hook`, `challenge`, `premise`, `sell-guest`, `value`, `pushback`, `stakes`, `admission`, `cliffhanger`... |
-| `speaker` | yes | Who is talking. Use one short label per person, identical on every bite ("Host", "Jamal"), so `review.py` can add up each person's share. Put descriptions in `notes`, not here |
+| `speaker` | yes | Who is talking. Use one short label per person, identical on every bite, so `review.py` can add up each person's share. Use their name when it's said ("Murad"), else a role ("Host", "Book buyer"). Put descriptions in `notes`, not here |
 | `start`, `end` | yes | Source seconds. Start at a sentence start, end after the sentence's last word. `snap.py` refines both |
 | `why` | yes | One line: what this bite does for the viewer. If you can't write it, cut the bite |
 | `cap_start`, `cap_end` | no | Only caption words spoken inside this window (default: the bite). Use to drop a stray word from the other speaker at an edge |
 | `drop` | no | Words to leave out of the captions (e.g. a greeting, a name the transcript mangles) |
 | `drop_times` | no | Leave out the word starting at these source times (for one repeated word, "I I") |
 | `fix` | no | `{"heard": "correct"}` whole-word caption fixes, also for punctuation: `{"that": "that?"}`. Changes every copy of that word in the bite |
+| `introduces` | no | On an intro bite: the `speaker` label of the person it introduces (`"Murad"`). `review.py` checks that everyone who speaks twice has one, and that their name is in it |
 | `fix_times` | no | `{"1085.42": "helped"}` replaces just the one word that starts at that source time |
 | `auto_big` | no | `false`: blocks in this bite with none of your `big` words get no huge word (instead of an automatic pick) |
 | `lock` | no | `true`: `snap.py` leaves this bite's start/end alone (use after placing a cut by hand) |
