@@ -50,28 +50,38 @@ const RENDER_JPEG_QUALITY: number = (() => {
 // through that browser's single compositing thread, so adding tabs barely helps
 // (measured: 1 tab 27s, 4 tabs 22s), while a second browser gets its own
 // (measured: 24s -> 17s for a crop layout, 57s -> 32s for the blurred one, on
-// 4 cores). Default: one per ~3 cores, at least 2 on a 4-core machine, max 4.
-// RENDER_BROWSERS=1 restores the old single-browser render.
+// 4 cores). On an M1 Pro (8 cores), 4 browsers was the fastest setting.
+// Default: cores - 1, at most 4. RENDER_BROWSERS=1 restores the old
+// single-browser render.
 const RENDER_BROWSERS: number = (() => {
   const parsed = parseInt(process.env.RENDER_BROWSERS || "", 10);
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  const cores = os.cpus().length;
-  return Math.max(cores >= 4 ? 2 : 1, Math.min(4, Math.floor(cores / 3)));
+  return Math.max(1, Math.min(4, os.cpus().length - 1));
 })();
 
-// The clip is cut into more slices than there are browsers, and each browser
-// takes the next unclaimed slice when it finishes one. Some stretches cost far
-// more to draw than others (a blurred-background layout is ~2x a plain crop),
-// so one-slice-per-browser leaves browsers idle while the unlucky one finishes.
-const SLICES_PER_BROWSER = parseInt(process.env.RENDER_SLICES_PER_BROWSER || "", 10) || 3;
+// Slices per browser. Each browser takes the next unclaimed slice when it
+// finishes one, so cutting more slices than browsers evens out stretches that
+// cost more to draw (a blurred-background layout is ~2x a plain crop). But each
+// slice also pays ~1s to start, and on an M1 Pro one slice per browser measured
+// fastest (11s vs 14s for a 20s clip), so that's the default.
+const SLICES_PER_BROWSER = parseInt(process.env.RENDER_SLICES_PER_BROWSER || "", 10) || 1;
 
 // Don't cut slices shorter than this — each has a small fixed cost (page
 // load, encoder start) that a very short slice can't win back.
 const MIN_FRAMES_PER_SLICE = 90;
 
-// Chrome graphics backend ("angle", "vulkan", "swangle", ...). Unset = let
-// Chrome decide.
-const RENDER_GL = (process.env.RENDER_GL || null) as OpenGlRenderer | null;
+// Chrome graphics backend ("angle", "vulkan", "swangle", ...). On macOS the
+// default is "angle": headless Chrome otherwise draws on the CPU, and switching
+// it to the Mac's graphics chip roughly halved export time on an M1 Pro
+// (e.g. 22s -> 11s for a 20s clip with 4 browsers). Elsewhere, unset = let
+// Chrome decide (on a Linux box with no GPU "angle" made no difference).
+// RENDER_GL=default forces Chrome's own choice on a Mac too.
+const RENDER_GL: OpenGlRenderer | null = (() => {
+  const raw = process.env.RENDER_GL;
+  if (raw === "default") return null;
+  if (raw) return raw as OpenGlRenderer;
+  return process.platform === "darwin" ? "angle" : null;
+})();
 
 // Pin a specific Chrome/Chromium binary instead of Remotion's downloaded one —
 // e.g. a packaged app bundling its own browser. Unset = default behavior.
