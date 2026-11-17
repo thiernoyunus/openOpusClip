@@ -59,12 +59,16 @@ const RENDER_BROWSERS: number = (() => {
   return Math.max(1, Math.min(4, os.cpus().length - 1));
 })();
 
-// Slices per browser. Each browser takes the next unclaimed slice when it
-// finishes one, so cutting more slices than browsers evens out stretches that
-// cost more to draw (a blurred-background layout is ~2x a plain crop). But each
-// slice also pays ~1s to start, and on an M1 Pro one slice per browser measured
-// fastest (11s vs 14s for a 20s clip), so that's the default.
-const SLICES_PER_BROWSER = parseInt(process.env.RENDER_SLICES_PER_BROWSER || "", 10) || 1;
+// How the clip is cut up. Each browser takes the next unclaimed slice when it
+// finishes one, so smaller slices even out stretches that cost more to draw (a
+// blurred-background layout is ~2x a plain crop): otherwise one browser is
+// left drawing the hard part alone while the rest sit idle. But each slice
+// also pays ~1s to start. So: one slice per browser for short clips (fastest
+// on a 20s clip on an M1 Pro, 11s vs 14s), and slices of about
+// TARGET_SLICE_FRAMES once the clip is long enough. A fixed
+// RENDER_SLICES_PER_BROWSER overrides this.
+const SLICES_PER_BROWSER = parseInt(process.env.RENDER_SLICES_PER_BROWSER || "", 10) || 0;
+const TARGET_SLICE_FRAMES = 240; // 8s at 30fps
 
 // Don't cut slices shorter than this — each has a small fixed cost (page
 // load, encoder start) that a very short slice can't win back.
@@ -169,9 +173,12 @@ export async function executeRender(params: RenderParams): Promise<void> {
     // Tabs per browser: RENDER_CONCURRENCY is the budget for the whole export.
     const tabs = Math.max(1, Math.floor(RENDER_CONCURRENCY / browsers));
     // combineChunks needs equal-length slices (only the last may be shorter).
+    const slicesPerBrowser =
+      SLICES_PER_BROWSER ||
+      Math.max(1, Math.round(total / (browsers * TARGET_SLICE_FRAMES)));
     const framesPerSlice = Math.max(
       MIN_FRAMES_PER_SLICE,
-      Math.ceil(total / (browsers * SLICES_PER_BROWSER))
+      Math.ceil(total / (browsers * slicesPerBrowser))
     );
     const sliceCount = Math.ceil(total / framesPerSlice);
 
