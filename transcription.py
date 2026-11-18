@@ -621,17 +621,29 @@ def detect_speech_gaps(video_path, min_silence=SILENCE_MIN_S):
     ]
 
 
-def _apply_silence_gaps(segments, silences):
-    """Carve real gaps into the word timeline using detected silences. Whisper
-    word alignment sets each word's end == the next word's start (no silence),
-    so pause/silence editing finds nothing — most visibly on mlx-whisper. For
-    each silence [s, e], push the preceding word's end back to s and the
-    following word's start forward to e, so a genuine gap appears. Mutates word
-    start/end in place; all times in seconds.
+# Two words closer than this count as "touching": Whisper's alignment artifact.
+GAPLESS_S = 0.02
 
-    ponytail: O(words * silences) linear scans — fine for clip-length transcripts
-    (hundreds of words, tens of silences); switch to a two-pointer merge if it
-    ever runs on multi-hour audio.
+
+def _apply_silence_gaps(segments, silences):
+    """Line the gap between each pair of words up with the silence the audio
+    actually has there. Mutates word start/end in place; times in seconds.
+
+    The transcript and the voice detector each make one kind of mistake, so a
+    pause is only cut where BOTH agree nobody is talking:
+
+    - The voice detector misses soft speech (quiet onsets, trailing-off words,
+      an off-mic "yeah"). It must not move a word edge the transcript already
+      knows, or the pause cut eats real speech. So when the transcript has its
+      own gap (Soniox, often faster-whisper), the gap is only shrunk to the part
+      the detector also hears as silent, never widened into the words.
+    - Whisper word alignment often makes words touch (end == next start), and a
+      transcript gap can hold speech it skipped. Touching words get the silence
+      the detector hears between their midpoints (each keeps at least its first
+      / last half), and a transcript gap with no silence in it is closed.
+
+    ponytail: O(words * silences) scan; switch to a two-pointer merge if it ever
+    runs on multi-hour audio.
     """
     words = [
         w
@@ -639,28 +651,24 @@ def _apply_silence_gaps(segments, silences):
         for w in seg.get("words", [])
         if isinstance(w.get("start"), (int, float)) and isinstance(w.get("end"), (int, float))
     ]
-    if not words or not silences:
+    if len(words) < 2:
         return
-    for s, e in silences:
-        # Word spoken just before the silence: the last one starting before s.
-        prev = None
-        for w in words:
-            if w["start"] < s:
-                prev = w
-            else:
-                break
-        # Word resuming after the silence: the first one still ending after e.
-        nxt = next((w for w in words if w["end"] > e), None)
-        # Silence falls entirely inside one word's span (prev is nxt): there's a
-        # single word token covering it, so we can't split it without inventing a
-        # phantom gap (would truncate the word and let cleanup eat real speech).
-        # Leave it untouched.
-        if prev is not None and nxt is not None and prev is nxt:
-            continue
-        if prev is not None and prev["end"] > s:
-            prev["end"] = max(s, prev["start"])
-        if nxt is not None and nxt["start"] < e:
-            nxt["start"] = min(e, nxt["end"])
+    for a, b in zip(words, words[1:]):
+        if b["start"] - a["end"] > GAPLESS_S:
+            lo, hi = a["end"], b["start"]
+        else:
+            lo, hi = (a["start"] + a["end"]) / 2, (b["start"] + b["end"]) / 2
+        best = None
+        for s, e in silences:
+            s, e = max(s, lo), min(e, hi)
+            if e > s and (best is None or e - s > best[1] - best[0]):
+                best = (s, e)
+        if best is None:
+            # Nothing silent between them: close any gap so no cut lands here.
+            if b["start"] > a["end"]:
+                a["end"] = b["start"]
+        else:
+            a["end"], b["start"] = best
 
 
 def transcribe(video_path, model_size="base", backend=None, strip_words=False,
@@ -796,15 +804,14 @@ def _self_check():
     segs2 = [{"words": [{"word": "x", "start": 0.0, "end": 0.5}]}]
     _apply_silence_gaps(segs2, [])
     assert segs2[0]["words"][0]["end"] == 0.5
-    # Silence fully inside one word span (prev is nxt) -> leave word untouched,
-    # don't invent a phantom gap.
+    # Touching words: each keeps at least its first / last half, so a silence
+    # deep inside a long padded Whisper word only opens a gap in its second half.
     segs3 = [{"words": [
         {"word": "a", "start": 0.0, "end": 2.0},
         {"word": "b", "start": 2.0, "end": 3.0},
     ]}]
-    _apply_silence_gaps(segs3, [(1.0, 1.6)])
-    assert segs3[0]["words"][0]["end"] == 2.0 and segs3[0]["words"][1]["start"] == 2.0, segs3
-
+    _apply_silence_gaps(segs3, [(0.2, 1.6)])
+    assert segs3[0]["words"][0]["end"] == 1.0 and segs3[0]["words"][1]["start"] == 1.6, segs3
 
 if __name__ == "__main__":
     _self_check()
