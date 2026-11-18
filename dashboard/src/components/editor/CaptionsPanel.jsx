@@ -442,7 +442,7 @@ function CaptionsPanel({ framing, captions, dispatch, captionScope = 'all', setC
     const clearEnhancements = () => {
         if (!subs) return;
         const cleaned = subs.captions.map((w) => {
-            const { emoji, emojiAnimated, emojiAuto, highlight, ...rest } = w; // eslint-disable-line no-unused-vars
+            const { emoji, emojiAnimated, emojiAuto, emojiSpan, highlight, ...rest } = w; // eslint-disable-line no-unused-vars
             return rest;
         });
         dispatch({ type: 'SET_SUBTITLES', subtitles: { ...subs, captions: cleaned } });

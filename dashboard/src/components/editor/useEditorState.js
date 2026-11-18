@@ -244,6 +244,17 @@ export const editorReducer = (state, action) => {
                 subtitles: { ...subs, captions },
             });
         }
+        case 'SET_CAPTION_WORDS': {
+            // Phrase edits from the transcript (retyping several words, or a
+            // phrase emoji) can change the word count, so they replace the
+            // whole word list in one undo step.
+            const subs = state.framing.subtitles;
+            if (!subs || !Array.isArray(action.captions)) return state;
+            return withHistory({
+                ...state.framing,
+                subtitles: { ...subs, captions: action.captions },
+            });
+        }
         case 'SET_CAPTION_HIDDEN': {
             // "Remove caption only" / "Restore caption": flag a set of word
             // indices captionHidden (kept in the video/audio, dropped from the

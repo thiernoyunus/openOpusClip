@@ -421,6 +421,19 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
         }
     }, [state.framing, captions, dispatch]);
 
+    // Phrase edits (retype several words, phrase emoji): `update` maps the
+    // current word list to the new one. Same enable-captions fallback as a
+    // single-word edit.
+    const handleUpdateCaptions = useCallback((update) => {
+        const next = update(state.framing?.subtitles?.captions ?? captions);
+        setCaptions(next);
+        if (state.framing?.subtitles) {
+            dispatch({ type: 'SET_CAPTION_WORDS', captions: next });
+        } else if (state.framing) {
+            dispatch({ type: 'SET_SUBTITLES', subtitles: defaultSubtitleConfig(next) });
+        }
+    }, [state.framing, captions, dispatch]);
+
     const handleBack = useCallback(() => {
         if (state.dirty && !window.confirm('You have unsaved changes. Leave the editor anyway?')) {
             return;
@@ -723,6 +736,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                             playerRef={playerRef}
                             onEditWord={handleEditWord}
                             onSetCaptionHidden={handleSetCaptionHidden}
+                            onUpdateCaptions={handleUpdateCaptions}
                             dispatch={dispatch}
                             clipStartSec={typeof clip.start === 'number' ? clip.start : null}
                             onOpenExtend={(ctx) => {

@@ -582,6 +582,19 @@ export const Subtitles: React.FC<SubtitlesProps> = ({ config }) => {
     return out;
   };
   const blocks = groupCaptionsIntoBlocks(config.captions, grouping).flatMap(splitByPlacement);
+  // A phrase emoji (emojiSpan) stays up for every block its phrase touches.
+  // Each block remounts, so remember when the phrase's current run started:
+  // blocks after the first continue the emoji's motion instead of replaying
+  // its entrance every time the caption line changes.
+  const spanStarts: Map<string, number>[] = [];
+  blocks.forEach((block, i) => {
+    const here = new Map<string, number>();
+    for (const w of block.words) {
+      if (!w.emoji || !w.emojiSpan || here.has(w.emojiSpan)) continue;
+      here.set(w.emojiSpan, spanStarts[i - 1]?.get(w.emojiSpan) ?? block.startMs);
+    }
+    spanStarts.push(here);
+  });
 
   return (
     <AbsoluteFill>
@@ -606,6 +619,7 @@ export const Subtitles: React.FC<SubtitlesProps> = ({ config }) => {
               block={block}
               config={config}
               durationFrames={durationFrames}
+              spanStarts={spanStarts[i]}
             />
           </Sequence>
         );
@@ -618,12 +632,15 @@ interface SubtitleBlockProps {
   block: ReturnType<typeof groupCaptionsIntoBlocks>[number];
   config: SubtitleConfig;
   durationFrames: number;
+  /** emojiSpan -> ms its phrase emoji first appeared (for continuing blocks). */
+  spanStarts: Map<string, number>;
 }
 
 const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   block,
   config,
   durationFrames,
+  spanStarts,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -699,11 +716,24 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
   const wordAnimation = style.wordAnimation ?? "none";
   // Animated is chosen per emoji in the picker, so each one carries its own
   // flag. Anything Google has no artwork for stays the plain character.
+  // A phrase emoji is carried by every word of its phrase but shows once per
+  // block: only the first of its words in this block draws it.
+  const firstOfSpan = block.words.map(
+    (w, j) => !!w.emoji && (!w.emojiSpan || block.words.findIndex((o) => o.emoji && o.emojiSpan === w.emojiSpan) === j)
+  );
   const lineEmojis =
     emojiPlacement === "above-word" || emojiPlacement === "below-word"
       ? block.words
-          .filter((w) => w.emoji)
-          .map((w) => ({ char: w.emoji as string, animated: w.emojiAnimated === true }))
+          .filter((_, j) => firstOfSpan[j])
+          .map((w) => ({
+            char: w.emoji as string,
+            animated: w.emojiAnimated === true,
+            // Frames since the phrase emoji first appeared, so its motion
+            // carries on from the previous block instead of restarting.
+            frameOffset: w.emojiSpan
+              ? Math.round((((block.startMs - (spanStarts.get(w.emojiSpan) ?? block.startMs)) / 1000) * fps))
+              : 0,
+          }))
       : [];
 
   // Block entrance animation (layers over the per-word template animation).
@@ -789,7 +819,7 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
           // Inline keeps the emoji baked into the word; above/below are rendered
           // once per line in the emoji row below, so the word renders plain here.
           const renderedText =
-            word.emoji && emojiPlacement === "inline" ? `${text} ${word.emoji}` : text;
+            firstOfSpan[i] && emojiPlacement === "inline" ? `${text} ${word.emoji}` : text;
           const renderedWord = template.renderWord({
             word: renderedText,
             isActive: isActive || forceHighlight,
@@ -834,8 +864,8 @@ const SubtitleBlock: React.FC<SubtitleBlockProps> = ({
         })}
         {lineEmojis.length > 0 && (
           <div style={emojiRowStyle(style, emojiPlacement as "above-word" | "below-word")}>
-            {lineEmojis.map(({ char, animated }, k) => {
-              const itemStyle = emojiItemStyle(style, emojiPlacement as "above-word" | "below-word", emojiAnimation, frame, fps);
+            {lineEmojis.map(({ char, animated, frameOffset }, k) => {
+              const itemStyle = emojiItemStyle(style, emojiPlacement as "above-word" | "below-word", emojiAnimation, frame + frameOffset, fps);
               const slug = animated ? animatedSlug(char) : null;
               return slug ? (
                 // Keyed by slug as well as position: when the emoji in this
