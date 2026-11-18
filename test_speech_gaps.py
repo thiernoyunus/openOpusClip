@@ -97,8 +97,16 @@ def test_touching_whisper_words_still_get_their_pause():
     assert _gap([("a", 0.0, 1.3), ("b", 1.3, 2.0)], [(1.0, 1.6)]) == (1.0, 1.6)
 
 
+def test_filler_is_not_grown_over_speech():
+    # "um" then untranscribed speech until 1.1. Growing "um" would make
+    # "remove fillers" delete that speech, so "hello" covers it instead.
+    assert _gap([("um", 0.0, 0.5), ("hello", 1.5, 2.0)], [(1.1, 1.5)]) == (0.5, 0.5)
+    # Speech before a filler "um,": "hello" grows up to it, "um," keeps its span.
+    assert _gap([("hello", 0.0, 0.5), ("um,", 1.5, 2.0)], [(0.5, 0.9)]) == (1.5, 1.5)
+
+
 if __name__ == "__main__":
-    for t in (test_soft_word_start_is_not_eaten, test_soft_word_end_is_not_eaten,
+    for t in (test_filler_is_not_grown_over_speech, test_soft_word_start_is_not_eaten, test_soft_word_end_is_not_eaten,
               test_untranscribed_speech_in_a_gap_is_kept, test_gap_with_no_silence_is_closed,
               test_touching_whisper_words_still_get_their_pause):
         t()

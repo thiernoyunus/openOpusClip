@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import re
 from collections import OrderedDict
 import threading
 import os
@@ -664,11 +665,25 @@ def _apply_silence_gaps(segments, silences):
             if e > s and (best is None or e - s > best[1] - best[0]):
                 best = (s, e)
         if best is None:
-            # Nothing silent between them: close any gap so no cut lands here.
-            if b["start"] > a["end"]:
-                a["end"] = b["start"]
-        else:
-            a["end"], b["start"] = best
+            # Nothing silent between them: close the gap so no cut lands here.
+            best = (max(a["end"], b["start"]),) * 2
+        end, start = best
+        # Growing a filler would make "remove fillers" delete the extra speech
+        # too, so let the other word cover it (no gap, so no pause cut either).
+        if end > a["end"] and _is_filler(a):
+            end, start = a["end"], (a["end"] if not _is_filler(b) else b["start"])
+        elif start < b["start"] and _is_filler(b):
+            end, start = (b["start"] if not _is_filler(a) else a["end"]), b["start"]
+        a["end"], b["start"] = end, start
+
+
+# Single-word fillers from the editor's FILLER_WORDS (speechCleanup.js).
+_FILLERS = {"um", "uh", "uhh", "umm", "er", "ah", "hmm", "like", "so",
+            "basically", "actually", "literally", "right"}
+
+
+def _is_filler(word):
+    return re.sub(r"[^\w']", "", str(word.get("word", "")).lower()) in _FILLERS
 
 
 def transcribe(video_path, model_size="base", backend=None, strip_words=False,
