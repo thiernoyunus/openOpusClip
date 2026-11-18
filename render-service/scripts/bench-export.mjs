@@ -19,15 +19,21 @@ if (!rel || !OUTPUT_DIR) {
 }
 const base = process.env.RENDER_URL || "http://127.0.0.1:3100";
 const seconds = Number(secondsArg || 20);
+const outFrames = Math.round(seconds * 30);
+if (!(outFrames > 0)) throw new Error(`seconds must give at least one frame, got ${secondsArg}`);
+const timeoutMs = Number(process.env.BENCH_TIMEOUT_S || 900) * 1000;
 const layouts = (layoutsArg || "fill,fit").split(",");
 
-const probe = JSON.parse(
+const probed = JSON.parse(
   execFileSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries",
-    "stream=width,height,r_frame_rate", "-of", "json", path.join(OUTPUT_DIR, rel)]).toString()
-).streams[0];
+    "stream=width,height,r_frame_rate:format=duration", "-of", "json", path.join(OUTPUT_DIR, rel)]).toString()
+);
+const probe = probed.streams[0];
 const [n, d] = probe.r_frame_rate.split("/").map(Number);
 const srcFps = n / d;
-const total = Math.round(seconds * srcFps);
+const total = Math.round((outFrames / 30) * srcFps);
+const available = Math.floor(Number(probed.format.duration) * srcFps);
+if (total > available) throw new Error(`source has only ${available} frames (${probed.format.duration}s); asked for ${total}`);
 const half = Math.round(total / 2);
 
 const clip = (id, a, b, layout) => ({
@@ -43,7 +49,7 @@ const body = {
   jobId: rel.split("/")[0],
   clipIndex: 0,
   props: {
-    videoUrl: "", durationInFrames: seconds * 30, fps: 30, width: 1080, height: 1920,
+    videoUrl: "", durationInFrames: outFrames, fps: 30, width: 1080, height: 1920,
     hook: null, effects: null,
     sourceVideoUrl: `/videos/${rel}`,
     subtitles: {
@@ -68,9 +74,14 @@ const res = await fetch(`${base}/render`, {
 });
 if (!res.ok) throw new Error(`render service said ${res.status}: ${await res.text()}`);
 const { renderId } = await res.json();
+let last = "queued";
 for (;;) {
+  if (Date.now() - t0 > timeoutMs) throw new Error(`gave up after ${timeoutMs / 1000}s; last status: ${last}`);
   await new Promise((r) => setTimeout(r, 250));
-  const s = await (await fetch(`${base}/render/${renderId}`)).json();
+  const r = await fetch(`${base}/render/${renderId}`);
+  if (!r.ok) throw new Error(`status check said HTTP ${r.status}: ${await r.text()}`);
+  const s = await r.json();
+  last = `${s.status} ${s.progress ?? ""}%`;
   if (s.status === "error") throw new Error(s.error);
   if (s.status === "done") {
     const secs = (Date.now() - t0) / 1000;

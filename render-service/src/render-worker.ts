@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import {
   combineChunks,
-  openBrowser,
   selectComposition,
   renderMedia,
   type OpenGlRenderer,
@@ -168,7 +167,13 @@ export async function executeRender(params: RenderParams): Promise<void> {
     const total = composition.durationInFrames;
     const browsers = Math.max(
       1,
-      Math.min(RENDER_BROWSERS, Math.floor(total / MIN_FRAMES_PER_SLICE))
+      Math.min(
+        RENDER_BROWSERS,
+        Math.floor(total / MIN_FRAMES_PER_SLICE),
+        // An explicit RENDER_CONCURRENCY caps the total number of capture
+        // tabs, so RENDER_CONCURRENCY=1 still means one tab.
+        process.env.RENDER_CONCURRENCY ? RENDER_CONCURRENCY : Infinity
+      )
     );
     // Tabs per browser: RENDER_CONCURRENCY is the budget for the whole export.
     const tabs = Math.max(1, Math.floor(RENDER_CONCURRENCY / browsers));
@@ -246,11 +251,12 @@ export async function executeRender(params: RenderParams): Promise<void> {
       );
       let nextSlice = 0;
       let failed = false;
-      const runBrowser = async () => {
-        const browser = await openBrowser("chrome", {
-          browserExecutable: RENDER_BROWSER_EXECUTABLE,
-          chromiumOptions,
-        });
+      // Each worker renders one slice at a time and lets renderMedia open and
+      // close its own browser. Reusing one browser across slices would save
+      // ~0.1s per slice, but if Chrome crashes mid-slice Remotion swaps in a
+      // replacement that only that renderMedia call knows about: the next
+      // slice would get the dead browser and the replacement would leak.
+      const runWorker = async () => {
         try {
           while (!failed && nextSlice < sliceCount) {
             const i = nextSlice++;
@@ -258,7 +264,8 @@ export async function executeRender(params: RenderParams): Promise<void> {
             await renderMedia({
               ...common,
               codec: "h264-ts",
-              puppeteerInstance: browser,
+              browserExecutable: RENDER_BROWSER_EXECUTABLE,
+              chromiumOptions,
               frameRange: [from, Math.min(total, from + framesPerSlice) - 1],
               outputLocation: videoFiles[i],
               separateAudioTo: audioFiles[i],
@@ -268,17 +275,15 @@ export async function executeRender(params: RenderParams): Promise<void> {
             });
           }
         } catch (err) {
-          failed = true; // tell the other browsers to stop picking up slices
+          failed = true; // tell the other workers to stop picking up slices
           throw err;
-        } finally {
-          await browser.close({ silent: true });
         }
       };
       try {
         // allSettled, not all: every browser must have stopped before the
         // temp folder is removed, even when one of them fails.
         const results = await Promise.allSettled(
-          Array.from({ length: browsers }, runBrowser)
+          Array.from({ length: browsers }, runWorker)
         );
         const rejected = results.find(
           (r): r is PromiseRejectedResult => r.status === "rejected"
