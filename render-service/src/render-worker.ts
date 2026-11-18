@@ -11,8 +11,14 @@ import {
 import { getBundleLocation } from "./bundle.js";
 import { renderJobs } from "./server.js";
 import { ensureSourceProxy } from "./source-proxy.js";
+import { makeSliceDir, pickSliceFrames } from "./slicing.js";
 
 // --- Render performance tuning (env-overridable) ---
+
+// Cores this process may actually use. os.cpus() reports the whole host, which
+// overshoots inside a container limited to fewer cores, and Remotion rejects a
+// tab count above what it can see.
+const CORES = os.availableParallelism();
 // These knobs trade a little encode time / file size for throughput. Defaults
 // are chosen to be safe for a *final* export (not a draft preview).
 
@@ -24,7 +30,7 @@ const RENDER_CONCURRENCY: number = (() => {
   const raw = process.env.RENDER_CONCURRENCY;
   const parsed = raw ? parseInt(raw, 10) : NaN;
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return Math.max(1, Math.floor(os.cpus().length / 2));
+  return Math.max(1, Math.floor(CORES / 2));
 })();
 
 // x264 encoding preset. Remotion's default is "medium". A faster preset cuts
@@ -55,7 +61,7 @@ const RENDER_JPEG_QUALITY: number = (() => {
 const RENDER_BROWSERS: number = (() => {
   const parsed = parseInt(process.env.RENDER_BROWSERS || "", 10);
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return Math.max(1, Math.min(4, os.cpus().length - 1));
+  return Math.max(1, Math.min(4, CORES - 1));
 })();
 
 // How the clip is cut up. Each browser takes the next unclaimed slice when it
@@ -72,6 +78,7 @@ const TARGET_SLICE_FRAMES = 240; // 8s at 30fps
 // Don't cut slices shorter than this — each has a small fixed cost (page
 // load, encoder start) that a very short slice can't win back.
 const MIN_FRAMES_PER_SLICE = 90;
+
 
 // Chrome graphics backend ("angle", "vulkan", "swangle", ...). On macOS the
 // default is "angle": headless Chrome otherwise draws on the CPU, and switching
@@ -181,9 +188,9 @@ export async function executeRender(params: RenderParams): Promise<void> {
     const slicesPerBrowser =
       SLICES_PER_BROWSER ||
       Math.max(1, Math.round(total / (browsers * TARGET_SLICE_FRAMES)));
-    const framesPerSlice = Math.max(
-      MIN_FRAMES_PER_SLICE,
-      Math.ceil(total / (browsers * slicesPerBrowser))
+    const framesPerSlice = pickSliceFrames(
+      total,
+      Math.max(MIN_FRAMES_PER_SLICE, Math.ceil(total / (browsers * slicesPerBrowser)))
     );
     const sliceCount = Math.ceil(total / framesPerSlice);
 
@@ -228,21 +235,11 @@ export async function executeRender(params: RenderParams): Promise<void> {
       x264Preset: RENDER_X264_PRESET,
     };
 
-    if (browsers === 1) {
-      await renderMedia({
-        ...common,
-        codec: "h264",
-        outputLocation,
-        browserExecutable: RENDER_BROWSER_EXECUTABLE,
-        chromiumOptions,
-        onProgress: ({ renderedFrames }) => reportProgress(0, renderedFrames),
-      });
-    } else {
-      // Each slice becomes an MPEG-TS video + a separate AAC file — the pair
-      // of formats combineChunks can join byte-for-byte, with no re-encode and
-      // no audible seam (forSeamlessAacConcatenation cuts the audio on AAC
-      // frame boundaries).
-      const sliceDir = fs.mkdtempSync(path.join(os.tmpdir(), "openshorts-render-"));
+    // Each slice becomes an MPEG-TS video + a separate AAC file — the pair
+    // of formats combineChunks can join byte-for-byte, with no re-encode and
+    // no audible seam (forSeamlessAacConcatenation cuts the audio on AAC
+    // frame boundaries).
+    const renderInSlices = async (sliceDir: string) => {
       const videoFiles = Array.from({ length: sliceCount }, (_, i) =>
         path.join(sliceDir, `v${i}.ts`)
       );
@@ -303,6 +300,42 @@ export async function executeRender(params: RenderParams): Promise<void> {
         });
       } finally {
         fs.rmSync(sliceDir, { recursive: true, force: true });
+      }
+    };
+
+    const renderInOneBrowser = (concurrency: number) =>
+      renderMedia({
+        ...common,
+        concurrency,
+        codec: "h264",
+        outputLocation,
+        browserExecutable: RENDER_BROWSER_EXECUTABLE,
+        chromiumOptions,
+        onProgress: ({ renderedFrames }) => reportProgress(0, renderedFrames),
+      });
+
+    const sliceDir = browsers > 1 ? makeSliceDir(outputDir) : null;
+    if (browsers > 1 && !sliceDir) {
+      console.warn(
+        `[render-worker] No temp folder without ' or | in its path; using one browser`
+      );
+    }
+    if (!sliceDir) {
+      await renderInOneBrowser(tabs);
+    } else {
+      try {
+        await renderInSlices(sliceDir);
+      } catch (err) {
+        // Several browsers at once need more memory and disk (frame images)
+        // than one. Rather than failing the export, start over once the slow
+        // but proven way: one browser, the normal tab count.
+        console.warn(
+          `[render-worker] Parallel export failed, retrying with one browser:`,
+          err
+        );
+        drawn.fill(0);
+        job.progress = 0;
+        await renderInOneBrowser(Math.min(RENDER_CONCURRENCY, CORES));
       }
     }
 
