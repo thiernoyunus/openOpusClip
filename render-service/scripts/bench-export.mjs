@@ -69,16 +69,22 @@ const body = {
 };
 
 const t0 = Date.now();
+// One deadline covers the submit, every poll and every body read.
+const signal = AbortSignal.timeout(timeoutMs);
+let last = "submitting";
+signal.addEventListener("abort", () => {
+  console.error(`gave up after ${timeoutMs / 1000}s; last status: ${last}`);
+  process.exit(1);
+});
 const res = await fetch(`${base}/render`, {
-  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal,
 });
 if (!res.ok) throw new Error(`render service said ${res.status}: ${await res.text()}`);
 const { renderId } = await res.json();
-let last = "queued";
+last = "queued";
 for (;;) {
-  if (Date.now() - t0 > timeoutMs) throw new Error(`gave up after ${timeoutMs / 1000}s; last status: ${last}`);
   await new Promise((r) => setTimeout(r, 250));
-  const r = await fetch(`${base}/render/${renderId}`);
+  const r = await fetch(`${base}/render/${renderId}`, { signal });
   if (!r.ok) throw new Error(`status check said HTTP ${r.status}: ${await r.text()}`);
   const s = await r.json();
   last = `${s.status} ${s.progress ?? ""}%`;
