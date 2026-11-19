@@ -113,7 +113,10 @@ def build_settings(provider=None, api_key=None, model=None, base_url=None,
     if provider == "gemini":
         api_key = api_key or gemini_key
         model = model or gemini_model
-    base_url = (base_url or "").strip() or (PROVIDERS[provider]["base_url"] or "")
+    # Built-in providers always use their own address. Taking one from the
+    # request would let a caller send the saved key / ChatGPT token elsewhere.
+    fixed_url = PROVIDERS[provider]["base_url"]
+    base_url = fixed_url or (base_url or "").strip()
     if PROVIDERS[provider]["base_url"] is None and provider != "gemini":
         if not re.match(r"^https?://", base_url):
             raise ValueError("Custom provider needs a Base URL starting with http:// or https://.")

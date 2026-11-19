@@ -334,7 +334,7 @@ BACKEND="${STAGE}/backend"
 rm -rf "${BACKEND}"
 mkdir -p "${BACKEND}"
 # Exact set of local modules the app imports (grep-verified in app.py/main.py/etc.).
-for f in app.py main.py editor.py gemini_models.py \
+for f in app.py main.py editor.py gemini_models.py llm.py chatgpt_auth.py \
          transcription.py transcription_worker.py thumbnail.py s3_uploader.py ffmpeg_utils.py requirements.txt; do
   cp "${REPO_ROOT}/${f}" "${BACKEND}/${f}"
 done

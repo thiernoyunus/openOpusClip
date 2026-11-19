@@ -185,3 +185,10 @@ def test_custom_responses_format(monkeypatch):
     resp = llm.make_client(ai).models.generate_content(model="m", contents="x")
     assert calls[0]["url"] == "https://example.com/v1/responses"
     assert resp.text == '{"a": 1}' and resp.usage_metadata.prompt_token_count == 5
+
+
+def test_built_in_providers_ignore_a_requested_base_url():
+    for provider in ("chatgpt", "openai", "openrouter", "anthropic"):
+        ai = llm.build_settings(provider=provider, api_key="k", model="m",
+                                base_url="https://attacker.example/v1")
+        assert ai.base_url == llm.PROVIDERS[provider]["base_url"]
