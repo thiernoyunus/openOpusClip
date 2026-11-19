@@ -3,6 +3,10 @@ import { Clock, FileText, Scissors, Smile, Wand2, X, Plus, Loader2, Pencil, EyeO
 import { EDITOR_FPS } from './EditorCanvas';
 import { wordSourceToOutput, sourceToOutputAll } from '@remotion-src/lib/edl';
 import { detectFillerCuts, detectPauseCuts, visibleTranscriptPauses } from './speechCleanup';
+
+const PAUSE_MIN_OPTIONS = [200, 300, 500, 1000];
+const DEFAULT_PAUSE_MIN_MS = 300;
+const PAUSE_MIN_KEY = 'openshorts.pauseMinMs';
 import EmojiPicker from './EmojiPicker';
 import { retextPhrase, setPhraseEmoji, clearEmojis, spanIndices } from './phraseEdit';
 
@@ -143,6 +147,19 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     const [cleanupOpen, setCleanupOpen] = useState(false);
     const [removeFillers, setRemoveFillers] = useState(true);
     const [removePauses, setRemovePauses] = useState(true);
+    // "Cut pauses longer than" (ms), remembered across sessions on this device.
+    const [pauseMinMs, setPauseMinMs] = useState(() => {
+        try {
+            const saved = Number(localStorage.getItem(PAUSE_MIN_KEY));
+            return PAUSE_MIN_OPTIONS.includes(saved) ? saved : DEFAULT_PAUSE_MIN_MS;
+        } catch {
+            return DEFAULT_PAUSE_MIN_MS;
+        }
+    });
+    const changePauseMin = useCallback((ms) => {
+        setPauseMinMs(ms);
+        try { localStorage.setItem(PAUSE_MIN_KEY, String(ms)); } catch { /* storage blocked */ }
+    }, []);
     const containerRef = useRef(null);
     const emojiInteractingRef = useRef(false);
     // Mirror of `sel` so the stable onWordClick handler can read the latest
@@ -707,11 +724,11 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
     const applyCleanup = useCallback(() => {
         const ranges = [
             ...(removeFillers ? detectFillerCuts(captions, framing) : []),
-            ...(removePauses ? detectPauseCuts(captions, framing) : []),
+            ...(removePauses ? detectPauseCuts(captions, framing, pauseMinMs) : []),
         ];
         if (ranges.length > 0) dispatch({ type: 'CUT_SOURCE_RANGE', ranges });
         setCleanupOpen(false);
-    }, [removeFillers, removePauses, captions, framing, dispatch]);
+    }, [removeFillers, removePauses, pauseMinMs, captions, framing, dispatch]);
 
     const selCount = selRange ? selRange.hi - selRange.lo + 1 : 0;
 
@@ -749,7 +766,7 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                             />
                             Remove filler words
                         </label>
-                        <label className="flex items-center gap-2 mb-3 cursor-pointer text-zinc-300">
+                        <label className="flex items-center gap-2 mb-1.5 cursor-pointer text-zinc-300">
                             <input
                                 type="checkbox"
                                 checked={removePauses}
@@ -757,6 +774,19 @@ export default function TranscriptPanel({ captions, framing, playerRef, onEditWo
                                 className="accent-viral"
                             />
                             Remove pauses
+                        </label>
+                        <label className={`flex items-center gap-2 mb-3 pl-5 text-[11px] text-muted ${removePauses ? '' : 'opacity-40'}`}>
+                            longer than
+                            <select
+                                value={pauseMinMs}
+                                onChange={(e) => changePauseMin(Number(e.target.value))}
+                                disabled={!removePauses}
+                                className="bg-surface border border-edge rounded px-1.5 py-0.5 text-zinc-300"
+                            >
+                                {PAUSE_MIN_OPTIONS.map((ms) => (
+                                    <option key={ms} value={ms}>{(ms / 1000).toFixed(1)}s</option>
+                                ))}
+                            </select>
                         </label>
                         <div className="flex items-center gap-2">
                             <button
