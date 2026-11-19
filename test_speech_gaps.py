@@ -62,9 +62,9 @@ def test_falls_back_to_volume_check_when_voice_detector_fails():
     assert words[0]["end"] == 1.0 and words[1]["start"] == 1.5, words
 
 
-def _gap(words, silences):
+def _gap(words, silences, sure=()):
     segs = [{"words": [{"word": w, "start": s, "end": e} for w, s, e in words]}]
-    transcription._apply_silence_gaps(segs, silences)
+    transcription._apply_silence_gaps(segs, silences, sure)
     out = segs[0]["words"]
     return round(out[0]["end"], 3), round(out[1]["start"], 3)
 
@@ -105,8 +105,20 @@ def test_filler_is_not_grown_over_speech():
     assert _gap([("hello", 0.0, 0.5), ("um,", 1.5, 2.0)], [(0.5, 0.9)]) == (1.5, 1.5)
 
 
+def test_padded_whisper_edges_are_trimmed_where_surely_silent():
+    # Whisper says "now" lasts until 1.0, but it's silent from 0.4. Where even
+    # the sensitive pass hears nothing, the edge comes back (to the midpoint).
+    assert _gap([("now", 0.0, 1.0), ("give", 1.5, 2.0)], [(0.4, 1.5)], [(0.45, 1.5)]) == (0.5, 1.5)
+
+
+def test_soft_onset_still_protected_with_sure_silences():
+    # Soft "so" starts at 1.0; the sensitive pass still hears it, so its start stays.
+    assert _gap([("okay", 0.0, 0.5), ("so", 1.0, 1.5)], [(0.4, 1.3)], [(0.45, 1.0)]) == (0.45, 1.0)
+
+
 if __name__ == "__main__":
-    for t in (test_filler_is_not_grown_over_speech, test_soft_word_start_is_not_eaten, test_soft_word_end_is_not_eaten,
+    for t in (test_padded_whisper_edges_are_trimmed_where_surely_silent,
+              test_soft_onset_still_protected_with_sure_silences, test_filler_is_not_grown_over_speech, test_soft_word_start_is_not_eaten, test_soft_word_end_is_not_eaten,
               test_untranscribed_speech_in_a_gap_is_kept, test_gap_with_no_silence_is_closed,
               test_touching_whisper_words_still_get_their_pause):
         t()
