@@ -121,7 +121,7 @@ export function detectFillerCuts(captions, framing) {
  * word's start) in source frames, leaving a ~80ms breathing margin on each side
  * so speech isn't clipped.
  */
-export function detectPauseCuts(captions, framing, thresholdMs = 400) {
+export function detectPauseCuts(captions, framing, thresholdMs = 300) {
     if (!captions || captions.length < 2) return [];
     const clipIn = framing.clipInFrame ?? 0;
     const clipOut = framing.clipOutFrame ?? framing.source.durationFrames;
