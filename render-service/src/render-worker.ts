@@ -2,15 +2,23 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  combineChunks,
   selectComposition,
   renderMedia,
+  type OpenGlRenderer,
   type X264Preset,
 } from "@remotion/renderer";
 import { getBundleLocation } from "./bundle.js";
 import { renderJobs } from "./server.js";
 import { ensureSourceProxy } from "./source-proxy.js";
+import { makeSliceDir, pickSliceFrames } from "./slicing.js";
 
 // --- Render performance tuning (env-overridable) ---
+
+// Cores this process may actually use. os.cpus() reports the whole host, which
+// overshoots inside a container limited to fewer cores, and Remotion rejects a
+// tab count above what it can see.
+const CORES = os.availableParallelism();
 // These knobs trade a little encode time / file size for throughput. Defaults
 // are chosen to be safe for a *final* export (not a draft preview).
 
@@ -22,7 +30,7 @@ const RENDER_CONCURRENCY: number = (() => {
   const raw = process.env.RENDER_CONCURRENCY;
   const parsed = raw ? parseInt(raw, 10) : NaN;
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return Math.max(1, Math.floor(os.cpus().length / 2));
+  return Math.max(1, Math.floor(CORES / 2));
 })();
 
 // x264 encoding preset. Remotion's default is "medium". A faster preset cuts
@@ -39,6 +47,50 @@ const RENDER_JPEG_QUALITY: number = (() => {
   const parsed = parseInt(process.env.RENDER_JPEG_QUALITY || "", 10);
   if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 100) return parsed;
   return 80;
+})();
+
+// Number of separate browsers drawing one export at the same time, each taking
+// its own slice of the clip; the slices are stitched afterwards without
+// re-encoding. This is the main speed lever: tabs inside ONE browser all funnel
+// through that browser's single compositing thread, so adding tabs barely helps
+// (measured: 1 tab 27s, 4 tabs 22s), while a second browser gets its own
+// (measured: 24s -> 17s for a crop layout, 57s -> 32s for the blurred one, on
+// 4 cores). On an M1 Pro (8 cores), 4 browsers was the fastest setting.
+// Default: cores - 1, at most 4. RENDER_BROWSERS=1 restores the old
+// single-browser render.
+const RENDER_BROWSERS: number = (() => {
+  const parsed = parseInt(process.env.RENDER_BROWSERS || "", 10);
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return Math.max(1, Math.min(4, CORES - 1));
+})();
+
+// How the clip is cut up. Each browser takes the next unclaimed slice when it
+// finishes one, so smaller slices even out stretches that cost more to draw (a
+// blurred-background layout is ~2x a plain crop): otherwise one browser is
+// left drawing the hard part alone while the rest sit idle. But each slice
+// also pays ~1s to start. So: one slice per browser for short clips (fastest
+// on a 20s clip on an M1 Pro, 11s vs 14s), and slices of about
+// TARGET_SLICE_FRAMES once the clip is long enough. A fixed
+// RENDER_SLICES_PER_BROWSER overrides this.
+const SLICES_PER_BROWSER = parseInt(process.env.RENDER_SLICES_PER_BROWSER || "", 10) || 0;
+const TARGET_SLICE_FRAMES = 240; // 8s at 30fps
+
+// Don't cut slices shorter than this — each has a small fixed cost (page
+// load, encoder start) that a very short slice can't win back.
+const MIN_FRAMES_PER_SLICE = 90;
+
+
+// Chrome graphics backend ("angle", "vulkan", "swangle", ...). On macOS the
+// default is "angle": headless Chrome otherwise draws on the CPU, and switching
+// it to the Mac's graphics chip roughly halved export time on an M1 Pro
+// (e.g. 22s -> 11s for a 20s clip with 4 browsers). Elsewhere, unset = let
+// Chrome decide (on a Linux box with no GPU "angle" made no difference).
+// RENDER_GL=default forces Chrome's own choice on a Mac too.
+const RENDER_GL: OpenGlRenderer | null = (() => {
+  const raw = process.env.RENDER_GL;
+  if (raw === "default") return null;
+  if (raw) return raw as OpenGlRenderer;
+  return process.platform === "darwin" ? "angle" : null;
 })();
 
 // Pin a specific Chrome/Chromium binary instead of Remotion's downloaded one —
@@ -119,48 +171,173 @@ export async function executeRender(params: RenderParams): Promise<void> {
     const outputFileName = `remotion_${clipIndex}_${timestamp}.mp4`;
     const outputLocation = path.join(jobOutputDir, outputFileName);
 
+    const total = composition.durationInFrames;
+    const browsers = Math.max(
+      1,
+      Math.min(
+        RENDER_BROWSERS,
+        Math.floor(total / MIN_FRAMES_PER_SLICE),
+        // An explicit RENDER_CONCURRENCY caps the total number of capture
+        // tabs, so RENDER_CONCURRENCY=1 still means one tab.
+        process.env.RENDER_CONCURRENCY ? RENDER_CONCURRENCY : Infinity
+      )
+    );
+    // Tabs per browser: RENDER_CONCURRENCY is the budget for the whole export.
+    const tabs = Math.max(1, Math.floor(RENDER_CONCURRENCY / browsers));
+    // combineChunks needs equal-length slices (only the last may be shorter).
+    const slicesPerBrowser =
+      SLICES_PER_BROWSER ||
+      Math.max(1, Math.round(total / (browsers * TARGET_SLICE_FRAMES)));
+    const framesPerSlice = pickSliceFrames(
+      total,
+      Math.max(MIN_FRAMES_PER_SLICE, Math.ceil(total / (browsers * slicesPerBrowser)))
+    );
+    const sliceCount = Math.ceil(total / framesPerSlice);
+
     console.log(`[render-worker] Output: ${outputLocation}`);
     console.log(
-      `[render-worker] Render opts: concurrency=${RENDER_CONCURRENCY}, ` +
-        `x264Preset=${RENDER_X264_PRESET}, imageFormat=jpeg(${RENDER_JPEG_QUALITY})`
+      `[render-worker] Render opts: browsers=${browsers}, tabsPerBrowser=${tabs}, ` +
+        `slices=${browsers === 1 ? 1 : sliceCount}, x264Preset=${RENDER_X264_PRESET}, ` +
+        `gl=${RENDER_GL ?? "default"}, imageFormat=jpeg(${RENDER_JPEG_QUALITY})`
     );
 
-    // Render the video
-    await renderMedia({
+    // Report how many frames are drawn, not Remotion's blended
+    // drawing+encoding number. Drawing is nearly all of the wall time and
+    // encoding finishes seconds later, so the blended figure crawled to ~80%
+    // and then jumped straight to done — it read as if the export had been
+    // cut short. Hold at 99% until the file is actually written.
+    const drawn: number[] = new Array(sliceCount).fill(0);
+    const reportProgress = (slice: number, renderedFrames: number) => {
+      drawn[slice] = renderedFrames;
+      const done = drawn.reduce((a, b) => a + b, 0);
+      const percent =
+        total > 0 ? Math.min(99, Math.floor((done / total) * 100)) : 0;
+      if (percent === job.progress) return;
+      job.progress = percent;
+      if (percent % 10 === 0) {
+        console.log(`[render-worker] ${renderId} progress: ${percent}%`);
+      }
+    };
+
+    const chromiumOptions = RENDER_GL ? { gl: RENDER_GL } : undefined;
+    const common = {
       composition,
       serveUrl: bundleLocation,
-      codec: "h264",
+      inputProps: renderProps,
       crf: 22,
-      outputLocation,
-      // Parallel frame capture across CPU cores (see RENDER_CONCURRENCY above).
-      concurrency: RENDER_CONCURRENCY,
+      concurrency: tabs,
       // ponytail: capture frames as JPEG instead of the PNG default. PNG is
       // lossless but slow to encode per-frame; since h264 recompresses the
       // frames anyway, JPEG@80 is the standard speed win with no visible loss.
-      imageFormat: "jpeg",
+      imageFormat: "jpeg" as const,
       jpegQuality: RENDER_JPEG_QUALITY,
       // Faster x264 preset than the "medium" default (see RENDER_X264_PRESET).
       x264Preset: RENDER_X264_PRESET,
-      browserExecutable: RENDER_BROWSER_EXECUTABLE,
-      // Report how many frames are drawn, not Remotion's blended
-      // drawing+encoding number. Drawing is nearly all of the wall time and
-      // encoding finishes seconds later, so the blended figure crawled to ~80%
-      // and then jumped straight to done — it read as if the export had been
-      // cut short. Hold at 99% until the file is actually written.
-      onProgress: ({ renderedFrames }) => {
-        const total = composition.durationInFrames;
-        const percent =
-          total > 0
-            ? Math.min(99, Math.floor((renderedFrames / total) * 100))
-            : 0;
-        if (percent === job.progress) return;
-        job.progress = percent;
+    };
 
-        if (percent % 10 === 0) {
-          console.log(`[render-worker] ${renderId} progress: ${percent}%`);
+    // Each slice becomes an MPEG-TS video + a separate AAC file — the pair
+    // of formats combineChunks can join byte-for-byte, with no re-encode and
+    // no audible seam (forSeamlessAacConcatenation cuts the audio on AAC
+    // frame boundaries).
+    const renderInSlices = async (sliceDir: string) => {
+      const videoFiles = Array.from({ length: sliceCount }, (_, i) =>
+        path.join(sliceDir, `v${i}.ts`)
+      );
+      const audioFiles = Array.from({ length: sliceCount }, (_, i) =>
+        path.join(sliceDir, `a${i}.aac`)
+      );
+      let nextSlice = 0;
+      let failed = false;
+      // Each worker renders one slice at a time and lets renderMedia open and
+      // close its own browser. Reusing one browser across slices would save
+      // ~0.1s per slice, but if Chrome crashes mid-slice Remotion swaps in a
+      // replacement that only that renderMedia call knows about: the next
+      // slice would get the dead browser and the replacement would leak.
+      const runWorker = async () => {
+        try {
+          while (!failed && nextSlice < sliceCount) {
+            const i = nextSlice++;
+            const from = i * framesPerSlice;
+            await renderMedia({
+              ...common,
+              codec: "h264-ts",
+              browserExecutable: RENDER_BROWSER_EXECUTABLE,
+              chromiumOptions,
+              frameRange: [from, Math.min(total, from + framesPerSlice) - 1],
+              outputLocation: videoFiles[i],
+              separateAudioTo: audioFiles[i],
+              forSeamlessAacConcatenation: true,
+              enforceAudioTrack: true,
+              onProgress: ({ renderedFrames }) => reportProgress(i, renderedFrames),
+            });
+          }
+        } catch (err) {
+          failed = true; // tell the other workers to stop picking up slices
+          throw err;
         }
-      },
-    });
+      };
+      try {
+        // allSettled, not all: every browser must have stopped before the
+        // temp folder is removed, even when one of them fails.
+        const results = await Promise.allSettled(
+          Array.from({ length: browsers }, runWorker)
+        );
+        const rejected = results.find(
+          (r): r is PromiseRejectedResult => r.status === "rejected"
+        );
+        if (rejected) throw rejected.reason;
+
+        await combineChunks({
+          outputLocation,
+          videoFiles,
+          audioFiles,
+          codec: "h264",
+          audioCodec: "aac",
+          fps: composition.fps,
+          framesPerChunk: framesPerSlice,
+          compositionDurationInFrames: total,
+          preferLossless: false,
+        });
+      } finally {
+        fs.rmSync(sliceDir, { recursive: true, force: true });
+      }
+    };
+
+    const renderInOneBrowser = (concurrency: number) =>
+      renderMedia({
+        ...common,
+        concurrency,
+        codec: "h264",
+        outputLocation,
+        browserExecutable: RENDER_BROWSER_EXECUTABLE,
+        chromiumOptions,
+        onProgress: ({ renderedFrames }) => reportProgress(0, renderedFrames),
+      });
+
+    const sliceDir = browsers > 1 ? makeSliceDir(outputDir) : null;
+    if (browsers > 1 && !sliceDir) {
+      console.warn(
+        `[render-worker] No temp folder without ' or | in its path; using one browser`
+      );
+    }
+    if (!sliceDir) {
+      await renderInOneBrowser(tabs);
+    } else {
+      try {
+        await renderInSlices(sliceDir);
+      } catch (err) {
+        // Several browsers at once need more memory and disk (frame images)
+        // than one. Rather than failing the export, start over once the slow
+        // but proven way: one browser, the normal tab count.
+        console.warn(
+          `[render-worker] Parallel export failed, retrying with one browser:`,
+          err
+        );
+        drawn.fill(0);
+        job.progress = 0;
+        await renderInOneBrowser(Math.min(RENDER_CONCURRENCY, CORES));
+      }
+    }
 
     // Success
     job.status = "done";
