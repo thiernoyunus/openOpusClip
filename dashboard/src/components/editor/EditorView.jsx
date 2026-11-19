@@ -460,7 +460,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     // for a specific media block, focus its inspector directly. A fresh object
     // each call so re-clicking the same asset still re-triggers the panel.
     const handleSelectTrackItem = useCallback((kind, id = null) => {
-        const tab = { text: 'text', broll: 'media', audio: 'media', transitions: 'transitions' }[kind];
+        const tab = { text: 'text', broll: 'media', audio: 'media', transitions: 'transitions', captions: 'captions' }[kind];
         if (!tab) return;
         if (tab === 'media') {
             setMediaFocus(id ? { track: kind === 'audio' ? 'audio' : 'overlay', id, nonce: Date.now() } : null);
@@ -825,6 +825,8 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                         onSelectTrackItem={handleSelectTrackItem}
                         dispatch={dispatch}
                         sourceUrl={sourceUrl}
+                        canUndo={state.past.length > 0}
+                        canRedo={state.future.length > 0}
                         // The timeline's far-left / far-right "+" open the same
                         // picker as the transcript's "+", anchored at the very
                         // start / very end of the short in the original video.

@@ -40,6 +40,11 @@
   background: rgba(255, 255, 255, 0.2);
 }
 
+/* Timeline zoom slider (CapCut-style thin track + round thumb) */
+.tl-zoom { -webkit-appearance: none; appearance: none; outline: none; }
+.tl-zoom::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 11px; height: 11px; border-radius: 9999px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.5); cursor: pointer; }
+.tl-zoom::-moz-range-thumb { width: 11px; height: 11px; border: 0; border-radius: 9999px; background: #fff; cursor: pointer; }
+
 /* Custom Animations */
 @keyframes optionsReveal {
   from {
