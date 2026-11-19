@@ -4,12 +4,16 @@ services:
     container_name: openshorts-backend
     ports:
       - "8000:8000"
+      # Sign in with ChatGPT: OpenAI redirects the browser to 127.0.0.1:1455.
+      - "127.0.0.1:1455:1455"
     volumes:
       - .:/app
       - /app/__pycache__
       - ./output:/app/output
     environment:
       - RENDER_SERVICE_URL=http://renderer:3100
+      - CHATGPT_CALLBACK_HOST=0.0.0.0
+      - CHATGPT_ALLOW_REMOTE=1
     restart: unless-stopped
 
   frontend:

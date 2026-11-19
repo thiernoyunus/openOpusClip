@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Key, Eye, EyeOff, Check } from 'lucide-react';
 import { getApiUrl } from '../config';
 import { DEFAULT_GEMINI_MODEL, GEMINI_MODELS } from '../lib/geminiModels';
@@ -56,10 +56,163 @@ function SecretField({ savedValue, onSave, placeholder, dataTour }) {
     );
 }
 
+const MANAGE_USAGE_URL = 'https://chatgpt.com/#settings';
+const WELCOME_SEEN_KEY = 'chatgpt_plan_welcome_seen';
+
+// Sign in with ChatGPT. The backend runs the sign-in and keeps the tokens in a
+// private file on this computer; here we only start it and watch its status.
+function ChatGPTSignIn({ onStatus }) {
+    const [status, setStatus] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState('');
+    const [welcomeSeen, setWelcomeSeen] = useState(() => {
+        try { return localStorage.getItem(WELCOME_SEEN_KEY) === '1'; } catch { return true; }
+    });
+    const pollRef = useRef(null);
+    const onStatusRef = useRef(onStatus);
+    useEffect(() => { onStatusRef.current = onStatus; });
+
+    const load = async () => {
+        const res = await fetch(getApiUrl('/api/ai/chatgpt/status'));
+        if (!res.ok) throw new Error(`Couldn't check ChatGPT sign-in (${res.status})`);
+        const data = await res.json();
+        setStatus(data);
+        onStatusRef.current?.(data);
+        return data;
+    };
+
+    const stopPolling = () => {
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = null;
+    };
+
+    useEffect(() => {
+        let cancelled = false;
+        fetch(getApiUrl('/api/ai/chatgpt/status'))
+            .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`Couldn't check ChatGPT sign-in (${res.status})`))))
+            .then((data) => {
+                if (cancelled) return;
+                setStatus(data);
+                onStatusRef.current?.(data);
+            })
+            .catch((e) => { if (!cancelled) setError(e.message); });
+        return () => {
+            cancelled = true;
+            if (pollRef.current) clearInterval(pollRef.current);
+        };
+    }, []);
+
+    const signIn = async () => {
+        setBusy(true);
+        setError('');
+        // Open the tab first, in the click itself, so popup blockers allow it.
+        const tab = window.open('about:blank', '_blank');
+        try {
+            const res = await fetch(getApiUrl('/api/ai/chatgpt/login'), { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.detail || `Couldn't start sign-in (${res.status})`);
+            if (tab && !tab.closed) tab.location.href = data.url;
+            else window.open(data.url, '_blank');
+            stopPolling();
+            const started = Date.now();
+            pollRef.current = setInterval(async () => {
+                try {
+                    const s = await load();
+                    if (s.signed_in || s.error || (!s.pending && Date.now() - started > 5000)) {
+                        stopPolling();
+                        setBusy(false);
+                        if (s.error) setError(s.error);
+                    }
+                } catch (e) {
+                    stopPolling();
+                    setBusy(false);
+                    setError(e.message);
+                }
+            }, 2000);
+        } catch (e) {
+            if (tab && !tab.closed) tab.close();
+            setBusy(false);
+            setError(e.message);
+        }
+    };
+
+    const signOut = async () => {
+        stopPolling();
+        setBusy(true);
+        try {
+            const res = await fetch(getApiUrl('/api/ai/chatgpt/logout'), { method: 'POST' });
+            if (!res.ok) throw new Error(`Couldn't sign out (${res.status})`);
+            await load();
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const signedIn = status?.signed_in;
+    const planOk = status?.plan_usage;
+
+    return (
+        <div>
+            {signedIn ? (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 px-4 py-3">
+                    <div className="text-sm">
+                        <div className="text-zinc-200 flex items-center gap-2">
+                            <Check size={16} className="text-green-400" />
+                            Signed in{status.email ? ` as ${status.email}` : ''}
+                        </div>
+                        {!planOk && (
+                            <div className="text-xs text-amber-400 mt-1">
+                                You didn&apos;t allow &quot;Use your ChatGPT plan&quot;. Sign out and sign in again to allow it.
+                            </div>
+                        )}
+                    </div>
+                    <button onClick={signOut} disabled={busy} className="text-sm text-zinc-400 hover:text-white">
+                        Sign out
+                    </button>
+                </div>
+            ) : (
+                <button
+                    onClick={signIn}
+                    disabled={busy}
+                    className="w-full px-6 py-3 rounded-xl font-medium bg-white text-black hover:bg-zinc-200 transition-all disabled:opacity-60"
+                >
+                    {busy ? 'Waiting for ChatGPT sign-in…' : 'Continue with ChatGPT'}
+                </button>
+            )}
+            {busy && !signedIn && (
+                <p className="mt-2 text-xs text-zinc-500">Finish signing in on the ChatGPT page that just opened, then come back here.</p>
+            )}
+            {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+            {signedIn && planOk && !welcomeSeen && (
+                <div className="mt-3 rounded-xl bg-primary/10 border border-primary/20 p-3 text-sm text-zinc-300">
+                    You&apos;re using your ChatGPT plan. Clip finding, trailers, captions and b-roll count against your
+                    plan&apos;s usage limits instead of an API bill.
+                    <button
+                        onClick={() => {
+                            try { localStorage.setItem(WELCOME_SEEN_KEY, '1'); } catch { /* private window */ }
+                            setWelcomeSeen(true);
+                        }}
+                        className="ml-2 text-primary hover:underline"
+                    >
+                        Got it
+                    </button>
+                </div>
+            )}
+            <p className="mt-2 text-xs text-zinc-500 leading-relaxed">
+                Works with an eligible ChatGPT plan (Plus or Pro). Requests share your plan&apos;s limits with ChatGPT and other apps.
+            </p>
+        </div>
+    );
+}
+
 // Live model list for one provider. null = not loaded (no key yet, or failed).
-function useProviderModels(provider, key, baseUrl) {
+function useProviderModels(provider, key, baseUrl, signedIn) {
     // OpenRouter lists models without a key; custom local servers may not need one.
-    const canList = key || provider === 'openrouter' || (provider === 'custom' && baseUrl);
+    // ChatGPT lists the signed-in plan's models (key stands in for the account).
+    const canList = provider === 'chatgpt' ? signedIn
+        : key || provider === 'openrouter' || (provider === 'custom' && baseUrl);
     const request = canList ? JSON.stringify([provider, key, baseUrl]) : '';
     const [result, setResult] = useState({ request: '', models: null, error: '' });
 
@@ -86,11 +239,13 @@ export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMI
     const [config, setConfig] = useState(() => getProviderConfig(getAiProvider()));
     const [typingModel, setTypingModel] = useState(false);
     const isGemini = provider === 'gemini';
+    const isChatGPT = provider === 'chatgpt';
     const info = AI_PROVIDERS.find((p) => p.id === provider);
 
     const key = isGemini ? savedKey : config.key;
     const model = isGemini ? savedModel : config.model;
-    const { models, error } = useProviderModels(provider, key, config.baseUrl);
+    const { models, error } = useProviderModels(
+        provider, isChatGPT ? config.account || '' : key, config.baseUrl, isChatGPT && !!config.signedIn);
 
     // Before the live list loads, Gemini still shows its known models.
     const shown = models || (isGemini
@@ -116,6 +271,14 @@ export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMI
         setProvider(next);
         setConfig(getProviderConfig(next));
         setTypingModel(false);
+    };
+
+    const chatgptStatus = (s) => {
+        const signedIn = !!(s.signed_in && s.plan_usage);
+        const account = s.email || '';
+        if (signedIn !== !!config.signedIn || account !== (config.account || '')) {
+            updateConfig({ signedIn, account });
+        }
     };
 
     const geminiKeyBlock = (
@@ -155,7 +318,9 @@ export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMI
             {info?.help && <p className="mt-2 text-xs text-zinc-500">{info.help}</p>}
 
             <div className="mt-6">
-                {isGemini ? geminiKeyBlock : (
+                {isGemini ? geminiKeyBlock : isChatGPT ? (
+                    <ChatGPTSignIn key="chatgpt" onStatus={chatgptStatus} />
+                ) : (
                     <>
                         {provider === 'custom' && (
                             <div className="mb-4">
@@ -195,7 +360,11 @@ export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMI
                     className="input-field w-full"
                 >
                     {!shown.length && (
-                        <option value="" disabled>{key ? 'Loading models…' : 'Add your key to load models'}</option>
+                        <option value="" disabled>
+                            {isChatGPT
+                                ? (config.signedIn ? 'Loading models…' : 'Sign in to load models')
+                                : (key ? 'Loading models…' : 'Add your key to load models')}
+                        </option>
                     )}
                     {shown.map((m) => (
                         <option key={m.id} value={m.id}>
@@ -215,6 +384,14 @@ export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMI
                     />
                 )}
                 {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+                {isChatGPT && config.signedIn && (
+                    <p className="mt-2 text-xs text-zinc-300">
+                        Using ChatGPT plan ·{' '}
+                        <a href={MANAGE_USAGE_URL} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                            Manage usage
+                        </a>
+                    </p>
+                )}
                 <p className="mt-2 text-xs text-zinc-500 leading-relaxed">
                     The list comes live from {info.label}, so new models show up on their own. ★ marks our picks; Free means it works on a free key.
                     This model handles clip detection, trailers, captions and b-roll.
@@ -222,7 +399,9 @@ export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMI
             </div>
 
             <p className="mt-3 text-sm text-zinc-400">
-                Your keys stay local. The app stores them in the browser{isGemini ? ' and syncs the Gemini key to your OS keychain for the local MCP' : ''}.
+                {isChatGPT
+                    ? 'Your ChatGPT sign-in stays on this computer, in a private file only the app reads. It never goes into the browser.'
+                    : <>Your keys stay local. The app stores them in the browser{isGemini ? ' and syncs the Gemini key to your OS keychain for the local MCP' : ''}.</>}
                 {info?.keyUrl && (
                     <>
                         <br />

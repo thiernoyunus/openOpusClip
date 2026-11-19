@@ -11,6 +11,7 @@ export const AI_SETTINGS_EVENT = 'ai-settings-changed';
 // Must match PROVIDERS in llm.py.
 export const AI_PROVIDERS = [
   { id: 'gemini', label: 'Google Gemini', help: 'Default. Free key available.', keyUrl: 'https://aistudio.google.com/app/apikey' },
+  { id: 'chatgpt', label: 'ChatGPT (sign in)', help: 'Use your ChatGPT plan instead of an API key. Sign in with your ChatGPT account.' },
   { id: 'openrouter', label: 'OpenRouter', help: 'One key for Claude, GPT, Grok, DeepSeek, MiMo and more.', keyUrl: 'https://openrouter.ai/keys' },
   { id: 'anthropic', label: 'Anthropic (Claude)', keyUrl: 'https://console.anthropic.com/settings/keys' },
   { id: 'openai', label: 'OpenAI', keyUrl: 'https://platform.openai.com/api-keys' },
@@ -60,10 +61,12 @@ export const saveProviderConfig = (provider, patch) => {
   changed();
 };
 
-// Custom local servers (Ollama, LM Studio) run without a key.
+// Custom local servers (Ollama, LM Studio) run without a key. ChatGPT signs in
+// instead; the backend keeps the tokens and Settings records that it worked.
 export const hasAiKey = () => {
   const provider = getAiProvider();
-  const { key, baseUrl } = getProviderConfig(provider);
+  const { key, baseUrl, signedIn } = getProviderConfig(provider);
+  if (provider === 'chatgpt') return !!signedIn;
   return provider === 'custom' ? !!baseUrl : !!key;
 };
 

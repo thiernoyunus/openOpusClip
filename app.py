@@ -25,6 +25,7 @@ import transcription
 from transcription import WHISPER_MODELS
 from gemini_models import DEFAULT_GEMINI_MODEL, get_gemini_model
 import llm
+import chatgpt_auth
 
 try:
     import keyring
@@ -204,6 +205,10 @@ def _request_ai(request: Request, allow_env_key: bool = False) -> "llm.LLMSettin
         raise HTTPException(status_code=400, detail=str(e))
     if allow_env_key and not ai.api_key and ai.provider == "gemini":
         ai.api_key = os.environ.get("GEMINI_API_KEY", "")
+    if ai.provider == "chatgpt":
+        if not chatgpt_auth.status()["plan_usage"]:
+            raise HTTPException(status_code=400, detail="Sign in with ChatGPT in Settings first.")
+        return ai
     # Local servers (Ollama, LM Studio) behind "Custom" don't need a key.
     if not ai.api_key and ai.provider != "custom":
         raise HTTPException(status_code=400, detail=f"Missing API key for {ai.label}. Add it in Settings.")
@@ -2212,9 +2217,42 @@ async def list_ai_models(request: Request):
         raise HTTPException(status_code=400, detail=str(e))
     try:
         models = await asyncio.to_thread(llm.list_models, ai)
+    except chatgpt_auth.NotSignedIn as e:
+        raise HTTPException(status_code=401, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Couldn't load models from {ai.label}: {str(e)[:300]}")
     return {"provider": ai.provider, "models": models}
+
+
+def _require_local(request: Request):
+    # The ChatGPT tokens belong to whoever runs this computer; a public deployment
+    # must not let visitors sign the server into (or out of) someone's plan.
+    host = (request.client.host if request.client else "") or ""
+    if host not in ("127.0.0.1", "::1", "localhost") and not os.environ.get("CHATGPT_ALLOW_REMOTE"):
+        raise HTTPException(status_code=403, detail="Sign in with ChatGPT only works in the desktop app or a local run.")
+
+
+@app.post("/api/ai/chatgpt/login")
+async def chatgpt_login(request: Request):
+    """Start Sign in with ChatGPT; the dashboard opens the returned URL."""
+    _require_local(request)
+    try:
+        url = await asyncio.to_thread(chatgpt_auth.start_login)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Couldn't start the sign-in listener: {e}")
+    return {"url": url}
+
+
+@app.get("/api/ai/chatgpt/status")
+async def chatgpt_status():
+    return chatgpt_auth.status()
+
+
+@app.post("/api/ai/chatgpt/logout")
+async def chatgpt_logout(request: Request):
+    _require_local(request)
+    await asyncio.to_thread(chatgpt_auth.logout)
+    return chatgpt_auth.status()
 
 
 class CaptionEnhanceRequest(BaseModel):

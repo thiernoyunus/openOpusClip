@@ -2074,7 +2074,7 @@ def get_viral_clips(transcript_result, video_duration, max_retries=3,
     provider, model_name = ai.provider, ai.model
     print(f"🤖  Analyzing with {ai.label}...")
 
-    if not ai.api_key:
+    if not llm.has_credentials(ai):
         print(f"❌ Error: no API key for {ai.label}.")
         raise ClipAnalysisError(
             f"API key for {ai.label} is missing.",
@@ -2685,7 +2685,7 @@ def get_trailer_moments(transcript_result, video_duration, pace='standard', max_
         ai = llm.settings_from_env()
     except ValueError as e:
         raise ClipAnalysisError(str(e))
-    if not ai.api_key:
+    if not llm.has_credentials(ai):
         print(f"❌ Error: no API key for {ai.label}.")
         raise ClipAnalysisError(
             f"API key for {ai.label} is missing.",

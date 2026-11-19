@@ -4,12 +4,14 @@ Gemini keeps its native SDK. Every other provider goes through a tiny client tha
 mimics the one Gemini call the pipeline uses — client.models.generate_content(
 model=, contents=, config=) returning .text and .usage_metadata — so the callers
 don't change. Almost every provider speaks OpenAI's chat format; Claude gets its
-own adapter because Anthropic's OpenAI-compatible endpoint ignores JSON mode.
+own adapter because Anthropic's OpenAI-compatible endpoint ignores JSON mode, and
+"ChatGPT (your plan)" uses Sign in with ChatGPT (chatgpt_auth.py) instead of a key.
 
 Model lists come live from each provider, so new models show up without an app
 update. RECOMMENDED only orders/stars the list; a stale entry is harmless.
 """
 
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -17,6 +19,7 @@ from dataclasses import dataclass
 import httpx
 from google import genai
 
+import chatgpt_auth
 from gemini_models import DEFAULT_GEMINI_MODEL, GEMINI_MODELS, get_gemini_pricing
 
 # kind: which wire format to speak. base_url: None = the user types it (Custom).
@@ -26,6 +29,8 @@ PROVIDERS = {
                    "base_url": "https://openrouter.ai/api/v1"},
     "anthropic": {"label": "Anthropic (Claude)", "kind": "anthropic",
                   "base_url": "https://api.anthropic.com/v1"},
+    "chatgpt": {"label": "ChatGPT (your plan)", "kind": "chatgpt",
+                "base_url": "https://api.openai.com/v1"},
     "openai": {"label": "OpenAI", "kind": "openai", "base_url": "https://api.openai.com/v1"},
     "deepseek": {"label": "DeepSeek", "kind": "openai", "base_url": "https://api.deepseek.com/v1"},
     "xai": {"label": "xAI (Grok)", "kind": "openai", "base_url": "https://api.x.ai/v1"},
@@ -116,6 +121,11 @@ def settings_from_headers(headers, require_model=True):
     )
 
 
+def has_credentials(settings):
+    """ChatGPT signs in instead of a key; local servers behind Custom need none."""
+    return settings.provider in ("chatgpt", "custom") or bool(settings.api_key)
+
+
 def settings_to_env(settings, env):
     """Hand the choice to a main.py subprocess. GEMINI_* stays for Gemini-only steps."""
     env["LLM_PROVIDER"] = settings.provider
@@ -200,6 +210,8 @@ class _CompatClient:
     def generate(self, model, prompt, wants_json):
         if self.kind == "anthropic":
             return self._anthropic(model, prompt, wants_json)
+        if self.kind == "chatgpt":
+            return self._chatgpt(model, prompt, wants_json)
         return self._openai(model, prompt, wants_json)
 
     def _openai(self, model, prompt, wants_json):
@@ -235,6 +247,96 @@ class _CompatClient:
         prompt_tokens = sum(usage.get(k) or 0 for k in (
             "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
         return _Response(text, _Usage(self.settings.provider, prompt_tokens, usage.get("output_tokens")))
+
+
+    def _chatgpt(self, model, prompt, wants_json):
+        # The ChatGPT plan route only takes streamed, unstored Responses calls and
+        # rejects temperature, max_output_tokens and system-role messages.
+        body = {
+            "model": model, "store": False, "stream": True,
+            "instructions": ("Reply with only the JSON the user asks for. No prose, no code fences."
+                             if wants_json else "Follow the user's instructions exactly."),
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+        }
+        for attempt in (0, 1):
+            token = chatgpt_auth.access_token(force_refresh=attempt == 1)
+            try:
+                return _chatgpt_stream(f"{self.settings.base_url}/responses", body, token, self.settings)
+            except _Unauthorized:
+                if attempt:
+                    raise RuntimeError("401 ChatGPT didn't accept the sign-in. Sign in again under Settings > AI Model.")
+
+
+class _Unauthorized(Exception):
+    pass
+
+
+# What each plan error means for the person. Codes from OpenAI's errors page.
+_PLAN_ERRORS = {
+    "subscription_sharing_usage_limit_exceeded":
+        "You've hit your ChatGPT plan's usage limit. Check Settings > Usage in ChatGPT, "
+        "or pick another AI provider for now.",
+    "subscription_sharing_user_not_eligible":
+        "This ChatGPT account can't use its plan in other apps (needs an eligible plan, "
+        "or a workspace admin turned it off).",
+    "subscription_sharing_usage_unavailable": "503 ChatGPT plan usage is temporarily unavailable.",
+    "subscription_sharing_user_unavailable": "503 ChatGPT is temporarily unavailable.",
+}
+
+
+def _plan_error(err, fallback_status):
+    err = err or {}
+    code = err.get("code") or ""
+    if code in _PLAN_ERRORS:
+        return RuntimeError(_PLAN_ERRORS[code])
+    return RuntimeError(f"{fallback_status} ChatGPT error: {code or ''} {err.get('message') or ''}".strip())
+
+
+def _chatgpt_stream(url, body, token, settings):
+    """POST a streamed Responses call; return a _Response once response.completed arrives."""
+    headers = {"Authorization": f"Bearer {token}", "Accept": "text/event-stream"}
+    parts = []
+    with httpx.stream("POST", url, json=body, headers=headers, timeout=TIMEOUT) as resp:
+        if resp.status_code == 401:
+            raise _Unauthorized()
+        if resp.status_code >= 400:
+            resp.read()
+            try:
+                err = resp.json().get("error")
+            except ValueError:
+                err = {"message": resp.text[:300]}
+            raise _plan_error(err, resp.status_code)
+        for line in resp.iter_lines():
+            if not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if not payload or payload == "[DONE]":
+                continue
+            try:
+                event = json.loads(payload)
+            except ValueError:
+                continue
+            kind = event.get("type")
+            if kind == "response.output_text.delta":
+                parts.append(event.get("delta") or "")
+            elif kind == "response.completed":
+                final = event.get("response") or {}
+                text = "".join(parts) or _responses_text(final)
+                usage = final.get("usage") or {}
+                return _Response(text, _Usage(settings.provider, usage.get("input_tokens"),
+                                              usage.get("output_tokens")))
+            elif kind in ("response.failed", "error"):
+                raise _plan_error((event.get("response") or {}).get("error") or event.get("error")
+                                  or event, 502)
+            elif kind == "response.incomplete":
+                reason = ((event.get("response") or {}).get("incomplete_details") or {}).get("reason")
+                raise RuntimeError(f"502 ChatGPT stopped early ({reason or 'incomplete'}).")
+    raise RuntimeError("503 ChatGPT connection ended before the answer finished.")
+
+
+def _responses_text(response):
+    return "".join(c.get("text", "") for item in response.get("output") or []
+                   for c in item.get("content") or [] if c.get("type") == "output_text")
 
 
 def _json_or_raise(resp, settings):
@@ -273,6 +375,13 @@ def list_models(settings):
             # Google's free tier covers Flash / Flash-Lite, not Pro. The API
             # doesn't say so per model, hence the name check.
             found.append((model_id, getattr(m, "display_name", None), "flash" in model_id))
+    elif kind == "chatgpt":
+        resp = httpx.get(f"{settings.base_url}/models", timeout=30, headers={
+            "Authorization": f"Bearer {chatgpt_auth.access_token()}"})
+        # OpenAI says: show visibility == "list" entries, in the server's order.
+        found = [(m["slug"], m.get("display_name"), False)
+                 for m in _json_or_raise(resp, settings).get("models", [])
+                 if m.get("slug") and m.get("visibility") == "list"]
     elif kind == "anthropic":
         resp = httpx.get(f"{settings.base_url}/models", params={"limit": 1000}, timeout=30,
                          headers={"x-api-key": settings.api_key, "anthropic-version": "2023-06-01"})
@@ -298,6 +407,8 @@ def list_models(settings):
         seen.add(model_id)
         models.append({"id": model_id, "label": label or model_id,
                        "recommended": model_id in recommended, "free": free})
+    if kind == "chatgpt":
+        return models  # already in OpenAI's order
     rank = {m: i for i, m in enumerate(recommended)}
     models.sort(key=lambda m: (rank.get(m["id"], len(rank)), m["id"]))
     return models
