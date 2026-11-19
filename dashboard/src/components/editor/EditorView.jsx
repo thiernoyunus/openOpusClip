@@ -460,7 +460,7 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
     // for a specific media block, focus its inspector directly. A fresh object
     // each call so re-clicking the same asset still re-triggers the panel.
     const handleSelectTrackItem = useCallback((kind, id = null) => {
-        const tab = { text: 'text', broll: 'media', audio: 'media', transitions: 'transitions', captions: 'captions' }[kind];
+        const tab = { text: 'text', broll: 'media', audio: 'media', transitions: 'transitions' }[kind];
         if (!tab) return;
         if (tab === 'media') {
             setMediaFocus(id ? { track: kind === 'audio' ? 'audio' : 'overlay', id, nonce: Date.now() } : null);

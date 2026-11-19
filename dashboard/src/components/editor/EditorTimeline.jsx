@@ -2,13 +2,13 @@ import React, { useEffect, useLayoutEffect, useState, useCallback, useRef, useMe
 import {
     Play, Pause, SkipBack, SkipForward, Scissors, Trash2, Copy, ZoomIn, ZoomOut, Plus,
     Type, Clapperboard, Music, Volume2, VolumeX, Image as ImageIcon, PanelBottomClose,
-    MousePointer2, Undo2, Redo2, Magnet, Lock, Unlock, MoveHorizontal, Captions,
+    MousePointer2, Undo2, Redo2, Magnet, Lock, Unlock, MoveHorizontal,
 } from 'lucide-react';
 import { getApiUrl } from '../../config';
 import { EDITOR_FPS } from './EditorCanvas';
 import { useFilmstrip, useWaveform } from './useMediaStrips';
 import {
-    placedClips, outputToSource, clipAtOutputFrame, sourceRangeToOutputRuns, wordSourceToOutput,
+    placedClips, outputToSource, clipAtOutputFrame, sourceRangeToOutputRuns,
 } from '@remotion-src/lib/edl';
 
 /*
@@ -50,7 +50,6 @@ const C = {
     wave: 'rgba(160,240,240,0.75)',
     text: '#a8662c',
     overlay: '#5b4bb3',
-    caption: '#3a3a42',
 };
 
 const clampHeight = (h) => Math.max(MIN_TL_HEIGHT, Math.min(MAX_TL_HEIGHT, h));
@@ -458,22 +457,6 @@ const AudioBlock = React.memo(function AudioBlock({
     );
 });
 
-/** Caption phrases (gray chips) on the subtitles track. Click seeks there. */
-const CaptionChips = React.memo(function CaptionChips({ groups, pxPerFrame, onPick }) {
-    return groups.map((g) => (
-        <button
-            type="button"
-            key={g.key}
-            onPointerDown={(e) => { e.stopPropagation(); onPick(g.outStart); }}
-            style={{ left: LANE_PAD + g.outStart * pxPerFrame + 1, width: Math.max(4, (g.outEnd - g.outStart) * pxPerFrame - 2), background: C.caption }}
-            title={g.text}
-            className="absolute top-0 bottom-0 rounded-[4px] px-1.5 text-left text-[10px] text-zinc-200 overflow-hidden whitespace-nowrap hover:brightness-125 ring-1 ring-inset ring-white/[0.06]"
-        >
-            <span className="ph-mask">{g.text}</span>
-        </button>
-    ));
-});
-
 /**
  * Playhead pieces. Each subscribes to the player's frameupdate itself so
  * per-frame playback re-renders only these, never the lanes.
@@ -511,6 +494,18 @@ const Playhead = React.memo(function Playhead({ playerRef, pxPerFrame, scrollRef
     return <div className="absolute top-0 bottom-0 w-px bg-white pointer-events-none z-40 shadow-[0_0_4px_rgba(255,255,255,0.4)]" style={{ left }} />;
 });
 
+/**
+ * CapCut's Q / W icons: two brackets meeting at the playhead, the side that
+ * gets deleted drawn faint.
+ */
+const TrimIcon = ({ side }) => (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+        <g opacity={side === 'before' ? 0.35 : 1}><path d="M2 3.5h2.5v9H2" /></g>
+        <path d="M8 2v12" strokeDasharray="1.5 1.5" />
+        <g opacity={side === 'after' ? 0.35 : 1}><path d="M14 3.5h-2.5v9H14" /></g>
+    </svg>
+);
+
 /** Small square icon button used in the toolbar and track heads. */
 const IconBtn = ({ onClick, disabled, active, title, children, danger, className = '' }) => (
     <button
@@ -534,37 +529,10 @@ const IconBtn = ({ onClick, disabled, active, title, children, danger, className
     </button>
 );
 
-/** Group caption words into short phrases for the subtitles track. */
-function captionGroups(framing, fps) {
-    const subs = framing.subtitles;
-    if (!subs || !Array.isArray(subs.captions) || subs.captions.length === 0) return [];
-    const origin = framing.captionsOriginFrame ?? framing.clipInFrame ?? 0;
-    const srcFps = framing.source.fps;
-    const groups = [];
-    let cur = null;
-    const gapMax = Math.round(fps * 0.35);
-    subs.captions.forEach((w, i) => {
-        if (w.captionHidden) { cur = null; return; }
-        const s = origin + Math.round((w.startMs / 1000) * srcFps);
-        const e = origin + Math.round((w.endMs / 1000) * srcFps);
-        const o = wordSourceToOutput(framing, s, e, fps);
-        if (!o || o.outEnd <= o.outStart) { cur = null; return; }
-        if (cur && o.outStart >= cur.outEnd && o.outStart - cur.outEnd <= gapMax && cur.n < 5) {
-            cur.outEnd = o.outEnd;
-            cur.text += ` ${w.text}`;
-            cur.n += 1;
-        } else {
-            cur = { key: `cw-${i}`, outStart: o.outStart, outEnd: o.outEnd, text: w.text, n: 1 };
-            groups.push(cur);
-        }
-    });
-    return groups;
-}
-
 /**
  * Output-axis NLE timeline, CapCut style: a toolbar (select/blade tools, undo,
  * split, snapping, zoom), a fixed column of track heads (lock / mute), a sticky
- * ruler, and the tracks — captions, text, overlays, the main video (V1), its
+ * ruler, and the tracks — text, overlays, the main video (V1), its
  * original audio (A1) and music/SFX (A2). Clips can be selected, split (blade or
  * playhead), trimmed, reordered, duplicated and deleted; zoom with the slider,
  * Ctrl/Cmd + scroll, or fit-to-window.
@@ -589,6 +557,7 @@ export default function EditorTimeline({
     });
     const scrollRef = useRef(null);
     const headsRef = useRef(null);
+    const bodyRef = useRef(null);
     const dragRef = useRef(null);
     const resizeRef = useRef(null);
     const outTickRef = useRef(0);
@@ -756,6 +725,37 @@ export default function EditorTimeline({
         }
         if (!locked.has('main')) splitMainAt(f);
     }, [outFrame, playerRef, selectedItem, framing.audio, dispatch, splitMainAt, locked]);
+
+    // CapCut Q / W: delete everything before (Q) or after (W) the playhead in
+    // the clip under it, or in the selected audio block. One undo each.
+    const trimToPlayhead = useCallback((side) => {
+        const f = Math.round(playerRef.current?.getCurrentFrame() ?? outFrame);
+        if (selectedItem?.lane === 'audio') {
+            const a = (framing.audio || []).find((x) => x.id === selectedItem.id);
+            if (a && !locked.has('audio') && f - a.startFrame >= MIN_AUDIO_LEN && a.endFrame - f >= MIN_AUDIO_LEN) {
+                dispatch({
+                    type: 'UPDATE_AUDIO',
+                    id: a.id,
+                    patch: side === 'before'
+                        ? { startFrame: f, trimBefore: (a.trimBefore || 0) + (f - a.startFrame), fadeInSec: 0 }
+                        : { endFrame: f, fadeOutSec: 0 },
+                });
+                return;
+            }
+        }
+        if (locked.has('main')) return;
+        const pc = clipAtOutputFrame(framing, f, fps);
+        if (!pc) return;
+        const src = outputToSource(framing, f, fps);
+        if (src - pc.clip.sourceStart < MIN_CLIP_LEN || pc.clip.sourceEnd - src < MIN_CLIP_LEN) return;
+        if (side === 'before') {
+            dispatch({ type: 'SET_CLIP_SOURCE', id: pc.clip.id, sourceStart: src });
+            // What was under the playhead now starts the clip, so follow it.
+            seekToOut(pc.outStart);
+        } else {
+            dispatch({ type: 'SET_CLIP_SOURCE', id: pc.clip.id, sourceEnd: src });
+        }
+    }, [playerRef, outFrame, selectedItem, framing, locked, fps, dispatch, seekToOut]);
 
     const selectedId = selectedIds[0] ?? null;
     const canDeleteClip = selectedId && !locked.has('main') && framing.clips.length > 1 && framing.clips.some((c) => c.id === selectedId);
@@ -1072,6 +1072,9 @@ export default function EditorTimeline({
         if (e.button !== 0) return;
         e.preventDefault();
         resizeRef.current = { startY: e.clientY, startH: timelineHeight, latest: timelineHeight };
+        // Follow the cursor 1:1: no height animation, and no React re-render
+        // per move (the whole track tree would re-render 60x a second).
+        if (bodyRef.current) bodyRef.current.style.transition = 'none';
         try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
     }, [timelineHeight]);
     const onResizeMove = useCallback((e) => {
@@ -1079,12 +1082,14 @@ export default function EditorTimeline({
         if (!r) return;
         const h = clampHeight(r.startH + (r.startY - e.clientY));
         r.latest = h;
-        setTimelineHeight(h);
+        if (bodyRef.current) bodyRef.current.style.height = `${h}px`;
     }, []);
     const onResizeUp = useCallback(() => {
         const r = resizeRef.current;
         if (!r) return;
         resizeRef.current = null;
+        if (bodyRef.current) bodyRef.current.style.transition = '';
+        setTimelineHeight(r.latest);
         writePref('editorTimelineHeight', r.latest);
     }, []);
 
@@ -1097,7 +1102,7 @@ export default function EditorTimeline({
     }, []);
 
     // --- Keyboard (CapCut keys) ---
-    // B blade · A/V select · N snapping · Cmd/Ctrl+B split at playhead ·
+    // Q delete left of playhead · W delete right · B blade · A/V select · N snapping · Cmd/Ctrl+B split at playhead ·
     // = / - zoom · Shift+Z fit · Delete removes the selection.
     useEffect(() => {
         const onKey = (e) => {
@@ -1106,7 +1111,9 @@ export default function EditorTimeline({
             const k = e.key.toLowerCase();
             if (mod && k === 'b') { e.preventDefault(); handleSplit(); return; }
             if (mod || e.altKey) return;
-            if (k === 'b') setTool('blade');
+            if (k === 'q') trimToPlayhead('before');
+            else if (k === 'w') trimToPlayhead('after');
+            else if (k === 'b') setTool('blade');
             else if (k === 'a' || k === 'v') { setTool('select'); setBladeX(null); }
             else if (k === 'n') setSnapOn((v) => !v);
             else if (k === '=' || k === '+') zoomTo(pxPerSecRef.current * 1.35);
@@ -1121,7 +1128,7 @@ export default function EditorTimeline({
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [handleSplit, zoomTo, fitZoom, handleDelete, canDeleteItem, canDeleteClip]);
+    }, [handleSplit, trimToPlayhead, zoomTo, fitZoom, handleDelete, canDeleteItem, canDeleteClip]);
 
     // --- Ruler ticks ---
     // Pick a labelled step that keeps labels ~90px apart; minor ticks in between.
@@ -1154,7 +1161,6 @@ export default function EditorTimeline({
     const brollWindows = laneWindows(framing.broll || []);
     const overlayWindows = laneWindows(framing.overlays || []);
     const transitionsOn = !!(framing.transitions?.cutCrossfade || framing.transitions?.cutStyle);
-    const captionChips = useMemo(() => captionGroups(framing, fps), [framing, fps]);
 
     const audioBlocks = audioItems.map((item) => {
         const eff = drag && drag.itemId === item.id && drag.lane === 'audio' && (drag.kind === 'item-move' || drag.kind === 'item-trim')
@@ -1175,9 +1181,8 @@ export default function EditorTimeline({
         };
     });
 
-    // --- Tracks (top → bottom, CapCut order: captions, text, overlays, main, audio) ---
+    // --- Tracks (top → bottom, CapCut order: text, overlays, main, audio) ---
     const tracks = [];
-    if (captionChips.length) tracks.push({ id: 'captions', badge: 'CC', label: 'Captions', h: 26 });
     if (textWindows.length) tracks.push({ id: 'text', badge: 'T1', label: 'Text', h: 30 });
     const vTracks = [];
     if (overlayWindows.length) vTracks.push({ id: 'overlay', label: 'Overlays', h: 34 });
@@ -1195,8 +1200,6 @@ export default function EditorTimeline({
     const renderLane = (t) => {
         const isLocked = locked.has(t.id);
         switch (t.id) {
-            case 'captions':
-                return <CaptionChips groups={captionChips} pxPerFrame={pxPerFrame} onPick={(f) => { seekToOut(f); onSelectTrackItem?.('captions'); }} />;
             case 'text':
             case 'overlay':
             case 'broll': {
@@ -1362,6 +1365,12 @@ export default function EditorTimeline({
                     >
                         <Scissors size={13} className="rotate-90" /> Split
                     </button>
+                    <IconBtn title="Delete everything before the playhead (Q)" disabled={!canSplit} onClick={() => trimToPlayhead('before')}>
+                        <TrimIcon side="before" />
+                    </IconBtn>
+                    <IconBtn title="Delete everything after the playhead (W)" disabled={!canSplit} onClick={() => trimToPlayhead('after')}>
+                        <TrimIcon side="after" />
+                    </IconBtn>
                     <IconBtn title="Duplicate selected clip" disabled={!canDuplicate} onClick={() => canDuplicate && duplicateClip(selectedId)}>
                         <Copy size={14} />
                     </IconBtn>
@@ -1421,6 +1430,7 @@ export default function EditorTimeline({
 
             {/* Body: track heads | scrolling tracks */}
             <div
+                ref={bodyRef}
                 className={`flex transition-[height,opacity] duration-200 ${collapsed ? 'pointer-events-none overflow-hidden' : ''}`}
                 style={{ height: collapsed ? 0 : timelineHeight, opacity: collapsed ? 0 : 1 }}
             >
@@ -1437,7 +1447,7 @@ export default function EditorTimeline({
                                             t.id === 'main' ? 'bg-[#2c8f96] text-white' : 'bg-white/10 text-zinc-300'
                                         }`}
                                     >
-                                        {t.badge === 'CC' ? <Captions size={11} /> : t.badge}
+                                        {t.badge}
                                     </span>
                                     <span className="flex-1 min-w-0 truncate text-[10px] text-zinc-500" title={t.label}>{t.label}</span>
                                     {t.id === 'main' && (
@@ -1461,7 +1471,7 @@ export default function EditorTimeline({
                                             {muteState[t.id] ? <VolumeX size={12} /> : <Volume2 size={12} />}
                                         </button>
                                     )}
-                                    {t.id !== 'captions' && (
+                                    {(
                                         <button
                                             type="button"
                                             onClick={() => toggleLock(t.id)}
