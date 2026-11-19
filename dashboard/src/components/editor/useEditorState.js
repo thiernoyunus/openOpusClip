@@ -464,6 +464,39 @@ export const editorReducer = (state, action) => {
                 ...state.framing,
                 audio: (state.framing.audio || []).filter((a) => a.id !== action.id),
             });
+        case 'SPLIT_AUDIO': {
+            // Blade on the audio track: one block becomes two at an OUTPUT
+            // frame. The right half advances trimBefore by the same amount so
+            // its sound continues exactly where the left half stops. Each half
+            // keeps only its outer fade. One history entry, so one undo.
+            const { id, frame } = action;
+            const list = state.framing.audio || [];
+            const idx = list.findIndex((a) => a.id === id);
+            if (idx === -1) return state;
+            const a = list[idx];
+            // A looping item restarts from trimBefore, so moving it would
+            // change what the right half loops. Leave looping music whole.
+            if (a.loop) return state;
+            if (frame - a.startFrame < 2 || a.endFrame - frame < 2) return state;
+            const left = { ...a, endFrame: frame, fadeOutSec: 0 };
+            const right = {
+                ...a,
+                id: `${a.id.split('~')[0]}~${Date.now().toString(36)}`,
+                startFrame: frame,
+                trimBefore: (a.trimBefore || 0) + (frame - a.startFrame),
+                fadeInSec: 0,
+            };
+            const next = [...list.slice(0, idx), left, right, ...list.slice(idx + 1)];
+            return withHistory({ ...state.framing, audio: next });
+        }
+        case 'SET_AUDIO_VOLUMES':
+            // Track mute/unmute: set several audio items' volume in ONE undo step.
+            return withHistory({
+                ...state.framing,
+                audio: (state.framing.audio || []).map((a) =>
+                    a.id in action.volumes ? { ...a, volume: action.volumes[a.id] } : a
+                ),
+            });
         case 'UPDATE_AUDIO':
             return withHistory({
                 ...state.framing,

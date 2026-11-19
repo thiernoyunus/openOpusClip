@@ -825,6 +825,8 @@ export default function EditorView({ clip, index, jobId, onClose, onExported }) 
                         onSelectTrackItem={handleSelectTrackItem}
                         dispatch={dispatch}
                         sourceUrl={sourceUrl}
+                        canUndo={state.past.length > 0}
+                        canRedo={state.future.length > 0}
                         // The timeline's far-left / far-right "+" open the same
                         // picker as the transcript's "+", anchored at the very
                         // start / very end of the short in the original video.
