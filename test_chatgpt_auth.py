@@ -56,6 +56,7 @@ def test_first_sign_in_registers_the_app_and_saves_tokens(auth, monkeypatch):
     assert params["agent_name_hint"] == "openOpusClip"
     assert params["code_challenge_method"] == "S256"
     assert "chatgpt.tokens.use.direct" in params["scope"].split()
+    assert params["ext_agent_host_id"].startswith("urn:uuid:")
     assert params["redirect_uri"].startswith("http://127.0.0.1:")
     assert params["redirect_uri"].endswith("/auth/callback")
 

@@ -159,8 +159,9 @@ _login = _Login()
 
 
 def _host_id(data):
-    if not data.get("host_id"):
-        data["host_id"] = str(uuid.uuid4())
+    # OpenAI only accepts the "urn:uuid:<uuid4>" form (a bare UUID is a 400).
+    if not str(data.get("host_id", "")).startswith("urn:uuid:"):
+        data["host_id"] = f"urn:uuid:{uuid.uuid4()}"
     return data["host_id"]
 
 
