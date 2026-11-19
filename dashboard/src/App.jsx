@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, FileVideo, Sparkles, Scissors, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, ArrowLeft, History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, ExternalLink, Copy, CheckCircle2, Trash2, Film, Captions, Compass } from 'lucide-react';
+import { Upload, FileVideo, Scissors, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, ArrowLeft, History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, ExternalLink, Copy, CheckCircle2, Trash2, Film, Captions, Compass } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
@@ -219,7 +219,6 @@ function App() {
       captureError(e, { area: 'clip_delete' });
     }
   };
-  const [sortBy, setSortBy] = useState('score'); // 'score' | 'order'
   const [logs, setLogs] = useState([]);
   const [processingMedia, setProcessingMedia] = useState(null);
   const [youtubeSignedIn, setYoutubeSignedIn] = useState(null);
@@ -1632,7 +1631,7 @@ function App() {
                 </button>
                 <span className="w-px h-4 bg-edge" />
                 <h2 data-tour="results-header" className="text-sm font-medium text-fg flex items-center gap-2">
-                  <Sparkles size={16} className="text-viral" /> Generated shorts
+                  <Film size={16} className="text-viral" /> Generated shorts
                 </h2>
                 {liveClipCount > 0 && (
                   <span className="text-xs bg-surface2 text-muted px-2 py-0.5 rounded-full">{liveClipCount}</span>
@@ -1662,31 +1661,6 @@ function App() {
                   </span>
                 )}
                 <div className="ml-auto flex items-center gap-2">
-                  {liveClipCount > 1 && (
-                    <div className="flex items-center rounded-lg border border-edge overflow-hidden text-xs">
-                      <button
-                        onClick={() => setSortBy('score')}
-                        className={`px-2.5 py-1.5 transition-colors ${sortBy === 'score' ? 'bg-surface2 text-fg' : 'text-muted hover:text-fg'}`}
-                      >
-                        Virality
-                      </button>
-                      <button
-                        onClick={() => setSortBy('order')}
-                        className={`px-2.5 py-1.5 border-l border-edge transition-colors ${sortBy === 'order' ? 'bg-surface2 text-fg' : 'text-muted hover:text-fg'}`}
-                      >
-                        Original
-                      </button>
-                    </div>
-                  )}
-                  <button
-                    onClick={handleGenerateMore}
-                    disabled={generatingMore || openJobBusy}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface2 hover:bg-white/10 border border-edge text-fg rounded-lg text-xs font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    {generatingMore
-                      ? <><RotateCcw size={14} className="animate-spin" /> Generating…</>
-                      : <><Sparkles size={14} className="text-viral" /> More clips</>}
-                  </button>
                   <button
                     onClick={() => setShowProcessingModal(true)}
                     className="flex items-center gap-1.5 text-xs text-muted hover:text-fg border border-edge hover:bg-white/5 px-2.5 py-1.5 rounded-lg transition-colors"
@@ -1711,9 +1685,7 @@ function App() {
                     {results.clips
                       .map((clip, i) => ({ clip, i }))
                       .filter(({ clip }) => !clip.deleted)
-                      .sort((a, b) => sortBy === 'score'
-                        ? (Number(b.clip.virality_score) || 0) - (Number(a.clip.virality_score) || 0)
-                        : a.i - b.i)
+                      .sort((a, b) => (Number(b.clip.virality_score) || 0) - (Number(a.clip.virality_score) || 0))
                       .map(({ clip, i }, pos, arr) => (
                       <ResultCard
                         key={i}

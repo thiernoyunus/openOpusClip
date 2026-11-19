@@ -610,9 +610,10 @@ export default function ResultCard({ clip, index, prevIndex = null, nextIndex = 
                                     subtitles={isEdited ? (framingFull.subtitles ?? null) : previewSubtitles}
                                     className="aspect-[9/16]"
                                     loop={false}
+                                    autoPlay={false}
                                 />
                             ) : (
-                                <video src={currentVideoUrl} controls autoPlay playsInline className="w-full h-full object-cover aspect-[9/16]" />
+                                <video src={currentVideoUrl} controls playsInline className="w-full h-full object-cover aspect-[9/16]" />
                             )}
                             <span className="absolute top-3 right-3 bg-black/65 text-white text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums">{fmtTime(durSec)}</span>
                         </div>
