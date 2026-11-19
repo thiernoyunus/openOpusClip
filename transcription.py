@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import re
 from collections import OrderedDict
 import threading
 import os
@@ -598,40 +599,67 @@ def detect_silences(video_path, noise_db=SILENCE_NOISE_DB, min_silence=SILENCE_M
     return silences
 
 
-def detect_speech_gaps(video_path, min_silence=SILENCE_MIN_S):
+# Silero's speech probability below this counts as "surely silent": soft speech
+# the normal 0.5 threshold misses still scores above it, real pauses don't.
+SURE_SILENCE_THRESHOLD = 0.2
+
+
+def detect_speech_gaps(video_path, min_silence=SILENCE_MIN_S, with_sure=False):
     """Silence intervals [(start_s, end_s)] from the Silero voice detector that
     ships with faster-whisper. Unlike silencedetect it listens for a voice, not
-    for quiet, so pauses under music, room noise or hum are still found."""
+    for quiet, so pauses under music, room noise or hum are still found.
+    with_sure=True also returns the stricter "surely silent" intervals."""
     from faster_whisper.audio import decode_audio
     from faster_whisper.vad import VadOptions, get_speech_timestamps
 
     sr = 16000
     audio = decode_audio(video_path, sampling_rate=sr)
-    speech = get_speech_timestamps(audio, VadOptions(
-        min_silence_duration_ms=int(min_silence * 1000),
-        # No padding: it shrinks every gap (default 400ms hides short pauses),
-        # and the editor already keeps an 80ms margin when it cuts a pause.
-        speech_pad_ms=0,
-    ))
-    edges = [0] + [x for s in speech for x in (s["start"], s["end"])] + [len(audio)]
-    return [
-        (s / sr, e / sr)
-        for s, e in zip(edges[::2], edges[1::2])
-        if (e - s) / sr >= min_silence
-    ]
+
+    def gaps(**opts):
+        speech = get_speech_timestamps(audio, VadOptions(
+            min_silence_duration_ms=int(min_silence * 1000),
+            # No padding: it shrinks every gap (default 400ms hides short
+            # pauses), and the editor already keeps a margin when it cuts.
+            speech_pad_ms=0,
+            **opts,
+        ))
+        edges = [0] + [x for s in speech for x in (s["start"], s["end"])] + [len(audio)]
+        return [
+            (s / sr, e / sr)
+            for s, e in zip(edges[::2], edges[1::2])
+            if (e - s) / sr >= min_silence
+        ]
+
+    silences = gaps()
+    return (silences, gaps(threshold=SURE_SILENCE_THRESHOLD)) if with_sure else silences
 
 
-def _apply_silence_gaps(segments, silences):
-    """Carve real gaps into the word timeline using detected silences. Whisper
-    word alignment sets each word's end == the next word's start (no silence),
-    so pause/silence editing finds nothing — most visibly on mlx-whisper. For
-    each silence [s, e], push the preceding word's end back to s and the
-    following word's start forward to e, so a genuine gap appears. Mutates word
-    start/end in place; all times in seconds.
+# Two words closer than this count as "touching": Whisper's alignment artifact.
+GAPLESS_S = 0.02
 
-    ponytail: O(words * silences) linear scans — fine for clip-length transcripts
-    (hundreds of words, tens of silences); switch to a two-pointer merge if it
-    ever runs on multi-hour audio.
+
+def _apply_silence_gaps(segments, silences, sure_silences=()):
+    """Line the gap between each pair of words up with the silence the audio
+    actually has there. Mutates word start/end in place; times in seconds.
+
+    The transcript and the voice detector each make one kind of mistake, so a
+    pause is only cut where BOTH agree nobody is talking:
+
+    - The voice detector misses soft speech (quiet onsets, trailing-off words,
+      an off-mic "yeah"). It must not move a word edge the transcript already
+      knows, or the pause cut eats real speech. So when the transcript has its
+      own gap (Soniox, often faster-whisper), the gap is only shrunk to the part
+      the detector also hears as silent, never widened into the words.
+    - Whisper word alignment often makes words touch (end == next start), and a
+      transcript gap can hold speech it skipped. Touching words get the silence
+      the detector hears between their midpoints (each keeps at least its first
+      / last half), and a transcript gap with no silence in it is closed.
+    - Whisper also pads word edges into pauses. Where even a much more
+      sensitive pass (sure_silences) hears nothing, a word edge may be pulled
+      back into the pause, again never past the word's midpoint.
+
+    ponytail: O(words * silences) scan; switch to a two-pointer merge if it ever
+    runs on multi-hour audio.
     """
     words = [
         w
@@ -639,28 +667,44 @@ def _apply_silence_gaps(segments, silences):
         for w in seg.get("words", [])
         if isinstance(w.get("start"), (int, float)) and isinstance(w.get("end"), (int, float))
     ]
-    if not words or not silences:
+    if len(words) < 2:
         return
-    for s, e in silences:
-        # Word spoken just before the silence: the last one starting before s.
-        prev = None
-        for w in words:
-            if w["start"] < s:
-                prev = w
-            else:
-                break
-        # Word resuming after the silence: the first one still ending after e.
-        nxt = next((w for w in words if w["end"] > e), None)
-        # Silence falls entirely inside one word's span (prev is nxt): there's a
-        # single word token covering it, so we can't split it without inventing a
-        # phantom gap (would truncate the word and let cleanup eat real speech).
-        # Leave it untouched.
-        if prev is not None and nxt is not None and prev is nxt:
-            continue
-        if prev is not None and prev["end"] > s:
-            prev["end"] = max(s, prev["start"])
-        if nxt is not None and nxt["start"] < e:
-            nxt["start"] = min(e, nxt["end"])
+    for a, b in zip(words, words[1:]):
+        if b["start"] - a["end"] > GAPLESS_S:
+            lo, hi = a["end"], b["start"]
+        else:
+            lo, hi = (a["start"] + a["end"]) / 2, (b["start"] + b["end"]) / 2
+        best = None
+        for s, e in silences:
+            s, e = max(s, lo), min(e, hi)
+            if e > s and (best is None or e - s > best[1] - best[0]):
+                best = (s, e)
+        if best is None:
+            # Nothing silent between them: close the gap so no cut lands here.
+            best = (max(a["end"], b["start"]),) * 2
+        end, start = best
+        # Growing a filler would make "remove fillers" delete the extra speech
+        # too, so let the other word cover it (no gap, so no pause cut either).
+        if end > a["end"] and _is_filler(a):
+            end, start = a["end"], (a["end"] if not _is_filler(b) else b["start"])
+        elif start < b["start"] and _is_filler(b):
+            end, start = (b["start"] if not _is_filler(a) else a["end"]), b["start"]
+        a["end"], b["start"] = end, start
+        if start - end > GAPLESS_S:
+            for s, e in sure_silences:
+                if s < a["end"] <= e + GAPLESS_S:
+                    a["end"] = max(s, (a["start"] + a["end"]) / 2)
+                if s - GAPLESS_S <= b["start"] < e:
+                    b["start"] = min(e, (b["start"] + b["end"]) / 2)
+
+
+# Single-word fillers from the editor's FILLER_WORDS (speechCleanup.js).
+_FILLERS = {"um", "uh", "uhh", "umm", "er", "ah", "hmm", "like", "so",
+            "basically", "actually", "literally", "right"}
+
+
+def _is_filler(word):
+    return re.sub(r"[^\w']", "", str(word.get("word", "")).lower()) in _FILLERS
 
 
 def transcribe(video_path, model_size="base", backend=None, strip_words=False,
@@ -719,12 +763,12 @@ def _recover_silence_gaps(video_path, result):
         return
     try:
         try:
-            silences = detect_speech_gaps(video_path)
+            silences, sure = detect_speech_gaps(video_path, with_sure=True)
         except Exception as exc:
             print(f"⚠️  Voice detector unavailable ({exc}); using volume-based silence detection.")
-            silences = detect_silences(video_path)
+            silences, sure = detect_silences(video_path), ()
         if silences:
-            _apply_silence_gaps(result["segments"], silences)
+            _apply_silence_gaps(result["segments"], silences, sure)
             print(f"   \U0001f507 Recovered {len(silences)} silence gap(s) in word timings.")
     except Exception as exc:
         print(f"\u26a0\ufe0f  Silence-gap pass skipped: {exc}")
@@ -796,15 +840,14 @@ def _self_check():
     segs2 = [{"words": [{"word": "x", "start": 0.0, "end": 0.5}]}]
     _apply_silence_gaps(segs2, [])
     assert segs2[0]["words"][0]["end"] == 0.5
-    # Silence fully inside one word span (prev is nxt) -> leave word untouched,
-    # don't invent a phantom gap.
+    # Touching words: each keeps at least its first / last half, so a silence
+    # deep inside a long padded Whisper word only opens a gap in its second half.
     segs3 = [{"words": [
         {"word": "a", "start": 0.0, "end": 2.0},
         {"word": "b", "start": 2.0, "end": 3.0},
     ]}]
-    _apply_silence_gaps(segs3, [(1.0, 1.6)])
-    assert segs3[0]["words"][0]["end"] == 2.0 and segs3[0]["words"][1]["start"] == 2.0, segs3
-
+    _apply_silence_gaps(segs3, [(0.2, 1.6)])
+    assert segs3[0]["words"][0]["end"] == 1.0 and segs3[0]["words"][1]["start"] == 1.6, segs3
 
 if __name__ == "__main__":
     _self_check()
