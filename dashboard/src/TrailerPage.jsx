@@ -14,6 +14,7 @@ import {
 } from './lib/projectHistory';
 import { getApiUrl } from './config';
 import { getStoredGeminiModel } from './lib/geminiModels';
+import { aiHeaders, hasAiKey } from './lib/aiSettings';
 
 // Transcription engines mirror MediaInput: 'whisper' (built-in, free) or
 // 'soniox' (BYO key, best for multilingual). Soniox is only usable with a key
@@ -88,7 +89,6 @@ const formatJobDuration = (seconds) => {
 // mirroring SocialCalendar's onGoToSettings prop.
 export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGeminiModel() }) {
   // Reuse the exact same localStorage keys the main app uses.
-  const apiKey = localStorage.getItem('gemini_key') || '';
   const sonioxKey = (() => {
     const stored = localStorage.getItem('soniox_key_v1');
     return stored ? decrypt(stored) : '';
@@ -217,8 +217,8 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
   // clip-length / skip_analysis / moment_prompt controls (trailer mode owns the
   // moment selection on the backend).
   const submit = async () => {
-    if (!apiKey) {
-      alert('Add your Gemini API key in Settings to generate a trailer.');
+    if (!hasAiKey()) {
+      alert('Add your AI provider key in Settings to generate a trailer.');
       onGoToSettings?.();
       return;
     }
@@ -235,7 +235,8 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
     setShowModal(true);
 
     try {
-      const headers = { 'X-Gemini-Key': apiKey, 'X-Gemini-Model': geminiModel };
+      const authHeaders = { ...aiHeaders(), 'X-Gemini-Model': geminiModel };
+      const headers = { ...authHeaders };
       if (transcriptionEngine === 'soniox' && sonioxKey) {
         headers['X-Soniox-Key'] = sonioxKey;
       }
@@ -273,7 +274,7 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
         headers:
           mode === 'url'
             ? headers
-            : { 'X-Gemini-Key': apiKey, 'X-Gemini-Model': geminiModel, ...(headers['X-Soniox-Key'] ? { 'X-Soniox-Key': headers['X-Soniox-Key'] } : {}) },
+            : { ...authHeaders, ...(headers['X-Soniox-Key'] ? { 'X-Soniox-Key': headers['X-Soniox-Key'] } : {}) },
         body,
       });
 
@@ -377,12 +378,12 @@ export default function TrailerPage({ onGoToSettings, geminiModel = getStoredGem
           </p>
         </div>
 
-        {!apiKey && (
+        {!hasAiKey() && (
           <div className="mb-6 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 text-sm text-amber-200">
               <KeyRound size={16} className="shrink-0 text-amber-400" />
               <span>
-                <span className="font-semibold">Gemini API key required.</span>{' '}
+                <span className="font-semibold">AI key required.</span>{' '}
                 <span className="text-amber-200/80">Set it in Settings on the main app first.</span>
               </span>
             </div>

@@ -4,7 +4,7 @@ import {
     Image as ImageIcon, Clapperboard, Music, ChevronLeft,
 } from 'lucide-react';
 import { getApiUrl } from '../../config';
-import { getStoredGeminiModel } from '../../lib/geminiModels';
+import { aiHeaders, hasAiKey } from '../../lib/aiSettings';
 import { outputDurationFrames } from '@remotion-src/lib/edl';
 import { EDITOR_FPS } from './EditorCanvas';
 
@@ -255,9 +255,8 @@ function MediaPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
 
     const autoAdd = async () => {
         if (captions.length === 0 || !key || overlaysAtCap) return;
-        const geminiKey = localStorage.getItem('gemini_key');
-        if (!geminiKey) {
-            setAiError('Set your Gemini API key in Settings');
+        if (!hasAiKey()) {
+            setAiError('Set your AI provider key in Settings');
             return;
         }
         setAiLoading(true);
@@ -267,8 +266,7 @@ function MediaPanel({ framing, dispatch, jobId, clipIndex, getCurrentSourceFrame
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Gemini-Key': geminiKey,
-                    'X-Gemini-Model': getStoredGeminiModel(),
+                    ...aiHeaders(),
                 },
                 body: JSON.stringify({ words: captions.map((w) => ({ text: w.text, startMs: w.startMs })) }),
             });

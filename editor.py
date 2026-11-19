@@ -1,14 +1,14 @@
 import json
-from google import genai
 from google.genai import types
-from gemini_models import get_gemini_model
+import llm
 
 
 class VideoEditor:
-    def __init__(self, api_key, model_name=None):
-        """Create an editor client using the selected supported Gemini model."""
-        self.client = genai.Client(api_key=api_key)
-        self.text_model_name = get_gemini_model(model_name)
+    def __init__(self, api_key=None, model_name=None, ai=None):
+        """Create an editor client for the chosen AI provider (Gemini by default)."""
+        ai = ai or llm.build_settings(api_key=api_key, model=model_name)
+        self.client = llm.make_client(ai)
+        self.text_model_name = ai.model
 
     def get_caption_enhancements(self, words: list[str]) -> dict:
         """

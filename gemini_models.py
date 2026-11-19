@@ -1,6 +1,7 @@
 """Shared Gemini model choices for the UI and backend request boundary."""
 
 import os
+import re
 from datetime import date
 
 
@@ -35,14 +36,15 @@ GEMINI_PRICING = {
 
 
 def get_gemini_model(model_name=None):
-    """Return a supported model from an explicit value or the environment."""
+    """Return a well-formed model id from an explicit value or the environment."""
     selected = model_name
     if selected is None:
         selected = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
     selected = str(selected).strip() or DEFAULT_GEMINI_MODEL
-    if selected not in GEMINI_MODELS:
-        choices = ", ".join(GEMINI_MODELS)
-        raise ValueError(f"Unsupported Gemini model '{selected}'. Choose one of: {choices}")
+    # The dashboard lists Google's live models, so any well-formed id is allowed;
+    # GEMINI_MODELS is only the recommended/fallback list.
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", selected):
+        raise ValueError(f"Unsupported Gemini model '{selected[:60]}'.")
     return selected
 
 

@@ -4,7 +4,7 @@ import { defaultSubtitleConfig, saveDefaultCaptionStyle } from './useEditorState
 import { CAPTION_TEMPLATES, resolveTemplateId, getCaptionTemplate } from '@remotion-src/lib/captionTemplates';
 import { SUBTITLE_FONTS } from '@remotion-src/lib/fonts';
 import { getApiUrl } from '../../config';
-import { getStoredGeminiModel } from '../../lib/geminiModels';
+import { aiHeaders, hasAiKey } from '../../lib/aiSettings';
 import CaptionPreview from './CaptionPreview';
 import { DEFAULT_EMOJI_SIZE } from '@remotion-src/compositions/Subtitles';
 import { sourceToOutputAll } from '@remotion-src/lib/edl';
@@ -389,9 +389,8 @@ function CaptionsPanel({ framing, captions, dispatch, captionScope = 'all', setC
             setEnhanceError('No caption words to enhance.');
             return;
         }
-        const apiKey = localStorage.getItem('gemini_key');
-        if (!apiKey) {
-            setEnhanceError('Set your Gemini API key in Settings to use AI enhancements.');
+        if (!hasAiKey()) {
+            setEnhanceError('Set your AI provider key in Settings to use AI enhancements.');
             return;
         }
         setEnhancing(true);
@@ -401,8 +400,7 @@ function CaptionsPanel({ framing, captions, dispatch, captionScope = 'all', setC
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Gemini-Key': apiKey,
-                    'X-Gemini-Model': getStoredGeminiModel(),
+                    ...aiHeaders(),
                 },
                 body: JSON.stringify({ words: spoken.map(({ w }) => w.text) }),
             });

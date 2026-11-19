@@ -1,4 +1,4 @@
-"""Small self-check for the shared Gemini model allowlist, defaults, and rates."""
+"""Small self-check for the shared Gemini model defaults, id check, and rates."""
 
 from datetime import date
 
@@ -11,14 +11,15 @@ def test_default_is_supported():
     assert get_gemini_model() == DEFAULT_GEMINI_MODEL
 
 
-def test_invalid_model_is_rejected():
-    """Retired model names fail validation instead of reaching the API."""
+def test_live_model_ids_are_accepted_and_junk_rejected():
+    """Any well-formed id from Google's live list works; header junk doesn't."""
+    assert get_gemini_model("gemini-3.1-pro-preview") == "gemini-3.1-pro-preview"
     try:
-        get_gemini_model("gemini-2.5-flash")
+        get_gemini_model("gemini 3; rm -rf")
     except ValueError as error:
         assert "Unsupported Gemini model" in str(error)
     else:
-        raise AssertionError("an unsupported Gemini model should be rejected")
+        raise AssertionError("a malformed Gemini model id should be rejected")
 
 
 def test_introductory_pricing_changes_on_boundary():
@@ -30,6 +31,6 @@ def test_introductory_pricing_changes_on_boundary():
 
 if __name__ == "__main__":
     test_default_is_supported()
-    test_invalid_model_is_rejected()
+    test_live_model_ids_are_accepted_and_junk_rejected()
     test_introductory_pricing_changes_on_boundary()
     print("all gemini-model self-checks passed")

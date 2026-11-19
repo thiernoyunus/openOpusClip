@@ -13,6 +13,8 @@ import EditorView from './components/editor/EditorView';
 import { getProjects, addProject, updateProject, removeProject, phaseFromLogs, titleFromPayload, thumbFromPayload, coverFromString, fetchVideoTitle, captureVideoFrame, isTrailerProject } from './lib/projectHistory';
 import { getClipList, setClipList, addToClipList } from './lib/clipState';
 import { GEMINI_MODEL_STORAGE_KEY, getStoredGeminiModel } from './lib/geminiModels';
+import { encrypt, decrypt } from './lib/secretBox';
+import { AI_SETTINGS_EVENT, aiHeaders, getAiProvider, hasAiKey } from './lib/aiSettings';
 import { getApiUrl } from './config';
 import { captureError, track, trackPageview } from './analytics';
 import { getPhase, setPhase, armNext, runTourPhase, stopTour, startTourFromHome, APP_SUPPORT_INDEX } from './lib/platformTour.js';
@@ -67,45 +69,6 @@ const isYouTubeAuthFailure = (data) => {
   return text.includes('youtube_auth_required') || text.includes('sign in to confirm') || text.includes('http error 403');
 };
 
-// Enhanced "Encryption" using XOR + Base64 with a Salt
-// This is better than plain Base64 but still client-side.
-const SECRET_KEY = import.meta.env.VITE_ENCRYPTION_KEY || "OpenShorts-Static-Salt-Change-Me";
-const ENCRYPTION_PREFIX = "ENC:";
-
-const encrypt = (text) => {
-  if (!text) return '';
-  try {
-    const xor = text.split('').map((c, i) =>
-      String.fromCharCode(c.charCodeAt(0) ^ SECRET_KEY.charCodeAt(i % SECRET_KEY.length))
-    ).join('');
-    return ENCRYPTION_PREFIX + btoa(xor);
-  } catch (e) {
-    console.error("Encryption failed", e);
-    return text;
-  }
-};
-
-const decrypt = (text) => {
-  if (!text) return '';
-  if (text.startsWith(ENCRYPTION_PREFIX)) {
-    try {
-      const raw = text.slice(ENCRYPTION_PREFIX.length);
-      // Check if it's plain base64 or our custom XOR (simple try)
-      const xor = atob(raw);
-      const result = xor.split('').map((c, i) =>
-        String.fromCharCode(c.charCodeAt(0) ^ SECRET_KEY.charCodeAt(i % SECRET_KEY.length))
-      ).join('');
-      return result;
-    } catch (e) {
-      // Fallback if decryption fails (might be old plain text)
-      return '';
-    }
-  }
-  // Backward compatibility: If no prefix, assume old plain text (or return empty if you want to force re-login)
-  // For migration: Return text as is, so it populates the field, and next save will encrypt it.
-  return text;
-};
-
 // Simple TikTok icon sine Lucide might not have it or it varies
 const TikTokIcon = ({ size = 16, className = "" }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
@@ -158,6 +121,14 @@ const pollJob = async (jobId) => {
 function App() {
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
   const [geminiModel, setGeminiModel] = useState(getStoredGeminiModel);
+  // Re-render when the AI provider/key changes in Settings (stored outside React).
+  const [, setAiSettingsVersion] = useState(0);
+  useEffect(() => {
+    const bump = () => setAiSettingsVersion((v) => v + 1);
+    window.addEventListener(AI_SETTINGS_EVENT, bump);
+    return () => window.removeEventListener(AI_SETTINGS_EVENT, bump);
+  }, []);
+  const aiReady = getAiProvider() === 'gemini' ? !!apiKey : hasAiKey();
   // Social API State (Zernio) - Load encrypted or plain
   const [zernioKey, setZernioKey] = useState(() => {
     const stored = localStorage.getItem('zernioKey_v1');
@@ -837,7 +808,8 @@ function App() {
 
   const startProcessJob = async (data, { makeActive = true } = {}) => {
     let body;
-    const headers = { 'X-Gemini-Key': apiKey, 'X-Gemini-Model': geminiModel };
+    const authHeaders = { ...aiHeaders(), 'X-Gemini-Key': apiKey, 'X-Gemini-Model': geminiModel };
+    const headers = { ...authHeaders };
     // Soniox is bring-your-own key: only sent when that engine is selected.
     if (data.transcriptionEngine === 'soniox' && sonioxKey) {
       headers['X-Soniox-Key'] = sonioxKey;
@@ -870,7 +842,7 @@ function App() {
       method: 'POST',
       // For file uploads the browser sets Content-Type (multipart boundary), so
       // only forward the auth headers — including X-Soniox-Key when present.
-      headers: data.type === 'url' ? headers : { 'X-Gemini-Key': apiKey, 'X-Gemini-Model': geminiModel, ...(headers['X-Soniox-Key'] ? { 'X-Soniox-Key': headers['X-Soniox-Key'] } : {}) },
+      headers: data.type === 'url' ? headers : { ...authHeaders, ...(headers['X-Soniox-Key'] ? { 'X-Soniox-Key': headers['X-Soniox-Key'] } : {}) },
       body
     });
 
@@ -916,7 +888,7 @@ function App() {
   // existing poll loop then grows the grid (we stay on the results view — no
   // global 'processing' status swap).
   const handleGenerateMore = async () => {
-    if (!apiKey) {
+    if (!aiReady) {
       setShowKeyModal(true);
       return;
     }
@@ -927,7 +899,7 @@ function App() {
     try {
       const res = await fetch(getApiUrl(`/api/jobs/${jobId}/more-clips`), {
         method: 'POST',
-        headers: { 'X-Gemini-Key': apiKey, 'X-Gemini-Model': geminiModel, 'Content-Type': 'application/json' },
+        headers: { ...aiHeaders(), 'X-Gemini-Key': apiKey, 'X-Gemini-Model': geminiModel, 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
       if (!res.ok) {
@@ -956,7 +928,7 @@ function App() {
   };
 
   const handleProcess = async (data) => {
-    if (!apiKey) {
+    if (!aiReady) {
       setShowKeyModal(true);
       return;
     }
@@ -1312,28 +1284,28 @@ function App() {
               Take the tour
             </button>
 
-            {!apiKey && (
+            {!aiReady && (
               <button
                 onClick={() => setActiveTab('settings')}
                 className="text-xs text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1 rounded-full border border-amber-500/30 transition-colors flex items-center gap-1.5"
                 title="Click to configure your API keys"
               >
                 <AlertTriangle size={12} />
-                Gemini API Key Missing
+                AI Key Missing
               </button>
             )}
           </div>
         </header>
 
         {/* Persistent Missing Keys Banner — visible on every screen */}
-        {!apiKey && activeTab !== 'settings' && (
+        {!aiReady && activeTab !== 'settings' && (
           <div className="mx-6 mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center justify-between gap-4 shrink-0 animate-[fadeIn_0.3s_ease-out]">
             <div className="flex items-center gap-3 text-sm text-amber-200">
               <KeyRound size={16} className="shrink-0 text-amber-400" />
               <div>
-                <span className="font-semibold">Gemini API key required.</span>{' '}
+                <span className="font-semibold">AI key required.</span>{' '}
                 <span className="text-amber-200/80">
-                  Set your Gemini API key to generate clips. Zernio is only needed for social publishing.
+                  Add a key for your AI provider to generate clips (a free Gemini key works). Zernio is only needed for social publishing.
                 </span>
               </div>
             </div>
@@ -1637,7 +1609,7 @@ function App() {
                 {liveClipCount > 0 && (
                   <span className="text-xs bg-surface2 text-muted px-2 py-0.5 rounded-full">{liveClipCount}</span>
                 )}
-                {results?.cost_analysis && (
+                {results?.cost_analysis?.total_cost != null && (
                   <span className="text-xs bg-viral/10 border border-viral/20 text-viral px-2 py-0.5 rounded-full" title={`Paid-tier estimate · Input: ${results.cost_analysis.input_tokens} | Output: ${results.cost_analysis.output_tokens}. Free Tier may charge $0`}>
                     ~${results.cost_analysis.total_cost.toFixed(4)} est.
                   </span>
