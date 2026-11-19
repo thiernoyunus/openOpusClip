@@ -727,9 +727,13 @@ export default function EditorTimeline({
     // --- Split / delete / duplicate ---
     const playClip = clipAtOutputFrame(framing, outFrame, fps);
     const srcAtPlayhead = outputToSource(framing, outFrame, fps);
-    const canSplit = !!playClip
+    const canSplitMain = !!playClip && !locked.has('main')
         && srcAtPlayhead - playClip.clip.sourceStart >= MIN_CLIP_LEN
         && playClip.clip.sourceEnd - srcAtPlayhead >= MIN_CLIP_LEN;
+    const selAudio = selectedItem?.lane === 'audio' ? (framing.audio || []).find((x) => x.id === selectedItem.id) : null;
+    const canSplitAudio = !!selAudio && !selAudio.loop && !locked.has('audio')
+        && outFrame > selAudio.startFrame && outFrame < selAudio.endFrame;
+    const canSplit = canSplitMain || canSplitAudio;
 
     const splitMainAt = useCallback((f) => {
         const pc = clipAtOutputFrame(framing, f, fps);
@@ -743,22 +747,24 @@ export default function EditorTimeline({
         // A selected audio block under the playhead is split instead (CapCut).
         const f = Math.round(playerRef.current?.getCurrentFrame() ?? outFrame);
         if (selectedItem?.lane === 'audio') {
+            if (locked.has('audio')) return;
             const a = (framing.audio || []).find((x) => x.id === selectedItem.id);
-            if (a && f > a.startFrame && f < a.endFrame) {
+            if (a && !a.loop && f > a.startFrame && f < a.endFrame) {
                 dispatch({ type: 'SPLIT_AUDIO', id: a.id, frame: f });
                 return;
             }
         }
-        splitMainAt(f);
-    }, [outFrame, playerRef, selectedItem, framing.audio, dispatch, splitMainAt]);
+        if (!locked.has('main')) splitMainAt(f);
+    }, [outFrame, playerRef, selectedItem, framing.audio, dispatch, splitMainAt, locked]);
 
     const selectedId = selectedIds[0] ?? null;
-    const canDeleteClip = selectedId && framing.clips.length > 1 && framing.clips.some((c) => c.id === selectedId);
-    const canDeleteItem = selectedItem && (selectedItem.lane === 'audio' || selectedItem.lane === 'overlay');
+    const canDeleteClip = selectedId && !locked.has('main') && framing.clips.length > 1 && framing.clips.some((c) => c.id === selectedId);
+    const canDeleteItem = selectedItem && (selectedItem.lane === 'audio' || selectedItem.lane === 'overlay') && !locked.has(selectedItem.lane);
     const canDelete = canDeleteItem || canDeleteClip;
-    const canDuplicate = !!selectedId && framing.clips.some((c) => c.id === selectedId);
+    const canDuplicate = !!selectedId && !locked.has('main') && framing.clips.some((c) => c.id === selectedId);
 
     const handleDelete = useCallback(() => {
+        if (selectedItem && locked.has(selectedItem.lane)) return;
         if (selectedItem?.lane === 'audio') {
             dispatch({ type: 'REMOVE_AUDIO', id: selectedItem.id });
             setSelectedItem(null);
@@ -769,8 +775,8 @@ export default function EditorTimeline({
             setSelectedItem(null);
             return;
         }
-        if (selectedId && framing.clips.length > 1) dispatch({ type: 'DELETE_CLIP', id: selectedId });
-    }, [selectedItem, selectedId, framing.clips.length, dispatch]);
+        if (selectedId && !locked.has('main') && framing.clips.length > 1) dispatch({ type: 'DELETE_CLIP', id: selectedId });
+    }, [selectedItem, selectedId, framing.clips.length, dispatch, locked]);
 
     const duplicateClip = useCallback((id) => {
         const idx = framing.clips.findIndex((c) => c.id === id);
@@ -796,7 +802,7 @@ export default function EditorTimeline({
     const audioMuted = audioItems.length > 0 && audioItems.every((a) => (a.volume ?? 1) === 0);
     const toggleSourceMute = useCallback(() => {
         if (sourceMuted) {
-            dispatch({ type: 'SET_SOURCE_VOLUME', volume: mutedVolumes.current.__source || 1 });
+            dispatch({ type: 'SET_SOURCE_VOLUME', volume: mutedVolumes.current.__source || 1 }); // 0 would leave it muted
         } else {
             mutedVolumes.current.__source = framing.sourceVolume ?? 1;
             dispatch({ type: 'SET_SOURCE_VOLUME', volume: 0 });
@@ -805,7 +811,7 @@ export default function EditorTimeline({
     const toggleAudioMute = useCallback(() => {
         const volumes = {};
         for (const a of audioItems) {
-            if (audioMuted) volumes[a.id] = mutedVolumes.current[a.id] || 1;
+            if (audioMuted) volumes[a.id] = a.id in mutedVolumes.current ? mutedVolumes.current[a.id] : 1;
             else {
                 mutedVolumes.current[a.id] = a.volume ?? 1;
                 volumes[a.id] = 0;
@@ -837,7 +843,8 @@ export default function EditorTimeline({
     const bladeCut = useCallback((laneId, e) => {
         const f = bladeFrameAt(e.clientX, e.altKey);
         if (laneId === 'audio') {
-            const a = audioItems.find((x) => f > x.startFrame && f < x.endFrame);
+            // Looping music can't be split: its loop restarts from trimBefore.
+            const a = audioItems.find((x) => !x.loop && f > x.startFrame && f < x.endFrame);
             if (a) dispatch({ type: 'SPLIT_AUDIO', id: a.id, frame: f });
             return;
         }
@@ -1347,15 +1354,15 @@ export default function EditorTimeline({
                     <button
                         type="button"
                         onClick={handleSplit}
-                        disabled={!canSplit && selectedItem?.lane !== 'audio'}
+                        disabled={!canSplit}
                         title="Split at playhead (Cmd/Ctrl+B)"
                         className={`h-7 px-2 rounded-md flex items-center gap-1 text-[11px] transition-colors ${
-                            canSplit || selectedItem?.lane === 'audio' ? 'text-zinc-300 hover:text-white hover:bg-white/5' : 'text-zinc-700 cursor-not-allowed'
+                            canSplit ? 'text-zinc-300 hover:text-white hover:bg-white/5' : 'text-zinc-700 cursor-not-allowed'
                         }`}
                     >
                         <Scissors size={13} className="rotate-90" /> Split
                     </button>
-                    <IconBtn title="Duplicate selected clip" disabled={!canDuplicate} onClick={() => selectedId && duplicateClip(selectedId)}>
+                    <IconBtn title="Duplicate selected clip" disabled={!canDuplicate} onClick={() => canDuplicate && duplicateClip(selectedId)}>
                         <Copy size={14} />
                     </IconBtn>
                     <IconBtn title="Delete selection (Delete)" danger disabled={!canDelete} onClick={handleDelete}>

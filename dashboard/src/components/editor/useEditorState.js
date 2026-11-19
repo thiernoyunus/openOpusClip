@@ -474,6 +474,9 @@ export const editorReducer = (state, action) => {
             const idx = list.findIndex((a) => a.id === id);
             if (idx === -1) return state;
             const a = list[idx];
+            // A looping item restarts from trimBefore, so moving it would
+            // change what the right half loops. Leave looping music whole.
+            if (a.loop) return state;
             if (frame - a.startFrame < 2 || a.endFrame - frame < 2) return state;
             const left = { ...a, endFrame: frame, fadeOutSec: 0 };
             const right = {
