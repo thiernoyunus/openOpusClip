@@ -143,3 +143,45 @@ def test_failure_labels_follow_the_chosen_provider(monkeypatch):
     assert main._active_ai() == ("deepseek", "deepseek-v4-flash")
     monkeypatch.setenv("LLM_MODEL", "")
     assert main._active_ai() == ("gemini", main.DEFAULT_GEMINI_MODEL)
+
+
+def test_gemini_list_keeps_only_gemini_text_models(monkeypatch):
+    class M:
+        def __init__(self, name):
+            self.name, self.display_name, self.supported_actions = f"models/{name}", name, ["generateContent"]
+
+    class Client:
+        def __init__(self, api_key=None):
+            self.models = self
+
+        def list(self):
+            return [M(n) for n in ("gemini-3.1-pro-preview", "gemini-3.6-flash", "lyria-3-pro-preview",
+                                   "nano-banana-pro-preview", "gemini-3-pro-image-preview",
+                                   "gemini-2.5-flash-preview-tts", "gemma-4-27b-it",
+                                   "gemini-2.5-flash-native-audio-latest", "gemini-live-2.5-flash")]
+
+    monkeypatch.setattr(llm.genai, "Client", Client)
+    ai = llm.build_settings(api_key="k", require_model=False)
+    assert sorted(m["id"] for m in llm.list_models(ai)) == ["gemini-3.1-pro-preview", "gemini-3.6-flash"]
+
+
+def test_named_custom_provider_uses_its_api_format(monkeypatch):
+    ai = llm.build_settings(provider="custom", api_key="k", model="glm-5", name="Z.ai <b>",
+                            base_url="https://api.z.ai/api/anthropic/v1", api_format="anthropic")
+    assert (ai.label, ai.kind) == ("Z.ai b", "anthropic")
+    env = llm.settings_to_env(ai, {})
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    assert llm.settings_from_env() == ai
+    calls = _stub_post(monkeypatch, _Resp(200, {"content": [{"type": "text", "text": "{}"}], "usage": {}}))
+    llm.make_client(ai).models.generate_content(model="glm-5", contents="x")
+    assert calls[0]["url"] == "https://api.z.ai/api/anthropic/v1/messages"
+
+
+def test_custom_responses_format(monkeypatch):
+    ai = llm.build_settings(provider="custom", api_key="k", model="m", api_format="responses",
+                            base_url="https://example.com/v1")
+    calls = _stub_post(monkeypatch, _Resp(200, {"output_text": '{"a": 1}', "usage": {"input_tokens": 5}}))
+    resp = llm.make_client(ai).models.generate_content(model="m", contents="x")
+    assert calls[0]["url"] == "https://example.com/v1/responses"
+    assert resp.text == '{"a": 1}' and resp.usage_metadata.prompt_token_count == 5

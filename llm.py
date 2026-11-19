@@ -35,8 +35,13 @@ PROVIDERS = {
     "deepseek": {"label": "DeepSeek", "kind": "openai", "base_url": "https://api.deepseek.com/v1"},
     "xai": {"label": "xAI (Grok)", "kind": "openai", "base_url": "https://api.x.ai/v1"},
     "mimo": {"label": "Xiaomi MiMo", "kind": "openai", "base_url": "https://api.xiaomimimo.com/v1"},
-    "custom": {"label": "Custom (any OpenAI-compatible API)", "kind": "openai", "base_url": None},
+    # Named by the user; speaks whichever API format they picked.
+    "custom": {"label": "Custom", "kind": "openai", "base_url": None},
 }
+
+# API formats a custom provider can speak (the wire format, not the vendor).
+API_FORMATS = {"openai": "Chat completions", "anthropic": "Anthropic messages",
+               "responses": "Responses"}
 
 RECOMMENDED = {
     "gemini": ["gemini-3.1-pro-preview", *GEMINI_MODELS],
@@ -64,6 +69,9 @@ _NON_TEXT_RE = re.compile(
     r"transcribe|sora|davinci|babbage|search|computer-use|live|aqa|robotics|"
     r":batch$", re.IGNORECASE)
 
+_GEMINI_SKIP_RE = re.compile(r"image|tts|audio|live|embed|robotics|computer-use|nano|banana|lyria",
+                             re.IGNORECASE)
+
 TIMEOUT = httpx.Timeout(600.0, connect=30.0)
 
 
@@ -73,10 +81,16 @@ class LLMSettings:
     api_key: str = ""
     model: str = DEFAULT_GEMINI_MODEL
     base_url: str = ""
+    api_format: str = ""
+    name: str = ""
 
     @property
     def label(self):
-        return PROVIDERS[self.provider]["label"]
+        return self.name or PROVIDERS[self.provider]["label"]
+
+    @property
+    def kind(self):
+        return self.api_format or PROVIDERS[self.provider]["kind"]
 
 
 def clean_model_id(model, provider="gemini"):
@@ -90,7 +104,8 @@ def clean_model_id(model, provider="gemini"):
 
 
 def build_settings(provider=None, api_key=None, model=None, base_url=None,
-                   gemini_key=None, gemini_model=None, require_model=True):
+                   gemini_key=None, gemini_model=None, require_model=True,
+                   api_format=None, name=None):
     """Validate one provider choice. Missing provider = today's Gemini behaviour."""
     provider = (provider or "gemini").strip().lower()
     if provider not in PROVIDERS:
@@ -101,11 +116,16 @@ def build_settings(provider=None, api_key=None, model=None, base_url=None,
     base_url = (base_url or "").strip() or (PROVIDERS[provider]["base_url"] or "")
     if PROVIDERS[provider]["base_url"] is None and provider != "gemini":
         if not re.match(r"^https?://", base_url):
-            raise ValueError("Custom provider needs an API address starting with http:// or https://.")
+            raise ValueError("Custom provider needs a Base URL starting with http:// or https://.")
     model = clean_model_id(model, provider)
     if not model and require_model:
         raise ValueError("Pick a model for the AI provider.")
-    return LLMSettings(provider, (api_key or "").strip(), model, base_url.rstrip("/"))
+    api_format = (api_format or "").strip().lower() if provider == "custom" else ""
+    if api_format and api_format not in API_FORMATS:
+        raise ValueError(f"Unknown API format '{api_format}'.")
+    name = re.sub(r"[^\w .()+-]", "", str(name or ""))[:40].strip() if provider == "custom" else ""
+    return LLMSettings(provider, (api_key or "").strip(), model, base_url.rstrip("/"),
+                       api_format, name)
 
 
 def settings_from_headers(headers, require_model=True):
@@ -116,6 +136,8 @@ def settings_from_headers(headers, require_model=True):
         api_key=headers.get("X-AI-Key"),
         model=headers.get("X-AI-Model"),
         base_url=headers.get("X-AI-Base-Url"),
+        api_format=headers.get("X-AI-Format"),
+        name=headers.get("X-AI-Name"),
         gemini_key=headers.get("X-Gemini-Key"),
         gemini_model=headers.get("X-Gemini-Model"),
     )
@@ -132,6 +154,8 @@ def settings_to_env(settings, env):
     env["LLM_API_KEY"] = settings.api_key
     env["LLM_MODEL"] = settings.model
     env["LLM_BASE_URL"] = settings.base_url
+    env["LLM_API_FORMAT"] = settings.api_format
+    env["LLM_NAME"] = settings.name
     if settings.provider == "gemini":
         env["GEMINI_API_KEY"] = settings.api_key
         env["GEMINI_MODEL"] = settings.model
@@ -145,6 +169,8 @@ def settings_from_env():
         api_key=os.environ.get("LLM_API_KEY"),
         model=os.environ.get("LLM_MODEL"),
         base_url=os.environ.get("LLM_BASE_URL"),
+        api_format=os.environ.get("LLM_API_FORMAT"),
+        name=os.environ.get("LLM_NAME"),
         gemini_key=os.environ.get("GEMINI_API_KEY"),
         gemini_model=os.environ.get("GEMINI_MODEL"),
     )
@@ -152,7 +178,7 @@ def settings_from_env():
 
 def make_client(settings):
     """A client with Gemini's .models.generate_content() shape."""
-    kind = PROVIDERS[settings.provider]["kind"]
+    kind = settings.kind
     if kind == "gemini":
         return genai.Client(api_key=settings.api_key)
     return _CompatClient(kind, settings)
@@ -212,6 +238,8 @@ class _CompatClient:
             return self._anthropic(model, prompt, wants_json)
         if self.kind == "chatgpt":
             return self._chatgpt(model, prompt, wants_json)
+        if self.kind == "responses":
+            return self._responses(model, prompt, wants_json)
         return self._openai(model, prompt, wants_json)
 
     def _openai(self, model, prompt, wants_json):
@@ -240,7 +268,7 @@ class _CompatClient:
             body["system"] = "Reply with only the JSON the user asks for. No prose, no code fences."
         resp = httpx.post(
             f"{self.settings.base_url}/messages", json=body, timeout=TIMEOUT,
-            headers={"x-api-key": self.settings.api_key, "anthropic-version": "2023-06-01"})
+            headers=_anthropic_headers(self.settings))
         data = _json_or_raise(resp, self.settings)
         text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
         usage = data.get("usage") or {}
@@ -248,6 +276,17 @@ class _CompatClient:
             "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
         return _Response(text, _Usage(self.settings.provider, prompt_tokens, usage.get("output_tokens")))
 
+
+    def _responses(self, model, prompt, wants_json):
+        body = {"model": model, "input": prompt}
+        if wants_json:
+            body["instructions"] = "Reply with only the JSON the user asks for. No prose, no code fences."
+        headers = {"Authorization": f"Bearer {self.settings.api_key}"} if self.settings.api_key else {}
+        resp = httpx.post(f"{self.settings.base_url}/responses", json=body, headers=headers, timeout=TIMEOUT)
+        data = _json_or_raise(resp, self.settings)
+        usage = data.get("usage") or {}
+        return _Response(data.get("output_text") or _responses_text(data), _Usage(
+            self.settings.provider, usage.get("input_tokens"), usage.get("output_tokens")))
 
     def _chatgpt(self, model, prompt, wants_json):
         # The ChatGPT plan route only takes streamed, unstored Responses calls and
@@ -339,6 +378,13 @@ def _responses_text(response):
                    for c in item.get("content") or [] if c.get("type") == "output_text")
 
 
+def _anthropic_headers(settings):
+    # Anthropic-format gateways (Z.ai, MiniMax, Kimi...) take x-api-key; some
+    # only read a Bearer token, so send both.
+    return {"x-api-key": settings.api_key, "Authorization": f"Bearer {settings.api_key}",
+            "anthropic-version": "2023-06-01"}
+
+
 def _json_or_raise(resp, settings):
     # The status code leads the message so main.py's retry/classify markers
     # ("429", "503", ...) work the same as for Gemini errors.
@@ -363,7 +409,7 @@ def _clean_json_text(text):
 
 def list_models(settings):
     """[{id, label, recommended, free}] the key can use, recommended first."""
-    kind = PROVIDERS[settings.provider]["kind"]
+    kind = settings.kind
     if kind == "gemini":
         client = genai.Client(api_key=settings.api_key)
         found = []
@@ -372,6 +418,10 @@ def list_models(settings):
             if actions and "generateContent" not in actions:
                 continue
             model_id = m.name.removeprefix("models/")
+            # Only Gemini text models: no Gemma, Lyria (music), Nano Banana /
+            # Imagen (images), Veo, or the TTS / native-audio / live variants.
+            if not model_id.startswith("gemini-") or _GEMINI_SKIP_RE.search(model_id):
+                continue
             # Google's free tier covers Flash / Flash-Lite, not Pro. The API
             # doesn't say so per model, hence the name check.
             found.append((model_id, getattr(m, "display_name", None), "flash" in model_id))
@@ -384,7 +434,7 @@ def list_models(settings):
                  if m.get("slug") and m.get("visibility") == "list"]
     elif kind == "anthropic":
         resp = httpx.get(f"{settings.base_url}/models", params={"limit": 1000}, timeout=30,
-                         headers={"x-api-key": settings.api_key, "anthropic-version": "2023-06-01"})
+                         headers=_anthropic_headers(settings))
         found = [(m["id"], m.get("display_name"), False)
                  for m in _json_or_raise(resp, settings).get("data", [])]
     else:

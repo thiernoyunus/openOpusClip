@@ -1,12 +1,120 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Key, Eye, EyeOff, Check } from 'lucide-react';
+import { Key, Eye, EyeOff, Check, X } from 'lucide-react';
 import { getApiUrl } from '../config';
 import { DEFAULT_GEMINI_MODEL, GEMINI_MODELS } from '../lib/geminiModels';
 import {
-    AI_PROVIDERS, getAiProvider, setAiProvider, getProviderConfig, saveProviderConfig, providerHeaders,
+    API_FORMATS, listProviders, isCustomProvider, getAiProvider, setAiProvider, getProviderConfig,
+    saveProviderConfig, saveCustomProvider, deleteCustomProvider, providerHeaders,
 } from '../lib/aiSettings';
 
 const TYPE_OWN = '__type_own__';
+const ADD_CUSTOM = '__add_custom__';
+
+// Add or edit a custom provider: name, base URL, key, API format, and any
+// models to add by hand (the list is fetched from the provider when it can be).
+function CustomProviderForm({ initial, onSave, onCancel }) {
+    const [name, setName] = useState(initial?.name || '');
+    const [baseUrl, setBaseUrl] = useState(initial?.baseUrl || '');
+    const [key, setKey] = useState(initial?.key || '');
+    const [format, setFormat] = useState(initial?.format || 'openai');
+    const [models, setModels] = useState(initial?.models || []);
+    const [newModel, setNewModel] = useState('');
+    const [showKey, setShowKey] = useState(false);
+
+    const urlOk = /^https?:\/\/\S+$/.test(baseUrl.trim());
+    const canSave = name.trim() && urlOk;
+    const addModel = () => {
+        const id = newModel.trim();
+        if (id && !models.includes(id)) setModels([...models, id]);
+        setNewModel('');
+    };
+
+    return (
+        <div className="rounded-xl border border-white/10 p-4 space-y-4">
+            <div>
+                <div className="text-sm font-semibold text-zinc-200">{initial ? 'Edit custom provider' : 'Add custom provider'}</div>
+                <div className="text-xs text-zinc-500 mt-1">Any provider with an API: Z.ai, MiniMax, Qwen, Kimi, Ollama, LM Studio…</div>
+            </div>
+            <div>
+                <label htmlFor="cp-name" className="block text-sm text-zinc-300 mb-2">Name</label>
+                <input id="cp-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Z.ai" className="input-field w-full" />
+            </div>
+            <div>
+                <label htmlFor="cp-url" className="block text-sm text-zinc-300 mb-2">Base URL</label>
+                <input id="cp-url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" className="input-field w-full font-mono" />
+                {baseUrl && !urlOk && <p className="mt-1 text-xs text-red-400">Starts with https:// (or http:// for a server on this computer).</p>}
+            </div>
+            <div>
+                <label htmlFor="cp-key" className="block text-sm text-zinc-300 mb-2">API key</label>
+                <div className="relative">
+                    <input
+                        id="cp-key"
+                        type={showKey ? 'text' : 'password'}
+                        value={key}
+                        data-posthog-sensitive="true"
+                        onChange={(e) => setKey(e.target.value)}
+                        placeholder="Enter API key (leave empty for local servers)"
+                        className="input-field w-full pr-12 font-mono"
+                    />
+                    <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white">
+                        {showKey ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                </div>
+            </div>
+            <div>
+                <label htmlFor="cp-format" className="block text-sm text-zinc-300 mb-2">API format</label>
+                <select id="cp-format" value={format} onChange={(e) => setFormat(e.target.value)} className="input-field w-full">
+                    {API_FORMATS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                </select>
+            </div>
+            <div>
+                <label htmlFor="cp-model" className="block text-sm text-zinc-300 mb-2">Models</label>
+                <p className="text-xs text-zinc-500 mb-2">We load the provider&apos;s model list automatically when it has one. Add model IDs here if it doesn&apos;t.</p>
+                {models.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                        {models.map((m) => (
+                            <span key={m} className="inline-flex items-center gap-1 rounded-lg bg-white/5 px-2 py-1 text-xs font-mono text-zinc-300">
+                                {m}
+                                <button aria-label={`Remove ${m}`} onClick={() => setModels(models.filter((x) => x !== m))} className="text-zinc-500 hover:text-white">
+                                    <X size={12} />
+                                </button>
+                            </span>
+                        ))}
+                    </div>
+                )}
+                <div className="flex gap-2">
+                    <input
+                        id="cp-model"
+                        value={newModel}
+                        onChange={(e) => setNewModel(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addModel(); } }}
+                        placeholder="Model ID, e.g. glm-5"
+                        className="input-field flex-1 font-mono"
+                    />
+                    <button onClick={addModel} disabled={!newModel.trim()} className="px-4 rounded-xl bg-white/5 hover:bg-white/10 text-sm text-zinc-200 disabled:opacity-50">
+                        + Add model
+                    </button>
+                </div>
+            </div>
+            <div className="flex gap-3">
+                <button
+                    onClick={() => onSave({
+                        name: name.trim(),
+                        baseUrl: baseUrl.trim().replace(/\/+$/, ''),
+                        key: key.trim(),
+                        format,
+                        models: newModel.trim() && !models.includes(newModel.trim()) ? [...models, newModel.trim()] : models,
+                    })}
+                    disabled={!canSave}
+                    className="px-5 py-2 rounded-xl font-medium bg-primary hover:bg-blue-600 text-white disabled:opacity-50"
+                >
+                    {initial ? 'Save' : 'Add provider'}
+                </button>
+                <button onClick={onCancel} className="px-5 py-2 rounded-xl text-sm text-zinc-400 hover:text-white">Cancel</button>
+            </div>
+        </div>
+    );
+}
 
 function SecretField({ savedValue, onSave, placeholder, dataTour }) {
     const [value, setValue] = useState(savedValue || '');
@@ -208,19 +316,21 @@ function ChatGPTSignIn({ onStatus }) {
 }
 
 // Live model list for one provider. null = not loaded (no key yet, or failed).
-function useProviderModels(provider, key, baseUrl, signedIn) {
+function useProviderModels(provider, config, signedIn) {
+    const { key, baseUrl, format, name } = config;
     // OpenRouter lists models without a key; custom local servers may not need one.
     // ChatGPT lists the signed-in plan's models (key stands in for the account).
+    const custom = isCustomProvider(provider);
     const canList = provider === 'chatgpt' ? signedIn
-        : key || provider === 'openrouter' || (provider === 'custom' && baseUrl);
-    const request = canList ? JSON.stringify([provider, key, baseUrl]) : '';
+        : key || provider === 'openrouter' || (custom && baseUrl);
+    const request = canList ? JSON.stringify([provider, key || '', baseUrl || '', format || '', name || '']) : '';
     const [result, setResult] = useState({ request: '', models: null, error: '' });
 
     useEffect(() => {
         if (!request) return undefined;
         let cancelled = false;
-        const [p, k, b] = JSON.parse(request);
-        fetch(getApiUrl('/api/ai/models'), { headers: providerHeaders(p, { key: k, baseUrl: b }) })
+        const [p, k, b, f, n] = JSON.parse(request);
+        fetch(getApiUrl('/api/ai/models'), { headers: providerHeaders(p, { key: k, baseUrl: b, format: f, name: n }) })
             .then(async (res) => {
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) throw new Error(data.detail || `Could not load models (${res.status})`);
@@ -238,19 +348,28 @@ export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMI
     const [provider, setProvider] = useState(getAiProvider);
     const [config, setConfig] = useState(() => getProviderConfig(getAiProvider()));
     const [typingModel, setTypingModel] = useState(false);
+    const [editing, setEditing] = useState(null); // null | 'new' | a custom provider id
     const isGemini = provider === 'gemini';
     const isChatGPT = provider === 'chatgpt';
-    const info = AI_PROVIDERS.find((p) => p.id === provider);
+    const isCustom = isCustomProvider(provider);
+    const providers = listProviders();
+    const info = providers.find((p) => p.id === provider) || providers[0];
 
     const key = isGemini ? savedKey : config.key;
     const model = isGemini ? savedModel : config.model;
     const { models, error } = useProviderModels(
-        provider, isChatGPT ? config.account || '' : key, config.baseUrl, isChatGPT && !!config.signedIn);
+        provider,
+        isChatGPT ? { ...config, key: config.account || '' } : { ...config, key },
+        isChatGPT && !!config.signedIn);
 
-    // Before the live list loads, Gemini still shows its known models.
-    const shown = models || (isGemini
+    // Before the live list loads, Gemini still shows its known models. Custom
+    // providers add the models typed in by hand to whatever the provider lists.
+    const manual = isCustom ? (config.models || []) : [];
+    const fetched = models || (isGemini
         ? GEMINI_MODELS.map((m) => ({ id: m.value, label: m.label, recommended: false, free: true }))
         : []);
+    const shown = [...fetched, ...manual.filter((id) => !fetched.some((m) => m.id === id))
+        .map((id) => ({ id, label: id, recommended: false, free: false }))];
 
     const setModel = (value) => {
         if (isGemini) onModelChange?.(value);
@@ -262,15 +381,27 @@ export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMI
     };
 
     // A provider with no model picked yet gets the top of its list (recommended first).
+    const firstModel = shown[0]?.id;
     useEffect(() => {
-        if (!model && models?.length) setModel(models[0].id);
-    }, [models]); // eslint-disable-line react-hooks/exhaustive-deps
+        if (!model && firstModel) setModel(firstModel);
+    }, [firstModel]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const changeProvider = (next) => {
         setAiProvider(next);
         setProvider(next);
         setConfig(getProviderConfig(next));
         setTypingModel(false);
+        setEditing(null);
+    };
+
+    const saveCustom = (fields) => {
+        const id = saveCustomProvider(editing === 'new' ? null : editing, fields);
+        changeProvider(id);
+    };
+
+    const removeCustom = () => {
+        deleteCustomProvider(provider);
+        changeProvider('gemini');
     };
 
     const chatgptStatus = (s) => {
@@ -307,36 +438,50 @@ export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMI
             <label htmlFor="ai-provider" className="block text-sm text-zinc-300 mb-2">Provider</label>
             <select
                 id="ai-provider"
-                value={provider}
-                onChange={(e) => changeProvider(e.target.value)}
+                value={editing === 'new' ? ADD_CUSTOM : provider}
+                onChange={(e) => {
+                    if (e.target.value === ADD_CUSTOM) setEditing('new');
+                    else changeProvider(e.target.value);
+                }}
                 className="input-field w-full"
             >
-                {AI_PROVIDERS.map((p) => (
+                {providers.map((p) => (
                     <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
+                <option value={ADD_CUSTOM}>+ Add custom provider…</option>
             </select>
-            {info?.help && <p className="mt-2 text-xs text-zinc-500">{info.help}</p>}
+            {info?.help && !editing && <p className="mt-2 text-xs text-zinc-500">{info.help}</p>}
 
+            {editing ? (
+                <div className="mt-6">
+                    <CustomProviderForm
+                        key={editing}
+                        initial={editing === 'new' ? null : config}
+                        onSave={saveCustom}
+                        onCancel={() => setEditing(null)}
+                    />
+                </div>
+            ) : (<>
             <div className="mt-6">
                 {isGemini ? geminiKeyBlock : isChatGPT ? (
                     <ChatGPTSignIn key="chatgpt" onStatus={chatgptStatus} />
+                ) : isCustom ? (
+                    <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 px-4 py-3">
+                        <div className="min-w-0 text-sm">
+                            <div className="text-zinc-200 truncate font-mono">{config.baseUrl}</div>
+                            <div className="text-xs text-zinc-500 mt-1">
+                                {(API_FORMATS.find((f) => f.id === config.format) || API_FORMATS[0]).label}
+                                {config.key ? ' · key saved' : ' · no key'}
+                            </div>
+                        </div>
+                        <div className="flex gap-3 shrink-0">
+                            <button onClick={() => setEditing(provider)} className="text-sm text-zinc-300 hover:text-white">Edit</button>
+                            <button onClick={removeCustom} className="text-sm text-zinc-500 hover:text-red-400">Remove</button>
+                        </div>
+                    </div>
                 ) : (
                     <>
-                        {provider === 'custom' && (
-                            <div className="mb-4">
-                                <label htmlFor="ai-base-url" className="block text-sm text-zinc-300 mb-2">API address</label>
-                                <input
-                                    id="ai-base-url"
-                                    defaultValue={config.baseUrl}
-                                    onBlur={(e) => updateConfig({ baseUrl: e.target.value.trim() })}
-                                    placeholder="http://localhost:11434/v1"
-                                    className="input-field w-full font-mono"
-                                />
-                            </div>
-                        )}
-                        <label className="block text-sm text-zinc-300 mb-2">
-                            {info.label} API key{provider === 'custom' ? ' (if it needs one)' : ''}
-                        </label>
+                        <label className="block text-sm text-zinc-300 mb-2">{info.label} API key</label>
                         <SecretField
                             key={provider}
                             savedValue={config.key}
@@ -363,7 +508,8 @@ export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMI
                         <option value="" disabled>
                             {isChatGPT
                                 ? (config.signedIn ? 'Loading models…' : 'Sign in to load models')
-                                : (key ? 'Loading models…' : 'Add your key to load models')}
+                                : isCustom ? (error ? 'No models yet. Add one with Edit.' : 'Loading models…')
+                                    : (key ? 'Loading models…' : 'Add your key to load models')}
                         </option>
                     )}
                     {shown.map((m) => (
@@ -383,7 +529,9 @@ export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMI
                         className="input-field w-full font-mono mt-3"
                     />
                 )}
-                {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+                {error && (isCustom && manual.length
+                    ? <p className="mt-2 text-xs text-zinc-500">{info.label} doesn&apos;t share a model list, so these are the models you added.</p>
+                    : <p className="mt-2 text-xs text-red-400">{error}{isCustom ? ' You can add model IDs with Edit.' : ''}</p>)}
                 {isChatGPT && config.signedIn && (
                     <p className="mt-2 text-xs text-zinc-300">
                         Using ChatGPT plan ·{' '}
@@ -393,12 +541,15 @@ export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMI
                     </p>
                 )}
                 <p className="mt-2 text-xs text-zinc-500 leading-relaxed">
-                    The list comes live from {info.label}, so new models show up on their own. ★ marks our picks; Free means it works on a free key.
+                    {isCustom
+                        ? `The list comes from ${info.label} when it offers one, plus any models you added.`
+                        : `The list comes live from ${info.label}, so new models show up on their own. ★ marks our picks; Free means it works on a free key.`}{' '}
                     This model handles clip detection, trailers, captions and b-roll.
                 </p>
             </div>
+            </>)}
 
-            <p className="mt-3 text-sm text-zinc-400">
+            {!editing && <p className="mt-3 text-sm text-zinc-400">
                 {isChatGPT
                     ? 'Your ChatGPT sign-in stays on this computer, in a private file only the app reads. It never goes into the browser.'
                     : <>Your keys stay local. The app stores them in the browser{isGemini ? ' and syncs the Gemini key to your OS keychain for the local MCP' : ''}.</>}
@@ -430,7 +581,7 @@ export default function KeyInput({ onKeySet, savedKey, savedModel = DEFAULT_GEMI
                         </a>
                     </>
                 )}
-            </p>
+            </p>}
         </div>
     );
 }

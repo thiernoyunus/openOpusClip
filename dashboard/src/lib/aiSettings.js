@@ -8,7 +8,7 @@ const PROVIDER_KEY = 'ai_provider';
 const CONFIG_KEY = 'ai_providers_v1';
 export const AI_SETTINGS_EVENT = 'ai-settings-changed';
 
-// Must match PROVIDERS in llm.py.
+// Built-in providers. Must match PROVIDERS in llm.py.
 export const AI_PROVIDERS = [
   { id: 'gemini', label: 'Google Gemini', help: 'Default. Free key available.', keyUrl: 'https://aistudio.google.com/app/apikey' },
   { id: 'chatgpt', label: 'ChatGPT (sign in)', help: 'Use your ChatGPT plan instead of an API key. Sign in with your ChatGPT account.' },
@@ -18,13 +18,18 @@ export const AI_PROVIDERS = [
   { id: 'deepseek', label: 'DeepSeek', keyUrl: 'https://platform.deepseek.com/api_keys' },
   { id: 'xai', label: 'xAI (Grok)', keyUrl: 'https://console.x.ai' },
   { id: 'mimo', label: 'Xiaomi MiMo', keyUrl: 'https://platform.xiaomimimo.com' },
-  { id: 'custom', label: 'Custom', help: 'Any OpenAI-compatible API: Qwen, Kimi, GLM, Ollama, LM Studio…' },
 ];
 
-export const getAiProvider = () => {
-  const stored = localStorage.getItem(PROVIDER_KEY);
-  return AI_PROVIDERS.some((p) => p.id === stored) ? stored : 'gemini';
-};
+// The wire format a custom provider speaks. Must match API_FORMATS in llm.py.
+export const API_FORMATS = [
+  { id: 'openai', label: 'Chat completions (/chat/completions)' },
+  { id: 'anthropic', label: 'Anthropic messages (/v1/messages)' },
+  { id: 'responses', label: 'Responses (/responses)' },
+];
+
+// Custom providers the user added: ids 'custom:<n>'. 'custom' is the single
+// unnamed one from before they had names.
+export const isCustomProvider = (id) => id === 'custom' || String(id).startsWith('custom:');
 
 const readConfigs = () => {
   try {
@@ -34,12 +39,28 @@ const readConfigs = () => {
   }
 };
 
-// { key, model, baseUrl } for one provider.
+const writeConfigs = (all) => localStorage.setItem(CONFIG_KEY, encrypt(JSON.stringify(all)));
+
+export const getCustomProviders = () => Object.entries(readConfigs())
+  .filter(([id, cfg]) => isCustomProvider(id) && cfg?.baseUrl)
+  .map(([id, cfg]) => ({ id, label: cfg.name || 'Custom', custom: true }));
+
+export const listProviders = () => [...AI_PROVIDERS, ...getCustomProviders()];
+
+export const getAiProvider = () => {
+  const stored = localStorage.getItem(PROVIDER_KEY);
+  return listProviders().some((p) => p.id === stored) ? stored : 'gemini';
+};
+
+// { key, model, baseUrl, ... } for one provider. Custom ones also carry
+// name, format and models (the ones typed in by hand).
 export const getProviderConfig = (provider) => {
   if (provider === 'gemini') {
     return { key: localStorage.getItem('gemini_key') || '', model: getStoredGeminiModel(), baseUrl: '' };
   }
-  return { key: '', model: '', baseUrl: '', ...(readConfigs()[provider] || {}) };
+  const base = { key: '', model: '', baseUrl: '' };
+  if (isCustomProvider(provider)) Object.assign(base, { name: 'Custom', format: 'openai', models: [] });
+  return { ...base, ...(readConfigs()[provider] || {}) };
 };
 
 const changed = () => window.dispatchEvent(new Event(AI_SETTINGS_EVENT));
@@ -56,8 +77,26 @@ export const saveProviderConfig = (provider, patch) => {
   } else {
     const all = readConfigs();
     all[provider] = { ...getProviderConfig(provider), ...patch };
-    localStorage.setItem(CONFIG_KEY, encrypt(JSON.stringify(all)));
+    writeConfigs(all);
   }
+  changed();
+};
+
+// Add (no id) or edit a custom provider. Returns its id.
+export const saveCustomProvider = (id, fields) => {
+  const all = readConfigs();
+  const newId = id || `custom:${Date.now().toString(36)}`;
+  all[newId] = { ...(all[newId] || {}), ...fields };
+  writeConfigs(all);
+  changed();
+  return newId;
+};
+
+export const deleteCustomProvider = (id) => {
+  const all = readConfigs();
+  delete all[id];
+  writeConfigs(all);
+  if (localStorage.getItem(PROVIDER_KEY) === id) localStorage.setItem(PROVIDER_KEY, 'gemini');
   changed();
 };
 
@@ -67,7 +106,7 @@ export const hasAiKey = () => {
   const provider = getAiProvider();
   const { key, baseUrl, signedIn } = getProviderConfig(provider);
   if (provider === 'chatgpt') return !!signedIn;
-  return provider === 'custom' ? !!baseUrl : !!key;
+  return isCustomProvider(provider) ? !!baseUrl : !!key;
 };
 
 // Headers for any endpoint that runs a text prompt. The Gemini ones always
@@ -82,9 +121,12 @@ export const aiHeaders = () => {
   return { ...gemini, ...providerHeaders(provider, getProviderConfig(provider)) };
 };
 
-export const providerHeaders = (provider, { key, model, baseUrl }) => ({
-  'X-AI-Provider': provider,
+export const providerHeaders = (provider, { key, model, baseUrl, format, name }) => ({
+  'X-AI-Provider': isCustomProvider(provider) ? 'custom' : provider,
   ...(key ? { 'X-AI-Key': key } : {}),
   ...(model ? { 'X-AI-Model': model } : {}),
   ...(baseUrl ? { 'X-AI-Base-Url': baseUrl } : {}),
+  ...(isCustomProvider(provider) && format ? { 'X-AI-Format': format } : {}),
+  // Header values must be plain ASCII; the name is only a label.
+  ...(isCustomProvider(provider) && name ? { 'X-AI-Name': name.replace(/[^\x20-\x7E]/g, '') } : {}),
 });
