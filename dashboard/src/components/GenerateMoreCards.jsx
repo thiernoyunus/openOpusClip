@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Sparkles } from 'lucide-react';
+import { CopyPlus, Scissors } from 'lucide-react';
 
 // A "+" tile that lives at the end of the clip grid and triggers a
 // "generate more clips" run. Same 9:16 footprint as a ResultCard thumb so it
@@ -15,7 +15,7 @@ export function GhostClipCard({ onClick, disabled = false }) {
         className="group relative aspect-[9/16] w-full rounded-xl border-2 border-dashed border-edge bg-surface2/30 text-muted flex flex-col items-center justify-center gap-2.5 transition-colors hover:border-viral/60 hover:bg-viral/[0.06] hover:text-viral disabled:opacity-50 disabled:cursor-not-allowed"
       >
         <span className="flex items-center justify-center w-11 h-11 rounded-full border-2 border-current">
-          <Plus size={22} />
+          <CopyPlus size={20} />
         </span>
         <span className="text-xs font-medium px-3 text-center leading-snug">Generate more clips</span>
       </button>
@@ -31,7 +31,7 @@ export function SkeletonClipCard({ caption }) {
       <div className="relative aspect-[9/16] w-full rounded-xl overflow-hidden bg-surface2 border border-edge animate-pulse">
         {caption && (
           <div className="absolute inset-x-0 bottom-0 p-3 flex items-center gap-1.5">
-            <Sparkles size={12} className="text-muted shrink-0" />
+            <Scissors size={12} className="text-muted shrink-0" />
             <span className="text-[11px] text-muted leading-snug">{caption}</span>
           </div>
         )}
