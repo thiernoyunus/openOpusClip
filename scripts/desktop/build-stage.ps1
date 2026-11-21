@@ -84,10 +84,10 @@ $PySha256  = '7e0a8abfee952efc63dff290022a73f0185b586f522678ae7a757a56f23c289b'
 # that carries libx264; `-shared` is deliberately NOT used (it splits the
 # codecs into DLLs we would then have to stage alongside the exes).
 # Pinned to ffmpeg 8.1.2, matching the macOS stage.
-$FfmpegTag  = 'autobuild-2026-08-23-13-03'
-$FfmpegName = 'ffmpeg-n8.1.2-44-g7c533d0f86-win64-gpl-8.1'
-$FfmpegUrl  = "https://github.com/BtbN/FFmpeg-Builds/releases/download/$FfmpegTag/$FfmpegName.zip"
-$FfmpegSha256 = '40d98aef3e8d48665c4dbbdd0093d6e50c61d71a3a48067e9d3edd9fb3a1f3ca'
+$FfmpegTag  = '8.1.2'
+$FfmpegName = 'ffmpeg-8.1.2-essentials_build'
+$FfmpegUrl  = "https://github.com/GyanD/codexffmpeg/releases/download/$FfmpegTag/$FfmpegName.zip"
+$FfmpegSha256 = 'db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec'
 
 # Node.js, bundled purely so yt-dlp can solve YouTube's JS challenges.
 #
