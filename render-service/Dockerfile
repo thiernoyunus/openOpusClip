@@ -1,4 +1,4 @@
-FROM node:18-bookworm-slim
+FROM node:22-bookworm-slim
 
 # Install Chromium and FFmpeg for Remotion rendering
 RUN apt-get update && \
