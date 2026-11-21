@@ -59,3 +59,10 @@ electron/certs/
 *.p12
 *.key
 *.csr
+
+# Repo-shipped Claude skill (everything else under .claude stays ignored)
+!.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/doac-podcast-trailer/
